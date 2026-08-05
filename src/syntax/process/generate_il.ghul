@@ -553,6 +553,11 @@ namespace Syntax.Process is
         // global function/property/variable definition. Multiple wrappers for
         // the same class get merged by ilasm (partial class definitions).
         gen_globals_class_open(`namespace: Semantic.Symbols.NAMESPACE) is
+            if _context.srm_assembly_emitter? then
+                gen_globals_class_open_srm(`namespace);
+                return;
+            fi
+
             let header = System.Text.StringBuilder();
             header.append(".class public abstract auto ansi sealed ");
             `namespace.gen_globals_class_reference(header, null);
@@ -569,7 +574,32 @@ namespace Syntax.Process is
             fi
         si
 
+        // Assumes at most one global-function wrapper per namespace, so
+        // the type emitter opens and closes around a single member. A
+        // metadata TypeDef row points at a contiguous run of its members,
+        // so supporting several global members in one namespace means
+        // keeping the type emitter open across every wrapper for that
+        // namespace and closing it once the walk has passed them all.
+        gen_globals_class_open_srm(`namespace: Semantic.Symbols.NAMESPACE) is
+            let emitter = _context.srm_assembly_emitter!;
+
+            let object_ref = emitter.add_type_reference("System.Runtime", "System", "Object");
+
+            _context.current_srm_type_emitter = IR.Emitter.SRM_TYPE_EMITTER(
+                emitter,
+                `namespace.qualified_name.substring(1),
+                Semantic.DotNet.GLOBALS_CARRIER.name,
+                cast System.Reflection.Metadata.EntityHandle(object_ref),
+                cast System.Reflection.TypeAttributes(385));   // public | abstract | sealed
+        si
+
         gen_globals_class_close() is
+            if _context.srm_assembly_emitter? then
+                _context.current_srm_type_emitter!.close();
+                _context.current_srm_type_emitter = null;
+                return;
+            fi
+
             _context.outdent();
             println("}}");
         si
@@ -1131,6 +1161,10 @@ namespace Syntax.Process is
 
             if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = symbol then
                 gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(global_function.owner)!);
+
+                if _context.srm_assembly_emitter? then
+                    return _pre_global_function_srm(function, global_function);
+                fi
             fi
 
             println_comment("define {symbol.description}");
@@ -1147,6 +1181,31 @@ namespace Syntax.Process is
             enter_scope(function);
 
             symbol.gen_body_header(_context);
+
+            enter_block();
+            return false;
+        si
+
+        // Binary counterpart of the global-function branch of
+        // `pre(function)` above. Only the entry point emits; any other
+        // global function is skipped rather than reported, so that a
+        // program with no entry point still reaches the pass-level check
+        // that diagnoses it. Attributes, state machines and non-void
+        // returns are not handled for the entry point either.
+        _pre_global_function_srm(function: Definitions.FUNCTION, global_function: Semantic.Symbols.GLOBAL_FUNCTION) -> bool is
+            if global_function.name !~ _context.entry_point_name then
+                gen_globals_class_close();
+
+                // True suppresses the body walk (see FUNCTION.walk):
+                // no block is opened for a skipped function, so walking
+                // its body would emit into nothing.
+                return true;
+            fi
+
+            enter_scope(function);
+
+            _context.current_srm_body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            _context.seen_entrypoint = true;
 
             enter_block();
             return false;
@@ -1264,8 +1323,58 @@ namespace Syntax.Process is
             _context.write_line(".custom instance void ['ghul-runtime']Ghul.Internal.PURE_ATTRIBUTE::.ctor() = ( 01 00 00 00 )");
         si
 
+        // SRM counterpart of the tail of `visit(function)` below, for the
+        // global-function branch opened by `_pre_global_function_srm`.
+        _visit_global_function_srm(function: Definitions.FUNCTION, global_function: Semantic.Symbols.GLOBAL_FUNCTION) is
+            let body_emitter = _context.current_srm_body_emitter!;
+            let type_emitter = _context.current_srm_type_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter!;
+
+            current_block.gen(_context);
+            leave_block();
+
+            body_emitter.ret();
+
+            let body_offset = body_emitter.flush(assembly_emitter);
+
+            let signature =
+                if global_function.arguments.count == 0 then
+                    [0x00ub, 0x00ub, 0x01ub];
+                else
+                    [0x00ub, 0x01ub, 0x01ub, 0x0eub];
+                fi;
+
+            let method_handle = type_emitter.add_method(
+                global_function.il_bare_name,
+                cast System.Reflection.MethodAttributes(150),   // public | static | hidebysig
+                signature,
+                body_offset);
+
+            assembly_emitter.set_entry_point(method_handle);
+
+            _context.current_srm_body_emitter = null;
+
+            leave_scope(function);
+
+            gen_globals_class_close();
+        si
+
         visit(function: Definitions.FUNCTION) is
             let symbol = symbol_for(function);
+
+            if _context.srm_assembly_emitter? /\ isa Semantic.Symbols.GLOBAL_FUNCTION(symbol) then
+                let global_function = cast Semantic.Symbols.GLOBAL_FUNCTION(symbol);
+
+                // Only the entry point was actually opened by
+                // `_pre_global_function_srm` (see its comment); every
+                // other global function's body walk was skipped there,
+                // so there's nothing here to flush either.
+                if global_function.name =~ _context.entry_point_name then
+                    _visit_global_function_srm(function, global_function);
+                fi
+
+                return;
+            fi
 
             let state_machine = Semantic.Symbols.state_machine_for(cast Semantic.Symbols.Function?(symbol)!);
 

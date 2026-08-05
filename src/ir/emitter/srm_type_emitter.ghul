@@ -1,0 +1,72 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.MethodDefinitionHandle;
+    use System.Reflection.Metadata.Ecma335.MetadataTokens;
+    use System.Reflection.Metadata.MethodAttributes;
+    use System.Reflection.Metadata.MethodImplAttributes;
+    use System.Reflection.Metadata.TypeAttributes;
+
+    // Accumulates the members of one in-flight type as a contiguous run,
+    // since a TypeDef row's member list runs from its own row's pointer
+    // to the *next* row's pointer — members must be a complete set
+    // before the type's AddTypeDefinition call, not streamed as found.
+    class SRM_TYPE_EMITTER(
+        _assembly: SRM_ASSEMBLY_EMITTER,
+        namespace_name: string,
+        simple_name: string,
+        base_type: EntityHandle,
+        flags: TypeAttributes
+    ) is
+        _pending_methods: Collections.LIST[PENDING_METHOD];
+
+        init(..) is
+            _pending_methods = Collections.LIST[PENDING_METHOD]();
+        si
+
+        // Reserves a method definition; the body must already be flushed
+        // to the assembly's method body stream (see
+        // SRM_METHOD_BODY_EMITTER.flush) so `body_offset` is available.
+        add_method(
+            name: string,
+            method_flags: MethodAttributes,
+            signature_bytes: ubyte[],
+            body_offset: int
+        ) -> MethodDefinitionHandle is
+            let signature = _assembly.get_or_add_blob(signature_bytes);
+
+            let handle = _assembly.add_method_definition(
+                method_flags,
+                cast MethodImplAttributes(8),   // IL
+                _assembly.get_or_add_string(name),
+                signature,
+                body_offset,
+                default);
+
+            _pending_methods.add(PENDING_METHOD(handle));
+
+            return handle;
+        si
+
+        // Writes the AddTypeDefinition row now that every member has been
+        // reserved. Must be called after every add_method call for this
+        // type and before any other type opens (contiguity requirement).
+        close() is
+            let first_method =
+                if _pending_methods.count > 0 then
+                    _pending_methods[0].handle;
+                else
+                    MetadataTokens.method_definition_handle(_assembly.next_method_row);
+                fi;
+
+            _assembly.add_type_definition(
+                flags,
+                _assembly.get_or_add_string(namespace_name),
+                _assembly.get_or_add_string(simple_name),
+                base_type,
+                MetadataTokens.field_definition_handle(_assembly.next_field_row),
+                first_method);
+        si
+    si
+
+    struct PENDING_METHOD(handle: MethodDefinitionHandle);
+si

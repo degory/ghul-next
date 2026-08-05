@@ -112,6 +112,16 @@ namespace IR is
 
         throw_on_fixme: bool public;
 
+        // Binary emission state, carried here so that a value's `gen`
+        // can reach the method body it is being emitted into without
+        // every caller threading it through. The assembly emitter is
+        // set by the driver when a build targets an assembly; the type
+        // and body emitters track what the IL visitor currently has
+        // open, and are null outside one.
+        srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER? public;
+        current_srm_type_emitter: Emitter.SRM_TYPE_EMITTER? public;
+        current_srm_body_emitter: Emitter.SRM_METHOD_BODY_EMITTER? public;
+
         // Reads `--debug` off the shared build-flags singleton so
         // non-debug builds pay nothing for the `mark_location` check.
         want_debug_info: bool =>
@@ -276,6 +286,58 @@ namespace IR is
             _outputs.pop();
 
             return result.to_string();
+        si
+
+        // Resolves a call target to a member reference. Handles the two
+        // owner shapes a call can have: a ghūl global function, hosted on
+        // its namespace's $globals carrier, and a static method, hosted
+        // directly on its declaring type.
+        //
+        // Only void-returning signatures taking zero or one string
+        // argument are encoded; anything else needs the signature blob
+        // built from the function's actual argument and return types.
+        resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.MemberReferenceHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let assembly_name: string mut;
+            let owner_namespace_path: string mut;
+            let owner_simple_name: string mut;
+
+            if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = function then
+                let owner_namespace = cast Semantic.Symbols.NAMESPACE(global_function.owner);
+
+                assembly_name = global_function.il_assembly_name ?? "";
+                owner_namespace_path = owner_namespace.qualified_name.substring(1);
+                owner_simple_name = Semantic.DotNet.GLOBALS_CARRIER.name;
+            elif let owner_classy: Semantic.Symbols.Classy = function.owner then
+                // il_name_override on an imported type is the CLR-side
+                // dotted full name (see symbol_factory.ghul's get_il_name),
+                // unlike qualified_name which is the ghūl-mapped spelling
+                // (e.g. "IO.Std" for System.Console).
+                let clr_type_name = owner_classy.il_name_override ?? owner_classy.qualified_name;
+                let dot = clr_type_name.last_index_of('.');
+
+                assembly_name = owner_classy.il_assembly_name ?? "";
+                owner_namespace_path = if dot >= 0 then clr_type_name.substring(0, dot) else "" fi;
+                owner_simple_name = if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi;
+            else
+                assert false else "cannot resolve a call target owned by {function.owner}";
+
+                return default;
+            fi
+
+            let owner_key = "{assembly_name}|{owner_namespace_path}.{owner_simple_name}";
+
+            let owner_ref = emitter.add_type_reference(assembly_name, owner_namespace_path, owner_simple_name);
+
+            let signature =
+                if function.arguments.count == 0 then
+                    [0x00ub, 0x00ub, 0x01ub];
+                else
+                    [0x00ub, 0x01ub, 0x01ub, 0x0eub];
+                fi;
+
+            return emitter.add_member_reference(owner_ref, owner_key, function.il_bare_name, signature);
         si
     si
 si

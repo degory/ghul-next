@@ -1,0 +1,231 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.BlobBuilder;
+    use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.BlobHandle;
+    use System.Reflection.Metadata.StringHandle;
+    use System.Reflection.Metadata.UserStringHandle;
+    use System.Reflection.Metadata.AssemblyReferenceHandle;
+    use System.Reflection.Metadata.TypeReferenceHandle;
+    use System.Reflection.Metadata.MemberReferenceHandle;
+    use System.Reflection.Metadata.MethodDefinitionHandle;
+    use System.Reflection.Metadata.MethodAttributes;
+    use System.Reflection.Metadata.MethodImplAttributes;
+    use System.Reflection.Metadata.Ecma335.MetadataBuilder;
+    use System.Reflection.Metadata.Ecma335.MetadataRootBuilder;
+    use System.Reflection.Metadata.Ecma335.MetadataTokens;
+    use System.Reflection.Metadata.Ecma335.MethodBodyStreamEncoder;
+    use System.Reflection.Metadata.Ecma335.InstructionEncoder;
+    use System.Reflection.Metadata.Ecma335.TableIndex;
+
+    use System.Reflection.PortableExecutable.ManagedPEBuilder;
+    use System.Reflection.PortableExecutable.PEHeaderBuilder;
+    use System.Reflection.PortableExecutable.CorFlags;
+
+    // Owns the in-flight assembly: the metadata builder, the method body
+    // stream, and the reference/member handle caches. Deduplication is
+    // this layer's job — a metadata table holds one row per distinct
+    // reference, with no merging of repeats after the fact.
+    //
+    // Emission is split across three objects, narrowing in scope: this
+    // one, SRM_TYPE_EMITTER for one in-flight type, and
+    // SRM_METHOD_BODY_EMITTER for one method body's instructions.
+    class SRM_ASSEMBLY_EMITTER is
+        _metadata: MetadataBuilder;
+        _il_builder: BlobBuilder;
+        _body_stream: MethodBodyStreamEncoder;
+
+        _assembly_refs: Collections.MAP[string, AssemblyReferenceHandle];
+        _type_refs: Collections.MAP[string, TypeReferenceHandle];
+        _member_refs: Collections.MAP[string, MemberReferenceHandle];
+
+        _entry_point: MethodDefinitionHandle?;
+        _want_library: bool;
+
+        // `version` is the colon-separated ilasm .ver format ("0:0:0:0")
+        // module_version is already built in, so parsing here avoids a
+        // second version representation at the call site.
+        init(module_name: string, assembly_name: string, version: string, want_library: bool) is
+            let parsed_version = parse_version(version);
+
+            _metadata = MetadataBuilder(0, 0, 0, 0);
+            _il_builder = BlobBuilder(256);
+            _body_stream = MethodBodyStreamEncoder(_il_builder);
+
+            _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
+            _type_refs = Collections.MAP[string, TypeReferenceHandle]();
+            _member_refs = Collections.MAP[string, MemberReferenceHandle]();
+
+            _want_library = want_library;
+
+            // TypeDef row 1 must be <Module>, before any user type.
+            _metadata.add_type_definition(
+                default,
+                default,
+                _metadata.get_or_add_string("<Module>"),
+                default,
+                MetadataTokens.field_definition_handle(1),
+                MetadataTokens.method_definition_handle(1));
+
+            _metadata.add_module(
+                0,
+                _metadata.get_or_add_string(module_name),
+                _metadata.get_or_add_guid(System.Guid.new_guid()),
+                default,
+                default);
+
+            _metadata.add_assembly(
+                _metadata.get_or_add_string(assembly_name),
+                parsed_version,
+                default,
+                default,
+                default,
+                default);
+
+            // Boilerplate reference every assembly needs (base type of the
+            // globals carrier); the text path hardcoded the same version
+            // in lib/dotnet/il/header-top.il.
+            add_assembly_reference("System.Runtime", "8:0:0:0");
+        si
+
+        parse_version(value: string) -> System.Version static is
+            let parts = value.split([':']);
+
+            return System.Version(
+                int.parse(parts[0]),
+                int.parse(parts[1]),
+                int.parse(parts[2]),
+                int.parse(parts[3]));
+        si
+
+        get_or_add_string(value: string) -> StringHandle =>
+            _metadata.get_or_add_string(value);
+
+        get_or_add_user_string(value: string) -> UserStringHandle =>
+            _metadata.get_or_add_user_string(value);
+
+        get_or_add_blob(bytes: ubyte[]) -> BlobHandle =>
+            _metadata.get_or_add_blob(bytes);
+
+        next_field_row: int => _metadata.get_row_count(TableIndex.FIELD) + 1;
+        next_method_row: int => _metadata.get_row_count(TableIndex.METHOD_DEF) + 1;
+
+        add_assembly_reference(name: string, version: string) -> AssemblyReferenceHandle is
+            if _assembly_refs.contains_key(name) then
+                return _assembly_refs[name];
+            fi
+
+            let handle = _metadata.add_assembly_reference(
+                _metadata.get_or_add_string(name),
+                parse_version(version),
+                default,
+                default,
+                default,
+                default);
+
+            _assembly_refs[name] = handle;
+
+            return handle;
+        si
+
+        add_type_reference(assembly_name: string, namespace_name: string, simple_name: string) -> TypeReferenceHandle is
+            let key = "{assembly_name}|{namespace_name}.{simple_name}";
+
+            if _type_refs.contains_key(key) then
+                return _type_refs[key];
+            fi
+
+            assert _assembly_refs.contains_key(assembly_name) else
+                "assembly reference '{assembly_name}' must be registered before a type reference into it";
+
+            let assembly_ref = _assembly_refs[assembly_name];
+
+            let handle = _metadata.add_type_reference(
+                cast EntityHandle(assembly_ref),
+                _metadata.get_or_add_string(namespace_name),
+                _metadata.get_or_add_string(simple_name));
+
+            _type_refs[key] = handle;
+
+            return handle;
+        si
+
+        add_member_reference(
+            owner: TypeReferenceHandle,
+            owner_key: string,
+            name: string,
+            signature_bytes: ubyte[]
+        ) -> MemberReferenceHandle is
+            let key = "{owner_key}::{name}";
+
+            if _member_refs.contains_key(key) then
+                return _member_refs[key];
+            fi
+
+            let handle = _metadata.add_member_reference(
+                cast EntityHandle(owner),
+                _metadata.get_or_add_string(name),
+                _metadata.get_or_add_blob(signature_bytes));
+
+            _member_refs[key] = handle;
+
+            return handle;
+        si
+
+        add_method_body(encoder: InstructionEncoder) -> int =>
+            _body_stream.add_method_body(encoder, 8, default, default);
+
+        add_method_definition(
+            flags: MethodAttributes,
+            impl_flags: MethodImplAttributes,
+            name: StringHandle,
+            signature: BlobHandle,
+            body_offset: int,
+            parameter_list: System.Reflection.Metadata.ParameterHandle
+        ) -> MethodDefinitionHandle =>
+            _metadata.add_method_definition(flags, impl_flags, name, signature, body_offset, parameter_list);
+
+        add_type_definition(
+            flags: System.Reflection.TypeAttributes,
+            namespace_name: StringHandle,
+            simple_name: StringHandle,
+            base_type: EntityHandle,
+            field_list: System.Reflection.Metadata.FieldDefinitionHandle,
+            method_list: MethodDefinitionHandle
+        ) is
+            _metadata.add_type_definition(flags, namespace_name, simple_name, base_type, field_list, method_list);
+        si
+
+        set_entry_point(method: MethodDefinitionHandle) is
+            _entry_point = method;
+        si
+
+        write_to(path: string) is
+            let pe_header =
+                if _want_library then
+                    PEHeaderBuilder.create_library_header();
+                else
+                    PEHeaderBuilder.create_executable_header();
+                fi;
+
+            let pe_builder = ManagedPEBuilder(
+                pe_header,
+                MetadataRootBuilder(_metadata, null, false),
+                _il_builder,
+                null,
+                null,
+                null,
+                null,
+                0,
+                _entry_point ?? default[MethodDefinitionHandle],
+                cast CorFlags(1),   // ILOnly
+                null);
+
+            let pe_blob = BlobBuilder(1024);
+            pe_builder.serialize(pe_blob);
+
+            let stream = IO.File.create(path);
+            pe_blob.write_content_to(stream);
+            stream.close();
+        si
+    si
+si

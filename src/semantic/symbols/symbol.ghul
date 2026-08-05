@@ -252,6 +252,11 @@ namespace Semantic.Symbols is
                 "'{escape_il_quoted_identifier(name)}'"
             fi;
 
+        // The unquoted counterpart of il_name: the .NET member name a
+        // handle-based emitter (SRM) writes to a metadata string heap,
+        // which takes the bare name rather than an ilasm-quoted token.
+        il_bare_name: string => il_name_override ?? name;
+
         // Escapes an identifier for placement inside an ilasm single-quoted
         // name: the backslash is ilasm's escape character and the single
         // quote is the delimiter, so both are doubled/escaped. Applied only

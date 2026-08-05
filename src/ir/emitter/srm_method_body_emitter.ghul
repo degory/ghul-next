@@ -1,0 +1,33 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.BlobBuilder;
+    use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.Ecma335.InstructionEncoder;
+    use System.Reflection.Metadata.ILOpCode;
+
+    // Instruction-level surface for one method body. Backed by SRM's
+    // InstructionEncoder; `flush` hands the encoded body to the owning
+    // assembly emitter's method body stream and returns the body offset
+    // that AddMethodDefinition takes directly (not a handle).
+    class SRM_METHOD_BODY_EMITTER is
+        _encoder: InstructionEncoder;
+
+        init() is
+            _encoder = InstructionEncoder(BlobBuilder(32), null);
+        si
+
+        ldstr(metadata: SRM_ASSEMBLY_EMITTER, value: string) is
+            _encoder.load_string(metadata.get_or_add_user_string(value));
+        si
+
+        call(member_ref: EntityHandle) is
+            _encoder.call(member_ref);
+        si
+
+        ret() is
+            _encoder.op_code(ILOpCode.RET);
+        si
+
+        flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int =>
+            assembly_emitter.add_method_body(_encoder);
+    si
+si
