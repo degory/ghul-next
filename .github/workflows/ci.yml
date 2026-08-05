@@ -629,6 +629,12 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # Declared rather than inherited: this repository's default workflow token
+    # is read-only, and pushing to the GitHub feed needs packages:write.
+    permissions:
+      contents: read
+      packages: write
+
     if: ${{ github.event_name == 'pull_request' }}
     steps:
     - uses: actions/checkout@v6
@@ -662,6 +668,12 @@ jobs:
     timeout-minutes: 5
 
     runs-on: ubuntu-latest
+
+    # Declared rather than inherited: this repository's default workflow token
+    # is read-only, and pushing to the GitHub feed needs packages:write.
+    permissions:
+      contents: read
+      packages: write
 
     if: ${{ github.event_name != 'pull_request' }}
 
