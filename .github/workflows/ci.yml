@@ -607,6 +607,10 @@ jobs:
       idle-timeout-seconds: ${{ fromJSON(vars.CLAUDE_REVIEW_IDLE_TIMEOUT_SECONDS || '90') }}
       max-attempts: ${{ fromJSON(vars.CLAUDE_REVIEW_MAX_ATTEMPTS || '3') }}
       gh-app-id: ${{ vars.GHUL_REVIEWER_APP_ID }}
+      # Pinned rather than left to the fleet default, which this would
+      # otherwise follow upwards. Replacing the IL back end is months of
+      # pull requests, and none of them warrant the top tier.
+      tier: medium
       prompt: |
         Review pull request #${{ github.event.pull_request.number }} on ${{ github.repository }}.
 
