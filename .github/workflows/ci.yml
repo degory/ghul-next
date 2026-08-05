@@ -607,6 +607,10 @@ jobs:
       idle-timeout-seconds: ${{ fromJSON(vars.CLAUDE_REVIEW_IDLE_TIMEOUT_SECONDS || '90') }}
       max-attempts: ${{ fromJSON(vars.CLAUDE_REVIEW_MAX_ATTEMPTS || '3') }}
       gh-app-id: ${{ vars.GHUL_REVIEWER_APP_ID }}
+      # Pinned rather than left to the fleet default, which this would
+      # otherwise follow upwards. Replacing the IL back end is months of
+      # pull requests, and none of them warrant the top tier.
+      tier: medium
       prompt: |
         Review pull request #${{ github.event.pull_request.number }} on ${{ github.repository }}.
 
@@ -628,6 +632,12 @@ jobs:
     timeout-minutes: 5
 
     runs-on: ubuntu-latest
+
+    # Declared rather than inherited: this repository's default workflow token
+    # is read-only, and pushing to the GitHub feed needs packages:write.
+    permissions:
+      contents: read
+      packages: write
 
     if: ${{ github.event_name == 'pull_request' }}
     steps:
@@ -662,6 +672,12 @@ jobs:
     timeout-minutes: 5
 
     runs-on: ubuntu-latest
+
+    # Declared rather than inherited: this repository's default workflow token
+    # is read-only, and pushing to the GitHub feed needs packages:write.
+    permissions:
+      contents: read
+      packages: write
 
     if: ${{ github.event_name != 'pull_request' }}
 
