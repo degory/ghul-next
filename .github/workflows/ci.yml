@@ -324,7 +324,12 @@ jobs:
 
   # The groups that build and run a binary. Expected to fail while the IL
   # back end is being replaced, which is why it is separate from
-  # integration_tests and is not a required check.
+  # integration_tests: keeping them apart is what lets the branch require one
+  # of them without requiring the other.
+  #
+  # Publishing does depend on this job, so it stops for as long as this fails.
+  # That is the intent - a compiler that cannot emit is not worth putting on a
+  # feed - and each run's packed artefact stays downloadable regardless.
   codegen_tests:
     needs: [version, build]
     name: Run codegen tests
