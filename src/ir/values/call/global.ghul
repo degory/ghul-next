@@ -27,7 +27,11 @@ namespace IR.Values.Call is
                 gen(a, context);
             od
 
-            context.write_line("call {function.get_il_reference()}");                
+            if let body = context.current_srm_body_emitter then
+                body.call(cast System.Reflection.Metadata.EntityHandle(context.resolve_call_target(function)));
+            else
+                context.write_line("call {function.get_il_reference()}");
+            fi
         si
 
         to_string() -> string =>

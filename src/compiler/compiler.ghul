@@ -116,7 +116,13 @@ namespace Compiler is
                 build_passes,
                 "generate-il",
                 () -> void is
-                    container.referenced_assemblies.gen();
+                    let srm_emitter = container.ir_context.srm_assembly_emitter;
+
+                    if srm_emitter? then
+                        container.referenced_assemblies.gen(srm_emitter);
+                    else
+                        container.referenced_assemblies.gen();
+                    fi
                 si,
                 (source_file) -> bool => generate_il_pass(source_file),
                 () -> void is
