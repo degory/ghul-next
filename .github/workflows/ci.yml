@@ -257,6 +257,10 @@ jobs:
         name: ghul-analysis-protocol-package
         path: ./analysis-protocol/nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
 
+  # parse and semantic compile nothing -- every test in them either suppresses
+  # code generation or expects the build to fail -- so this stays green while
+  # the IL back end is being replaced. The groups that do emit are run by
+  # codegen_tests, which is expected to fail for the duration.
   integration_tests:
     needs: [version, build]
     name: Run integration tests
@@ -311,11 +315,75 @@ jobs:
     - name: Run integration tests
       env:
         GHUL_RUNTIME_DLL: ${{ github.workspace }}/bootstrap-tool/ghul-runtime.dll
-      run: bash -c "set -o pipefail ; dotnet ghul-test integration-tests | tee test-results.txt"
+      run: bash -c "set -o pipefail ; dotnet ghul-test integration-tests/parse integration-tests/semantic | tee test-results.txt"
 
     - uses: actions/upload-artifact@v7
       with:
         name: test-results
+        path: test-results.txt
+
+  # The groups that build and run a binary. Expected to fail while the IL
+  # back end is being replaced, which is why it is separate from
+  # integration_tests and is not a required check.
+  codegen_tests:
+    needs: [version, build]
+    name: Run codegen tests
+
+    # The ghul-test harness spawns cpu*3/2 worker processes for >6 cores
+    # (test-queue.ghul:38-52), each running dotnet ghul-compiler. 16 vCPU
+    # → 24 parallel workers, the headline parallel-throughput win.
+    runs-on: ubicloud-standard-16
+
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        cache: true
+        cache-dependency-path: |
+          **/Directory.Packages.props
+          **/.config/dotnet-tools.json
+
+    - name: Download ghul-next.compiler package
+      uses: actions/download-artifact@v8
+      with:
+        name: ghul-compiler-package
+        path: nupkg
+
+    - name: Download bootstrap compiler tool tree
+      uses: actions/download-artifact@v8
+      with:
+        name: ghul-compiler-tool
+        path: bootstrap-tool
+
+    - name: Add GHCR package source
+      run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
+
+    - name: Install the freshly-built compiler
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
+
+    - name: Restore local .NET tools
+      run: dotnet tool restore
+
+    # Pin the runtime DLL the compiled test binaries link against to the
+    # one the bootstrapped compiler ships with, not whatever runtime
+    # ghul.test was packaged with. Without this, an integration test
+    # that uses a runtime feature added since the ghul.test publish
+    # would fail to resolve the symbol — because ghul-test in CI mode
+    # otherwise picks the runtime DLL sitting next to its own binary.
+    # GHUL_RUNTIME_DLL was added in ghul-test 1.3.7 (degory/ghul-test#108).
+    - name: Run codegen tests
+      env:
+        GHUL_RUNTIME_DLL: ${{ github.workspace }}/bootstrap-tool/ghul-runtime.dll
+      run: bash -c "set -o pipefail ; dotnet ghul-test integration-tests/execution integration-tests/il | tee test-results.txt"
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: codegen-test-results
         path: test-results.txt
 
   analysis_tests:
@@ -626,7 +694,7 @@ jobs:
       gh-app-private-key: ${{ secrets.GHUL_REVIEWER_PRIVATE_KEY }}
 
   publish_beta_package:
-    needs: [version, unit_tests, analysis_tests, integration_tests, cross_assembly_tests, runtime_tests, examples_tests]
+    needs: [version, unit_tests, analysis_tests, integration_tests, codegen_tests, cross_assembly_tests, runtime_tests, examples_tests]
     name: Publish beta package
 
     timeout-minutes: 5
@@ -666,7 +734,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish_release_package:
-    needs: [version, unit_tests, analysis_tests, integration_tests, cross_assembly_tests, runtime_tests, examples_tests]
+    needs: [version, unit_tests, analysis_tests, integration_tests, codegen_tests, cross_assembly_tests, runtime_tests, examples_tests]
     name: Publish release package
 
     timeout-minutes: 5
