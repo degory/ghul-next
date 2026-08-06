@@ -583,7 +583,10 @@ namespace Syntax.Process is
         gen_globals_class_open_srm(`namespace: Semantic.Symbols.NAMESPACE) is
             let emitter = _context.srm_assembly_emitter!;
 
-            let object_ref = emitter.add_type_reference("System.Runtime", "System", "Object");
+            let object_ref =
+                IR.Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                    .type_reference_for(
+                        cast Semantic.Symbols.Classy(_innate_symbol_lookup.get_object_type().symbol));
 
             _context.current_srm_type_emitter = IR.Emitter.SRM_TYPE_EMITTER(
                 emitter,
@@ -1338,11 +1341,7 @@ namespace Syntax.Process is
             let body_offset = body_emitter.flush(assembly_emitter);
 
             let signature =
-                if global_function.arguments.count == 0 then
-                    [0x00ub, 0x00ub, 0x01ub];
-                else
-                    [0x00ub, 0x01ub, 0x01ub, 0x0eub];
-                fi;
+                IR.Emitter.SRM_SIGNATURE_ENCODER(assembly_emitter).method_signature(global_function);
 
             let method_handle = type_emitter.add_method(
                 global_function.il_bare_name,
