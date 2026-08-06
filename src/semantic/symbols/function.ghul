@@ -254,9 +254,9 @@ namespace Semantic.Symbols is
 
         // Parallel to `argument_names`: the declared default of each
         // parameter, or null when the parameter has no default and so
-        // cannot be omitted from a named call. The `default` keyword
-        // is stored as "default"; a literal default (reflected
-        // methods only) is stored as its text.
+        // cannot be omitted from a named call. A ghūl-source `= _`
+        // parameter is stored as "default"; a literal default
+        // (reflected methods only) is stored as its text.
         argument_defaults: Collections.List[string?] public;
 
         // Parallel to `argument_names`: per-parameter by-ref direction,
@@ -321,6 +321,15 @@ namespace Semantic.Symbols is
 
         is_function: bool => true;
         is_generic: bool public;
+
+        // Excluded as a candidate when a binary operator expression
+        // resolves. Set on a reflected operator-named member of a type
+        // whose operator is innate — `int`'s `<>` from
+        // `IComparable[int].CompareTo` — so `a < b` keeps lowering to
+        // the comparison opcode while the member remains reachable
+        // every other way: it satisfies its trait, resolves by name,
+        // and converts to a delegate.
+        is_hidden_from_operator_resolution: bool public;
         is_abstract: bool => false;
         is_virtual: bool => false;
         is_default_trait_method: bool => false;
@@ -922,7 +931,7 @@ namespace Semantic.Symbols is
                 
         ensure_return_type_matches(into: Classy, overridee: Function, want_override: bool, logger: Logger) -> bool is
             if !into.is_reflected then
-                if return_type! !~ overridee.return_type! then
+                if !return_type!.matches(overridee.return_type!) then
                     if want_override then
                         inheritance_warn(logger, into, "override-mismatch-return-type", "does not override {overridee} due to different return type {return_type}");
                     else
@@ -1126,14 +1135,14 @@ namespace Semantic.Symbols is
             if arguments.count == 1 then
                 let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
-                if return_type !~ lookup.get_int_type() /\ return_type !~ lookup.get_void_type() then
+                if !return_type!.matches(lookup.get_int_type()) /\ !return_type!.matches(lookup.get_void_type()) then
                     IoC.CONTAINER.instance.logger.warn(location, "non-entrypoint", "not an entrypoint because return type is not int or void");
                     return;
                 fi
 
                 let array_type = lookup.get_array_type(lookup.get_string_type());
 
-                if arguments[0] !~ array_type then
+                if !arguments[0].matches(array_type) then
                     IoC.CONTAINER.instance.logger.warn(location, "non-entrypoint", "not an entrypoint because argument type is not string[]");
                     return;
                 fi                
