@@ -3067,7 +3067,7 @@ namespace Syntax.Process is
                 block.end_label = end_label;
 
                 let result_type = value_block.type;
-                let is_void = result_type =~ _innate_symbol_lookup.get_void_type();
+                let is_void = result_type.matches(_innate_symbol_lookup.get_void_type());
 
                 let frame_il = VAL_BLOCK_IL(
                     block,
@@ -3317,7 +3317,7 @@ namespace Syntax.Process is
                 if !expression.want_value /\ expression.expression.value? then
                     let value = expression.expression.value;
 
-                    let is_void = value.type? /\ value.type =~ _innate_symbol_lookup.get_void_type();
+                    let is_void = value.type? /\ value.type!.matches(_innate_symbol_lookup.get_void_type());
 
                     // Bare `await E;` with void result: visit(AWAIT)
                     // emitted the suspend eagerly; re-emitting the
@@ -4263,10 +4263,10 @@ namespace Syntax.Process is
             let return_type = current_function!.return_type;
 
             let return_needed: TEMP? mut;
-            let return_value: TEMP? mut = default;
-            let label: LOOP_LABELS? mut = default;
+            let return_value: TEMP? mut = _;
+            let label: LOOP_LABELS? mut = _;
 
-            let outer_try: LOOP_LABELS? mut = default;
+            let outer_try: LOOP_LABELS? mut = _;
 
             let brancher = get_brancher_for_block();
 
@@ -4860,7 +4860,7 @@ namespace Syntax.Process is
             let return_type = current_function!.return_type;
 
             let return_needed: TEMP mut;
-            let return_value: TEMP? mut = default;
+            let return_value: TEMP? mut = _;
 
             let outer_try = _loops.get_current_try();
 
@@ -4871,7 +4871,7 @@ namespace Syntax.Process is
             else
                 return_needed = TEMP(current_block, "need_return", 1, _innate_symbol_lookup.get_bool_type());
 
-                if return_type? /\ return_type !~ _innate_symbol_lookup.get_void_type() then
+                if return_type? /\ !return_type.matches(_innate_symbol_lookup.get_void_type()) then
                     return_value = TEMP(current_block, "return", return_type);                
                 fi
             fi

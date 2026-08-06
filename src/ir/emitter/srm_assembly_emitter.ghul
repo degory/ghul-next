@@ -59,10 +59,10 @@ namespace IR.Emitter is
 
             // TypeDef row 1 must be <Module>, before any user type.
             _metadata.add_type_definition(
-                default,
-                default,
+                _,
+                _,
                 _metadata.get_or_add_string("<Module>"),
-                default,
+                _,
                 MetadataTokens.field_definition_handle(1),
                 MetadataTokens.method_definition_handle(1));
 
@@ -70,16 +70,16 @@ namespace IR.Emitter is
                 0,
                 _metadata.get_or_add_string(module_name),
                 _metadata.get_or_add_guid(System.Guid.new_guid()),
-                default,
-                default);
+                _,
+                _);
 
             _metadata.add_assembly(
                 _metadata.get_or_add_string(assembly_name),
                 parsed_version,
-                default,
-                default,
-                default,
-                default);
+                _,
+                _,
+                _,
+                _);
 
             // Boilerplate reference every assembly needs (base type of the
             // globals carrier); the text path hardcoded the same version
@@ -117,10 +117,10 @@ namespace IR.Emitter is
             let handle = _metadata.add_assembly_reference(
                 _metadata.get_or_add_string(name),
                 parse_version(version),
-                default,
-                default,
-                default,
-                default);
+                _,
+                _,
+                _,
+                _);
 
             _assembly_refs[name] = handle;
 
@@ -172,7 +172,7 @@ namespace IR.Emitter is
         si
 
         add_method_body(encoder: InstructionEncoder) -> int =>
-            _body_stream.add_method_body(encoder, 8, default, default);
+            _body_stream.add_method_body(encoder, 8, _, _);
 
         add_method_definition(
             flags: MethodAttributes,
@@ -216,7 +216,7 @@ namespace IR.Emitter is
                 null,
                 null,
                 0,
-                _entry_point ?? default[MethodDefinitionHandle],
+                _entry_point ?? _[MethodDefinitionHandle],
                 cast CorFlags(1),   // ILOnly
                 null);
 

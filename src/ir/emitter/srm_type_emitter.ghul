@@ -40,7 +40,7 @@ namespace IR.Emitter is
                 _assembly.get_or_add_string(name),
                 signature,
                 body_offset,
-                default);
+                _);
 
             _pending_methods.add(PENDING_METHOD(handle));
 

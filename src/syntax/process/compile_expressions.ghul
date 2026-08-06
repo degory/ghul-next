@@ -835,27 +835,13 @@ namespace Syntax.Process is
             let arg_offset = shape.arg_offset;
             let arg_count = call.arguments.expressions.count - arg_offset;
 
-            let consumer_kind: string mut;
+            let recognized_kind = PIPE_CONSUMER_KIND.of(name, arg_count);
 
-            if name =~ "count" /\ arg_count == 0 then
-                consumer_kind = "count";
-            elif name =~ "any" /\ arg_count == 1 then
-                consumer_kind = "any";
-            elif name =~ "all" /\ arg_count == 1 then
-                consumer_kind = "all";
-            elif name =~ "for_each" /\ arg_count == 1 then
-                consumer_kind = "for_each";
-            elif name =~ "reduce" /\ arg_count == 2 then
-                consumer_kind = "reduce";
-            elif name =~ "find" /\ arg_count == 1 then
-                consumer_kind = "find";
-            elif name =~ "first" /\ arg_count == 0 then
-                consumer_kind = "first";
-            elif name =~ "collect_list" /\ arg_count == 0 then
-                consumer_kind = "collect";
-            else
+            if !recognized_kind? then
                 return null;
             fi
+
+            let consumer_kind = recognized_kind!;
 
             if !call.value? \/ !call.value.type? then
                 return null;
@@ -931,7 +917,7 @@ namespace Syntax.Process is
 
             let final_element_load = cast IR.Values.Value(IR.Values.Load.TEMP(built.final_il_name, built.final_type));
 
-            if consumer_kind =~ "any" \/ consumer_kind =~ "all" \/ consumer_kind =~ "for_each" \/ consumer_kind =~ "find" then
+            if PIPE_CONSUMER_KIND.takes_function(consumer_kind) then
                 // Hoist the predicate / action delegate and apply it to the
                 // surviving element per iteration.
                 let function = call.arguments.expressions[arg_offset].value!;
@@ -2123,7 +2109,7 @@ namespace Syntax.Process is
                 let `do?.condition? /\
                 Value.check_is_consumable(_logger, condition.location, condition.value)
             then
-                if condition.value!.type !~_innate_symbol_lookup.get_bool_type() then
+                if !condition.value!.type!.matches(_innate_symbol_lookup.get_bool_type()) then
                     _logger.error(condition.location, "while condition must be bool");
                 fi
             fi
@@ -2246,8 +2232,8 @@ namespace Syntax.Process is
                 elif value.type? /\ value.type!.is_error then
                     function.set_return_type(Semantic.Types.ERROR());
                 fi
-            elif function.return_type =~ void_type /\ !function.return_type!.is_type_variable then
-                if value.type !~ void_type then
+            elif function.return_type!.matches(void_type) /\ !function.return_type!.is_type_variable then
+                if !value.type!.matches(void_type) then
                     _logger
                         .error(
                             expression.location,
@@ -2372,7 +2358,7 @@ namespace Syntax.Process is
                 // aware element types (notably function literals) use
                 // it to infer their argument types; element types that
                 // ignore constraint (most literals) are unaffected.
-                let element_constraint: Type? mut = default;
+                let element_constraint: Type? mut = _;
 
                 if let sequence.type_expression? /\ !isa Trees.TypeExpressions.INFER(type_expression), type_expression.type? then
                     element_constraint = type.get_element_type();
@@ -2658,7 +2644,8 @@ namespace Syntax.Process is
                 source_type.is_value_type /\ !type.is_value_type /\
                 !source_type.is_optional /\
                 !type.is_assignable_from(source_type) /\
-                !source_type.is_assignable_from(type);
+                !source_type.is_assignable_from(type) /\
+                !_type_caster.find_user_defined_conversion(source_type, type)?;
 
             if !_build_flags.no_warn_impossible_cast /\ is_impossible_cast then
                 _logger.warn(
@@ -3230,11 +3217,11 @@ namespace Syntax.Process is
                 variable.left.mark_refutable_recursive();
             fi
 
-            // A bare `default` initializer of a simple local with no
+            // A bare `_` initializer of a simple local with no
             // explicit type is treated exactly like a no-initializer
             // `let`: the type is inferred from later assignments.
-            // `default` only contributes the definite-assignment fact
-            // — the LET deferred-init tracking keys off `initializer?`,
+            // `_` only contributes the definite-assignment fact — the
+            // LET deferred-init tracking keys off `initializer?`,
             // which is true here, so the variable is not warned.
             let bare_default =
                 isa Trees.Expressions.DEFAULT(variable.initializer) /\
@@ -3748,9 +3735,9 @@ namespace Syntax.Process is
         visit(`null: Trees.Expressions.NULL) is
             // For a value-type `T?` target (NULLABLE[T]) `null` is the
             // empty Nullable — a zeroed value, not a reference. Lower
-            // it like `default`; a plain ldnull would be invalid IL
-            // against a value-type slot. Reference-type targets keep
-            // the ordinary null reference.
+            // it as an IR.Values.DEFAULT; a plain ldnull would be
+            // invalid IL against a value-type slot. Reference-type
+            // targets keep the ordinary null reference.
             if let `null.expected_type? /\ expected_type.is_value_type /\ expected_type.is_optional then
                 `null.compile_expressions_state.value = IR.Values.DEFAULT(expected_type);
             else
