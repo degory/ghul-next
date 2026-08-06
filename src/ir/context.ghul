@@ -323,7 +323,7 @@ namespace IR is
             else
                 assert false else "cannot resolve a call target owned by {function.owner}";
 
-                return default;
+                return _;
             fi
 
             let owner_key = "{assembly_name}|{owner_namespace_path}.{owner_simple_name}";
