@@ -1343,13 +1343,12 @@ namespace Syntax.Process is
             let signature =
                 IR.Emitter.SRM_SIGNATURE_ENCODER(assembly_emitter).method_signature(global_function);
 
-            let method_handle = type_emitter.add_method(
+            type_emitter.add_method(
                 global_function.il_bare_name,
                 cast System.Reflection.MethodAttributes(150),   // public | static | hidebysig
                 signature,
-                body_offset);
-
-            assembly_emitter.set_entry_point(method_handle);
+                body_offset)
+                .mark_entry_point();
 
             _context.current_srm_body_emitter = null;
 
