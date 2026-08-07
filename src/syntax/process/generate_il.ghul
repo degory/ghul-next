@@ -2808,6 +2808,47 @@ namespace Syntax.Process is
                 return;
             fi
 
+            // The binary path encodes the closure's body into a method
+            // body of its own rather than capturing its text. The
+            // enclosing method is mid-encode, so its emitter is set
+            // aside for the duration and restored after: the two bodies
+            // are separate, and the instructions of one must not land in
+            // the other.
+            if let assembly_emitter = _context.srm_assembly_emitter then
+                let enclosing = _context.current_srm_body_emitter;
+                let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+                _context.current_srm_body_emitter = body_emitter;
+
+                _gen_closure_destructure_prologue(function, closure);
+
+                function.body.walk(self);
+
+                if
+                    closure.return_type? /\
+                    closure.return_type.compare(_innate_symbol_lookup.get_void_type()) != Semantic.Types.MATCH.SAME
+                then
+                    add(Values.DEFAULT_RETURN(closure.return_type!));
+                fi
+
+                add(Values.RET());
+
+                current_block.gen(_context);
+
+                leave_block();
+
+                assembly_emitter.handles.set_body_offset(
+                    closure, body_emitter.flush(assembly_emitter));
+
+                _context.current_srm_body_emitter = enclosing;
+
+                super.visit(function);
+
+                closure.unmap_type_arguments();
+
+                return;
+            fi
+
             _gen_closure_destructure_prologue(function, closure);
 
             function.body.walk(self);

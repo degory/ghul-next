@@ -241,7 +241,7 @@ namespace IR.Emitter is
 
                 let `field = closure.delegate_cache_field;
 
-                if `field.owner == type.scope then
+                if _is_owned_by(`field, type) then
                     into.add(`field);
                 fi
             od
@@ -297,10 +297,54 @@ namespace IR.Emitter is
                 fi
             od
 
+            _collect_anonymous_functions(type, result);
+
             _sort_by_declaration(result);
 
             return result;
         si
+
+        // A function literal that captures nothing is emitted as a
+        // static method on the type that encloses it, but it is
+        // declared into the function it was written in - `owner` points
+        // at the emitted home without the symbol store there holding
+        // it - so the walk over that home's own symbols does not reach
+        // one. Same shape as a closure frame, and as the cache field a
+        // memoized one stores itself in.
+        _collect_anonymous_functions(
+            type: SRM_EMITTED_TYPE,
+            into: Collections.LIST[Function]
+        ) static is
+            let closures = Collections.LIST[Semantic.Symbols.Closure]();
+
+            _collect_closures(type.owning_namespace ?? type.scope, closures, Collections.SET[Scope]());
+
+            for closure in closures do
+                if closure.is_anon_func /\ _is_owned_by(closure, type) then
+                    into.add(closure);
+                fi
+            od
+        si
+
+        // Whether a member is emitted onto this type.
+        //
+        // A member's owner is sometimes the namespace symbol and
+        // sometimes the scope standing for it, and the two are distinct
+        // objects, so comparing owners directly answers false for a
+        // member that does belong here. Both sides are resolved to the
+        // namespace before comparing.
+        _is_owned_by(member: Symbol, type: SRM_EMITTED_TYPE) -> bool static =>
+            (_as_namespace(member.owner) ?? member.owner) ==
+            (_as_namespace(type.scope) ?? type.scope);
+
+        _as_namespace(scope: Scope?) -> Scope? static =>
+            if let declared: NAMESPACE = scope then
+                declared;
+            elif let namespace_scope: Semantic.NAMESPACE_SCOPE = scope then
+                namespace_scope.containing_namespace;
+            else
+                null;
+            fi;
 
         // Overloads declared on one line, and synthesised members that
         // share the internal location, would otherwise order
