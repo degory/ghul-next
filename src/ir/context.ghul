@@ -576,16 +576,7 @@ namespace IR is
                     Semantic.DotNet.GLOBALS_CARRIER.name));
             fi
 
-            // A constructed generic owner holds the open definition
-            // rather than being one, and the reference is to the open
-            // type: the instantiation lives in the specification built
-            // over it.
-            let owner_classy =
-                if let generic: Semantic.Symbols.GENERIC = member.owner then
-                    cast Semantic.Symbols.Classy?(generic.symbol)
-                else
-                    cast Semantic.Symbols.Classy?(member.owner)
-                fi;
+            let owner_classy = cast Semantic.Symbols.Classy?(member.owner);
 
             assert owner_classy? else "cannot reference a member owned by {member.owner}";
 
