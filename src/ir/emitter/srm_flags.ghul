@@ -86,6 +86,13 @@ namespace IR.Emitter is
             return cast MethodAttributes(flags);
         si
 
+        // A unit variant's static constructor, which the back end
+        // synthesises: private, static, and reserved-named like any
+        // other `.cctor`.
+        static_initializer_attributes() -> MethodAttributes static =>
+            cast MethodAttributes(
+                _PRIVATE_METHOD | _HIDE_BY_SIG | _STATIC | _SPECIAL_NAME | _RT_SPECIAL_NAME);
+
         // il_name_override arrives quoted for ilasm ('.ctor'); metadata
         // stores the bare name, and the quotes would become part of it.
         method_name(method: Function) -> string static =>
@@ -95,6 +102,9 @@ namespace IR.Emitter is
         _ASSEMBLY_FIELD: int static => 3;
         _PUBLIC_FIELD: int static => 6;
         _STATIC_FIELD: int static => 16;
+
+        unit_variant_instance_attributes() -> FieldAttributes static =>
+            cast FieldAttributes(_PUBLIC_FIELD | _STATIC_FIELD);
 
         field_attributes(`field: Field) -> FieldAttributes static is
             let flags mut =

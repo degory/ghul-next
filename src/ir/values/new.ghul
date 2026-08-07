@@ -32,6 +32,12 @@ namespace IR.Values is
             let owner = constructor.owner!;
 
             if owner.is_unit_variant then
+                if let body = context.current_srm_body_emitter then
+                    body.ldsfld(context.resolve_unit_variant_instance(owner));
+
+                    return;
+                fi
+
                 let sig_buffer = System.Text.StringBuilder();
                 owner.unspecialized_symbol!.gen_reference(sig_buffer);
                 let field_sig = sig_buffer.to_string();

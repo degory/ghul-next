@@ -25,6 +25,12 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             gen(value, context);
 
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_generic_constructor(_optional_type, 1));
+
+                return;
+            fi
+
             let buffer = System.Text.StringBuilder();
             buffer.append("newobj instance void ");
             _optional_type.gen_type(buffer);

@@ -360,6 +360,38 @@ namespace IR is
         // needs a TypeSpec rather than a bare reference, which is not
         // built yet, so those report rather than emitting a token that
         // names the open definition.
+        // A unit variant is constructed by loading the one interned
+        // instance the back end synthesises for it, rather than by
+        // calling its constructor.
+        resolve_unit_variant_instance(
+            variant: Semantic.Scope
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            // A specialization holds the open definition rather than
+            // being one, and only the definition has a row.
+            let classy =
+                if let generic: Semantic.Symbols.GENERIC = variant then
+                    cast Semantic.Symbols.Classy?(generic.symbol)
+                else
+                    cast Semantic.Symbols.Classy?(variant)
+                fi;
+
+            assert classy? else "unit variant '{variant.name}' is not a type";
+
+            if classy.is_generic then
+                throw System.NotImplementedException(
+                    "the binary back end cannot yet reach the interned instance of "
+                    "the generic unit variant '{classy.qualified_name}'");
+            fi
+
+            let instance = emitter.handles.unit_variant_instance(classy);
+
+            assert instance? else "unit variant '{variant.name}' has no interned instance";
+
+            return cast System.Reflection.Metadata.EntityHandle(instance);
+        si
+
         resolve_type_token(type: Semantic.Types.Type) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
 
@@ -403,6 +435,25 @@ namespace IR is
                     "Invoke {func_type}",
                     Emitter.SRM_SIGNATURE_ENCODER(emitter)
                         .delegate_invoke_signature(argument_count, is_action)));
+        si
+
+        // A tuple and a wrapped optional are both a constructed generic
+        // built from one value per type parameter, so both reach their
+        // constructor the same way: through the owning TypeSpec, with
+        // the parameters written as indexes.
+        resolve_generic_constructor(
+            type: Semantic.Types.Type,
+            argument_count: int
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(type),
+                    ".ctor",
+                    ".ctor {type}/{argument_count}",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .generic_constructor_signature(argument_count)));
         si
 
         // A range struct is constructed from its two integer bounds.

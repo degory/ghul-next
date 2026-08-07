@@ -228,7 +228,8 @@ namespace Semantic.Symbols is
             let buffer = StringBuilder();
             delegate_cache_field.gen_reference(buffer);
 
-            return IR.Values.MEMOIZED_DELEGATE(value, buffer.to_string(), constructed_delegate_type);
+            return IR.Values.MEMOIZED_DELEGATE(
+                value, buffer.to_string(), delegate_cache_field, constructed_delegate_type);
         si
 
         _enclosing_namespace() -> NAMESPACE? is
