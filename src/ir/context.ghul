@@ -379,7 +379,23 @@ namespace IR is
 
             assert classy? else "unit variant '{variant.name}' is not a type";
 
+            // A generic variant's instance field belongs to the
+            // instantiation, so it is reached through a reference whose
+            // parent is that instantiation's specification. The field's
+            // own type is written open — the variant applied to its own
+            // parameters — because the reference names the field on the
+            // open definition and the instantiation lives in the parent.
             if classy.is_generic then
+                if let constructed: Semantic.Symbols.GENERIC = variant then
+                    return cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_named_member_reference(
+                            resolve_type_token(constructed.type),
+                            "_instance",
+                            "_instance {constructed.type}",
+                            Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                                .field_signature(classy.type!)));
+                fi
+
                 throw System.NotImplementedException(
                     "the binary back end cannot yet reach the interned instance of "
                     "the generic unit variant '{classy.qualified_name}'");
