@@ -210,9 +210,67 @@ namespace IR.Emitter is
                 fi
             od
 
+            // A memoized stateless delegate caches in a static field
+            // built on demand while expressions were compiled. It is a
+            // real symbol but is declared into no scope, so it is
+            // collected from the closures that own it - and it lands on
+            // the enclosing class, or on the namespace's carrier for a
+            // global one, which is not always where the closure is
+            // written.
+            _collect_delegate_caches(type, result);
+
             _sort_by_declaration(result);
 
             return result;
+        si
+
+        _collect_delegate_caches(type: SRM_EMITTED_TYPE, into: Collections.LIST[Field]) static is
+            let closures = Collections.LIST[Semantic.Symbols.Closure]();
+
+            // A cache field lands on the enclosing class, or on the
+            // namespace's carrier when the closure is a global anonymous
+            // function - and a class method can hold one of those - so
+            // the search starts from the owning namespace rather than
+            // from the type, and the owner check below selects.
+            _collect_closures(type.owning_namespace ?? type.scope, closures, Collections.SET[Scope]());
+
+            for closure in closures do
+                if !closure.has_delegate_cache_field then
+                    continue;
+                fi
+
+                let `field = closure.delegate_cache_field;
+
+                if `field.owner == type.scope then
+                    into.add(`field);
+                fi
+            od
+        si
+
+        _collect_closures(
+            scope: Scope,
+            into: Collections.LIST[Semantic.Symbols.Closure],
+            seen: Collections.SET[Scope]
+        ) static is
+            if seen.contains(scope) then
+                return;
+            fi
+
+            seen.add(scope);
+
+            for symbol in scope.symbols do
+                if let group: FUNCTION_GROUP = symbol then
+                    for function in group.functions do
+                        _collect_closures(function, into, seen);
+                    od
+                elif let closure: Semantic.Symbols.Closure = symbol then
+                    into.add(closure);
+
+                    _collect_closures(closure, into, seen);
+                elif let inner: Scope = symbol then
+                    _collect_closures(inner, into, seen);
+                fi
+            od
         si
 
         methods(type: SRM_EMITTED_TYPE) -> Collections.List[Function] static is
