@@ -66,7 +66,7 @@ namespace IR.Emitter is
             let declared = Collections.LIST[Classy]();
             let namespaces = Collections.LIST[NAMESPACE]();
 
-            _collect(root, declared, namespaces);
+            _collect(root, declared, namespaces, Collections.SET[Classy]());
 
             _sort_by_declaration(declared);
             _sort_by_declaration(namespaces);
@@ -100,10 +100,14 @@ namespace IR.Emitter is
             return result;
         si
 
+        // A type's scope can reach back to a type already collected -
+        // a union names itself from each of its variants - so a type is
+        // descended into once.
         _collect(
             scope: Scope,
             declared: Collections.LIST[Classy],
-            namespaces: Collections.LIST[NAMESPACE]
+            namespaces: Collections.LIST[NAMESPACE],
+            seen: Collections.SET[Classy]
         ) static is
             for symbol in scope.symbols do
                 if symbol.is_reflected then
@@ -113,9 +117,19 @@ namespace IR.Emitter is
                 if let `namespace: NAMESPACE = symbol then
                     namespaces.add(`namespace);
 
-                    _collect(`namespace, declared, namespaces);
+                    _collect(`namespace, declared, namespaces, seen);
                 elif let type: Classy = symbol then
+                    if seen.contains(type) then
+                        continue;
+                    fi
+
+                    seen.add(type);
                     declared.add(type);
+
+                    // A union's variants are declared into the union's
+                    // own scope rather than into the namespace, and are
+                    // types in their own right in the emitted assembly.
+                    _collect(type, declared, namespaces, seen);
                 fi
             od
         si
