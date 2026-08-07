@@ -20,11 +20,13 @@ namespace IR is
                 write_line(value);
             else
                 write_line(value);
+
+                
             fi
         si
 
         write_line(indent: int, value: object, comment: object) is
-            if want_comments then
+            if want_comments then               
                 write_indent(indent);
                 write_line("{value}        // {comment}");
             else

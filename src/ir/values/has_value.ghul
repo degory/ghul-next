@@ -22,6 +22,7 @@ namespace IR.Values is
 
             if let body = context.current_srm_body_emitter then
                 body.ldnull();
+                body.op(System.Reflection.Metadata.ILOpCode.CGT_UN);
 
                 return;
             fi
