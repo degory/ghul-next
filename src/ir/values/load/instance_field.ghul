@@ -44,6 +44,14 @@ namespace IR.Values.Load is
             else
                 gen(from, context);
             fi
+            if let body = context.current_srm_body_emitter then
+                body.ldflda(
+                    context.resolve_field_target(
+                        cast Semantic.Symbols.Field(symbol)));
+
+                return;
+            fi
+
             context.write_line("ldflda {symbol.get_il_reference()}");
         si
 
