@@ -98,9 +98,9 @@ namespace IR.Values is
                 return ILOpCode.RET;
             elif mnemonic =~ "ldc.i4.m1" then
                 return ILOpCode.LDC_I4_M1;
-            elif mnemonic =~ "ldc.i4.0" then
+            elif mnemonic =~ "ldc.i4.0" \/ mnemonic =~ "ldc.i4 0" then
                 return ILOpCode.LDC_I4_0;
-            elif mnemonic =~ "ldc.i4.1" then
+            elif mnemonic =~ "ldc.i4.1" \/ mnemonic =~ "ldc.i4 1" then
                 return ILOpCode.LDC_I4_1;
             elif mnemonic =~ "conv.i1" then
                 return ILOpCode.CONV_I1;

@@ -94,7 +94,7 @@ namespace IR is
 
             gen_arguments(value, block);
 
-            block.add(Values.INSTRUCTION("ldc.i4.0"));
+            block.add(Values.INSTRUCTION("ldc.i4 0"));
             block.add(Values.INSTRUCTION("ceq"));
         si
 
@@ -108,9 +108,9 @@ namespace IR is
 
             // push speculative result:
             if operation =~ "and_then" then
-                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ldc.i4 0"));
             else
-                block.add(Values.INSTRUCTION("ldc.i4.1"));
+                block.add(Values.INSTRUCTION("ldc.i4 1"));
             fi
         
             // branch to exit if speculative result is correct based on evaluating left argument:
@@ -160,7 +160,7 @@ namespace IR is
             block.add(Values.INSTRUCTION(instruction));
 
             if needs_not then
-                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ldc.i4 0"));
                 block.add(Values.INSTRUCTION("ceq"));
             fi            
         si        
@@ -174,7 +174,7 @@ namespace IR is
                 block.add("call bool string::op_Equality(string, string)");
 
                 if value.actual_operation =~ "!~" then
-                    block.add(Values.INSTRUCTION("ldc.i4.0"));
+                    block.add(Values.INSTRUCTION("ldc.i4 0"));
                     block.add(Values.INSTRUCTION("ceq"));
                 fi
             else
@@ -199,7 +199,7 @@ namespace IR is
             block.add(Values.INSTRUCTION("ceq"));
 
             if value.actual_operation =~ "!=" then
-                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ldc.i4 0"));
                 block.add(Values.INSTRUCTION("ceq"));
             fi                
         si
@@ -212,7 +212,7 @@ namespace IR is
             block.add(Values.INSTRUCTION("ceq"));
 
             if value.actual_operation =~ "!=" then
-                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ldc.i4 0"));
                 block.add(Values.INSTRUCTION("ceq"));
             fi                
         si
@@ -285,7 +285,7 @@ namespace IR is
                 block.add("call bool {decimal_il}::op_Equality({decimal_il}, {decimal_il})");
 
                 if value.actual_operation =~ "!=" then
-                    block.add(Values.INSTRUCTION("ldc.i4.0"));
+                    block.add(Values.INSTRUCTION("ldc.i4 0"));
                     block.add(Values.INSTRUCTION("ceq"));
                 fi
 

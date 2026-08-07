@@ -23,7 +23,7 @@ namespace IR.Values is
                 return;
             fi
 
-            context.write_line("ldc.i4.0");
+            context.write_line("ldc.i4 0");
             context.write_line("ceq");
         si
 
