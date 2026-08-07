@@ -297,6 +297,34 @@ namespace IR.Emitter is
         // type reference that resolves to nothing.
         unquote(value: string) -> string static => value.replace("'", "");
 
+        // A primitive's il_name_override is the assembler keyword, which
+        // is what a signature needs and what a reference must never
+        // carry: there is no type called `int32`. Named here so that a
+        // member reached through a primitive owner - `to_string` on an
+        // `int` - names the type the runtime knows.
+        //
+        // Written as a chain rather than a `case` because `case` over a
+        // string compares by reference, so only interned literals match
+        // and a computed name silently falls through (degory/ghul#1900).
+        clr_name_for_primitive(il_name: string) -> string? static =>
+            if il_name =~ "bool" then "System.Boolean";
+            elif il_name =~ "char" then "System.Char";
+            elif il_name =~ "int8" then "System.SByte";
+            elif il_name =~ "unsigned int8" then "System.Byte";
+            elif il_name =~ "int16" then "System.Int16";
+            elif il_name =~ "unsigned int16" then "System.UInt16";
+            elif il_name =~ "int32" then "System.Int32";
+            elif il_name =~ "unsigned int32" then "System.UInt32";
+            elif il_name =~ "int64" then "System.Int64";
+            elif il_name =~ "unsigned int64" then "System.UInt64";
+            elif il_name =~ "native int" then "System.IntPtr";
+            elif il_name =~ "native unsigned int" then "System.UIntPtr";
+            elif il_name =~ "float32" then "System.Single";
+            elif il_name =~ "float64" then "System.Double";
+            elif il_name =~ "void" then "System.Void";
+            else null;
+            fi;
+
         // A type this assembly defines is named by its own TypeDef row,
         // not by a reference; every other type resolves to a TypeRef.
         // The TypeDef row need not exist yet — the numbering pass has
