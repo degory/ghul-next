@@ -75,6 +75,31 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // A static method's signature, built from types rather than read
+        // off a Function, for the framework members the back end reaches
+        // for by name.
+        static_signature(
+            return_type_of: Semantic.Types.Type,
+            argument_types: Collections.List[Semantic.Types.Type]
+        ) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, false)
+                .parameters(argument_types.count, return_type ref, parameters ref);
+
+            encode_return(return_type, return_type_of);
+
+            for argument in argument_types do
+                encode_type(parameters.add_parameter().`type(false), argument);
+            od
+
+            return builder.to_array();
+        si
+
         // A constructor on a constructed generic, taking one argument
         // per type parameter. The arguments are written as indexes for
         // the same reason Invoke's are: the reference is to the open

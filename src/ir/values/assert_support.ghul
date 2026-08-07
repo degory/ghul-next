@@ -1,0 +1,44 @@
+namespace IR.Values is
+    use Semantic.Types.Type;
+
+    // The two framework members `assert` reaches for. Neither is named
+    // by a symbol in this compilation, so each is a value of its own
+    // rather than a call the resolver produced.
+    class CALL_STRING_CONCAT: Value is
+        init() is
+            super.init();
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.call(context.resolve_string_concat());
+
+                return;
+            fi
+
+            context.write_line("call string string::Concat(object,object)");
+        si
+
+        to_string() -> string => "call-string-concat";
+    si
+
+    class NEW_ASSERT_FAILED_EXCEPTION: Value is
+        init() is
+            super.init();
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_assert_failed_constructor());
+
+                return;
+            fi
+
+            context.write_line(
+                "newobj instance void class ['ghul-runtime']Ghul.AssertFailedException"
+                "::.ctor(class [System.Runtime]System.String)");
+        si
+
+        to_string() -> string => "new-assert-failed-exception";
+    si
+si
