@@ -386,6 +386,23 @@ namespace IR is
                 Emitter.SRM_SIGNATURE_ENCODER(emitter).type_reference_for(symbol));
         si
 
+        // Invoking a function value calls Invoke on the delegate type.
+        resolve_delegate_invoke(
+            func_type: Semantic.Types.Type,
+            argument_count: int,
+            is_action: bool
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(func_type),
+                    "Invoke",
+                    "Invoke {func_type}",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .delegate_invoke_signature(argument_count, is_action)));
+        si
+
         // A range struct is constructed from its two integer bounds.
         resolve_range_constructor(
             range_type: Semantic.Types.Type

@@ -49,6 +49,34 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // A delegate's Invoke, whose parameters and return are the
+        // delegate type's own type parameters. They are written as
+        // indexes rather than as the arguments the delegate was
+        // instantiated with: the reference is to Func`N's Invoke, and
+        // the instantiation lives in the owning TypeSpec.
+        delegate_invoke_signature(argument_count: int, is_action: bool) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(argument_count, return_type ref, parameters ref);
+
+            if is_action then
+                return_type.void();
+            else
+                return_type.`type(false).generic_type_parameter(argument_count);
+            fi
+
+            for i in 0..argument_count do
+                parameters.add_parameter().`type(false).generic_type_parameter(i);
+            od
+
+            return builder.to_array();
+        si
+
         // The blob a TypeSpec row holds: the constructed type encoded
         // structurally, exactly as it would appear inside any other
         // signature.

@@ -29,10 +29,20 @@ namespace IR.Values.Load is
             // so the target pushed above for the delegate's own
             // constructor argument needs a duplicate first.
             if function.is_virtual_dispatch then
-                context.write_line("dup");
+                if let body = context.current_srm_body_emitter then
+                    body.op(System.Reflection.Metadata.ILOpCode.DUP);
+                else
+                    context.write_line("dup");
+                fi
             fi
 
             gen(function, context);
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_delegate_constructor(type));
+
+                return;
+            fi
+
             context.write_line("newobj instance void {type.get_il_type()}::'.ctor'(object, native int)");
         si
 

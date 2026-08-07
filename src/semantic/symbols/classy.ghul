@@ -1777,6 +1777,12 @@ namespace Semantic.Symbols is
         _constructor: Method?;
         _captures: Collections.LIST[Field];
 
+        // The closure whose captures this frame holds. Its method is a
+        // member of the frame in the emitted assembly, but it is
+        // declared into the function the literal was written in, so a
+        // walk over the frame's own symbols does not find it.
+        closure: Closure => _closure;
+
         next_id: int static is
             let result = _next_id;
 

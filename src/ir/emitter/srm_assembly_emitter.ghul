@@ -265,16 +265,30 @@ namespace IR.Emitter is
             owner: EntityHandle,
             key: string,
             argument_types: Collections.List[Semantic.Types.Type]
+        ) -> MemberReferenceHandle =>
+            add_named_member_reference(
+                owner,
+                ".ctor",
+                key,
+                SRM_SIGNATURE_ENCODER(self).constructor_signature(argument_types));
+
+        // A reference to a member of a type this assembly does not
+        // define, where the signature is built rather than read off a
+        // symbol. The owner is a handle so that a constructed generic's
+        // TypeSpec can own it.
+        add_named_member_reference(
+            owner: EntityHandle,
+            name: string,
+            key: string,
+            signature: ubyte[]
         ) -> MemberReferenceHandle is
             if _named_member_refs.contains_key(key) then
                 return _named_member_refs[key];
             fi
 
-            let signature = SRM_SIGNATURE_ENCODER(self).constructor_signature(argument_types);
-
             let handle = _metadata.add_member_reference(
                 owner,
-                _metadata.get_or_add_string(".ctor"),
+                _metadata.get_or_add_string(name),
                 _metadata.get_or_add_blob(signature));
 
             _named_member_refs[key] = handle;

@@ -141,6 +141,11 @@ namespace IR.Emitter is
             _encoder.token(method);
         si
 
+        load_virtual_function_pointer(method: EntityHandle) is
+            _encoder.op_code(ILOpCode.LDVIRTFTN);
+            _encoder.token(method);
+        si
+
         op(op_code: ILOpCode) is _encoder.op_code(op_code); si
 
         ret() is _encoder.op_code(ILOpCode.RET); si
