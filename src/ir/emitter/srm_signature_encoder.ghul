@@ -305,7 +305,7 @@ namespace IR.Emitter is
         //
         // Written as a chain rather than a `case` because `case` over a
         // string compares by reference, so only interned literals match
-        // and a computed name silently falls through (degory/ghul#1900).
+        // and a computed name silently falls through.
         clr_name_for_primitive(il_name: string) -> string? static =>
             if il_name =~ "bool" then "System.Boolean";
             elif il_name =~ "char" then "System.Char";
