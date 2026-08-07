@@ -558,7 +558,7 @@ namespace IR is
             if owner_namespace? then
                 return emitter.add_type_reference(
                     owner_namespace,
-                    globals_assembly_name ?? "",
+                    _referenced_assembly(globals_assembly_name ?? ""),
                     owner_namespace.qualified_name.substring(1),
                     Semantic.DotNet.GLOBALS_CARRIER.name);
             fi
@@ -589,9 +589,17 @@ namespace IR is
 
             return emitter.add_type_reference(
                 owner_classy,
-                owner_classy.il_assembly_name ?? "",
+                _referenced_assembly(owner_classy.il_assembly_name ?? ""),
                 if dot >= 0 then clr_type_name.substring(0, dot) else "" fi,
                 if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi);
+        si
+
+        // A type reference names the assembly it points into, which has
+        // to have a row of its own before anything can name it.
+        _referenced_assembly(assembly_name: string) -> string is
+            srm_assembly_emitter!.add_assembly_reference(assembly_name, "8:0:0:0");
+
+            return assembly_name;
         si
 
         resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
