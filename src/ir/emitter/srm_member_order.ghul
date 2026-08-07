@@ -77,6 +77,18 @@ namespace IR.Emitter is
                 result.add(SRM_EMITTED_TYPE(type));
             od
 
+            // Closure frames are types in the emitted assembly, but no
+            // scope holds them: a frame's owner is the enclosing
+            // namespace, and nothing declares it there. Declaring one
+            // would make `$frame_0` a name that resolution, completion
+            // and symbol search could all see, so they are collected
+            // from the closures that own them instead. A closure is
+            // declared into the function the literal was written in,
+            // and is itself a scope that can hold further closures.
+            for frame in _frames(declared, namespaces) do
+                result.add(SRM_EMITTED_TYPE(frame));
+            od
+
             // Carriers last, so that adding a global to a namespace
             // cannot renumber any declared type's members.
             for `namespace in namespaces do
@@ -108,6 +120,50 @@ namespace IR.Emitter is
             od
         si
 
+        _frames(
+            declared: Collections.LIST[Classy],
+            namespaces: Collections.LIST[NAMESPACE]
+        ) -> Collections.List[Classy] static is
+            let result = Collections.LIST[Classy]();
+
+            for type in declared do
+                _collect_frames(type, result);
+            od
+
+            for `namespace in namespaces do
+                _collect_frames(`namespace, result);
+            od
+
+            _sort_by_declaration(result);
+
+            return result;
+        si
+
+        _collect_frames(scope: Scope, into: Collections.LIST[Classy]) static is
+            for symbol in scope.symbols do
+                if let group: FUNCTION_GROUP = symbol then
+                    for function in group.functions do
+                        _collect_frames_from_function(function, into);
+                    od
+                elif let function: Function = symbol then
+                    _collect_frames_from_function(function, into);
+                fi
+            od
+        si
+
+        _collect_frames_from_function(function: Function, into: Collections.LIST[Classy]) static is
+            for symbol in function.symbols do
+                if let closure: Semantic.Symbols.Closure = symbol then
+                    if let frame = closure.frame then
+                        into.add(frame);
+                    fi
+
+                    // A closure body can declare closures of its own.
+                    _collect_frames_from_function(closure, into);
+                fi
+            od
+        si
+
         _has_globals(`namespace: NAMESPACE) -> bool static =>
             fields(SRM_EMITTED_TYPE(`namespace)).count > 0 \/
             methods(SRM_EMITTED_TYPE(`namespace)).count > 0;
@@ -132,6 +188,13 @@ namespace IR.Emitter is
 
         methods(type: SRM_EMITTED_TYPE) -> Collections.List[Function] static is
             let result = Collections.LIST[Function]();
+
+            // A frame's closure method belongs to the frame in the
+            // emitted assembly but is declared elsewhere, so the walk
+            // over the frame's own symbols does not reach it.
+            if let frame: Semantic.Symbols.FRAME = type.declared then
+                result.add(frame.closure);
+            fi
 
             for symbol in type.scope.symbols do
                 if symbol.is_reflected then

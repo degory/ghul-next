@@ -40,6 +40,13 @@ namespace IR.Values.Call is
                 count = count + 1;
             od
 
+            if let body = context.current_srm_body_emitter then
+                body.call_virtual(
+                    context.resolve_delegate_invoke(func_type!, count, is_action));
+
+                return;
+            fi
+
             let call = System.Text.StringBuilder();
 
             call

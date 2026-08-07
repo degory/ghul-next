@@ -19,6 +19,7 @@ namespace IR.Values is
 
             if let body = context.current_srm_body_emitter then
                 body.ldc_i4(0);
+                body.op(System.Reflection.Metadata.ILOpCode.CEQ);
 
                 return;
             fi

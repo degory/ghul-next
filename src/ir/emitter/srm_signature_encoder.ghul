@@ -49,6 +49,34 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // A delegate's Invoke, whose parameters and return are the
+        // delegate type's own type parameters. They are written as
+        // indexes rather than as the arguments the delegate was
+        // instantiated with: the reference is to Func`N's Invoke, and
+        // the instantiation lives in the owning TypeSpec.
+        delegate_invoke_signature(argument_count: int, is_action: bool) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(argument_count, return_type ref, parameters ref);
+
+            if is_action then
+                return_type.void();
+            else
+                return_type.`type(false).generic_type_parameter(argument_count);
+            fi
+
+            for i in 0..argument_count do
+                parameters.add_parameter().`type(false).generic_type_parameter(i);
+            od
+
+            return builder.to_array();
+        si
+
         // The blob a TypeSpec row holds: the constructed type encoded
         // structurally, exactly as it would appear inside any other
         // signature.
@@ -68,8 +96,14 @@ namespace IR.Emitter is
             let return_type: ReturnTypeEncoder mut;
             let parameters: ParametersEncoder mut;
 
+            // A generic method's signature declares its arity, and its
+            // own type parameters appear in it as indexes rather than
+            // as the arguments some instantiation supplied.
             BlobEncoder(builder)
-                .method_signature(SignatureCallingConvention.DEFAULT, 0, function.is_instance)
+                .method_signature(
+                    SignatureCallingConvention.DEFAULT,
+                    function.generic_arguments.count,
+                    function.is_instance)
                 .parameters(arguments.count, return_type ref, parameters ref);
 
             encode_return(return_type, function.return_type);
@@ -119,7 +153,19 @@ namespace IR.Emitter is
                 return;
             fi
 
-            if !isa Semantic.Symbols.Classy(symbol) then
+            // A constructed generic's symbol is a Symbols.GENERIC, which
+            // holds the open definition rather than being one. The
+            // format wants that definition as the TypeDefOrRef, with
+            // the arguments encoded after it, so the specialization is
+            // unwrapped here rather than referenced in its own right.
+            let classy =
+                if let generic: Semantic.Symbols.GENERIC = symbol then
+                    generic.symbol
+                else
+                    cast Semantic.Symbols.Classy?(symbol)
+                fi;
+
+            if !classy? then
                 throw System.NotImplementedException(
                     "the binary back end cannot encode the type '{type}' yet");
             fi
@@ -130,7 +176,7 @@ namespace IR.Emitter is
             // them as a class reference is well-formed, but no other
             // assembly declares them that way, so a methodref built from
             // one binds to nothing.
-            let ghul_name = symbol.qualified_name;
+            let ghul_name = classy.qualified_name;
 
             if ghul_name =~ "Ghul.string" then
                 encoder.string();
@@ -142,13 +188,13 @@ namespace IR.Emitter is
                 return;
             fi
 
-            let handle = _type_handle_for(symbol);
+            let handle = _type_handle_for(classy);
 
             let arguments = type.arguments;
 
             if arguments.count > 0 then
                 let generic_arguments =
-                    encoder.generic_instantiation(handle, arguments.count, symbol.is_value_type);
+                    encoder.generic_instantiation(handle, arguments.count, classy.is_value_type);
 
                 for argument in arguments do
                     encode_type(generic_arguments.add_argument(), argument);
@@ -157,7 +203,7 @@ namespace IR.Emitter is
                 return;
             fi
 
-            encoder.`type(handle, symbol.is_value_type);
+            encoder.`type(handle, classy.is_value_type);
         si
 
         encode_primitive(encoder: SignatureTypeEncoder, il_name: string) static is

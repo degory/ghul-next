@@ -135,7 +135,21 @@ namespace IR.Values is
             fi
         si
 
+        // Captures this value's IL now, so that a later emission of it
+        // produces the same instructions wherever it ends up. The text
+        // back end does that by generating into a throwaway buffer and
+        // keeping the text.
+        //
+        // The binary back end needs no equivalent and cannot use this
+        // one: instructions are encoded into the body being built, and
+        // text captured here would have nowhere to go. Emitting the
+        // value where it lands gives the same result, because nothing
+        // about it depends on when it is encoded.
         freeze() -> Value is
+            if IoC.CONTAINER.instance.ir_context.srm_assembly_emitter? then
+                return self;
+            fi
+
             let context = IR.CONTEXT(IoC.CONTAINER.instance.logger, null);
 
             context.enter_buffer(false);

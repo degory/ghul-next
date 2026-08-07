@@ -51,6 +51,17 @@ namespace IR.Values is
                     name = next_name;
                 fi
 
+                if let body = context.current_srm_body_emitter then
+                    body.declare_local(name!, type);
+
+                    value.gen(context);
+
+                    body.stloc(name!);
+                    body.ldloca(name!);
+
+                    return;
+                fi
+
                 let buffer = System.Text.StringBuilder();
 
                 buffer
