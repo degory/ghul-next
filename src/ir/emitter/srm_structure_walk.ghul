@@ -105,13 +105,23 @@ namespace IR.Emitter is
                     _write_unit_variant_initializer(type.declared!);
                 fi
 
-                _assembly.add_type_definition(
-                    _type_attributes(type),
-                    _assembly.get_or_add_string(_namespace_name(type)),
-                    _assembly.get_or_add_string(type.name),
-                    _base_type(type),
-                    first_field,
-                    first_method);
+                let handle =
+                    _assembly.add_type_definition(
+                        _type_attributes(type),
+                        _assembly.get_or_add_string(_namespace_name(type)),
+                        _assembly.get_or_add_string(type.name),
+                        _base_type(type),
+                        first_field,
+                        first_method);
+
+                if let declared = type.declared then
+                    let names = declared.argument_names;
+
+                    for i in 0..names.count do
+                        _assembly.add_generic_parameter(
+                            cast EntityHandle(handle), i, names[i]);
+                    od
+                fi
             od
         si
 
@@ -165,6 +175,13 @@ namespace IR.Emitter is
                 body_offset,
                 first_parameter);
 
+            let type_parameters = method.generic_arguments;
+
+            for i in 0..type_parameters.count do
+                _assembly.add_generic_parameter(
+                    cast EntityHandle(handle), i, type_parameters[i].name ?? "T{i}");
+            od
+
             if let entry_point = _assembly.entry_point_function then
                 if entry_point == method then
                     _assembly.set_entry_point(handle);
@@ -189,18 +206,31 @@ namespace IR.Emitter is
         _namespace_name(type: SRM_EMITTED_TYPE) -> string is
             let owner = type.owning_namespace;
 
-            if !owner? \/ !owner.is_namespace then
+            if !owner? then
                 return "";
             fi
 
-            let qualified = owner.qualified_name;
+            // A union's variants are owned by the union rather than by a
+            // namespace. They are emitted flat, under a name that carries
+            // the union's, so the union's own qualified name is what
+            // stands in front of the variant.
+            if !owner.is_namespace then
+                if let owning_type: Classy = owner then
+                    return _strip_root(owning_type.qualified_name);
+                fi
 
-            if qualified.starts_with('.') then
-                return qualified.substring(1);
+                return "";
             fi
 
-            return qualified;
+            return _strip_root(owner.qualified_name);
         si
+
+        _strip_root(qualified: string) -> string static =>
+            if qualified.starts_with('.') then
+                qualified.substring(1);
+            else
+                qualified;
+            fi;
 
         // The first non-trait ancestor, which is what the type extends;
         // traits extend nothing, and a class with no declared superclass
