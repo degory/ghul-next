@@ -39,11 +39,23 @@ namespace IR.Values.Load is
         si
 
         gen_address(context: IR.CONTEXT) is
-            let field_reference = IR.Values.state_machine_field_reference(symbol);
+            if let state_machine_field = IR.Values.state_machine_field_for(symbol) then
+                if let body = context.current_srm_body_emitter then
+                    body.ldarg(0);
+                    body.ldflda(context.resolve_field_target(state_machine_field));
 
-            if field_reference? then
+                    return;
+                fi
+
                 context.write_line("ldarg.0");
-                context.write_line("ldflda {field_reference}");
+                context.write_line("ldflda {state_machine_field.get_il_reference()}");
+
+                return;
+            fi
+
+            if let body = context.current_srm_body_emitter then
+                body.ldloca(symbol.il_name);
+
                 return;
             fi
 
