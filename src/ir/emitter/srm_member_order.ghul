@@ -204,8 +204,9 @@ namespace IR.Emitter is
                 // A scope holds members it does not declare: pulling a
                 // super's symbols down adds them here, and a member
                 // whose owner is elsewhere belongs to that owner's rows,
-                // not to these. Note this does not catch a pulled-down
-                // member that was re-owned on the way in.
+                // not to these. A member with no overloads arrives as
+                // itself and is answered for here; one with overloads
+                // arrives inside a group, which is dealt with below.
                 if !_is_owned_by(symbol, type) then
                     continue;
                 fi
@@ -296,8 +297,9 @@ namespace IR.Emitter is
                 // A scope holds members it does not declare: pulling a
                 // super's symbols down adds them here, and a member
                 // whose owner is elsewhere belongs to that owner's rows,
-                // not to these. Note this does not catch a pulled-down
-                // member that was re-owned on the way in.
+                // not to these. A member with no overloads arrives as
+                // itself and is answered for here; one with overloads
+                // arrives inside a group, which is dealt with below.
                 if !_is_owned_by(symbol, type) then
                     continue;
                 fi
@@ -307,8 +309,15 @@ namespace IR.Emitter is
                 fi
 
                 if let group: FUNCTION_GROUP = symbol then
+                    // The group is the subclass's own, but it holds the
+                    // functions it inherits alongside the ones declared
+                    // here, and those still belong to the type that
+                    // declared them. Checking the group answers for the
+                    // group, not for what is in it.
                     for function in group.functions do
-                        result.add(function);
+                        if _is_owned_by(function, type) then
+                            result.add(function);
+                        fi
                     od
                 elif let function: Function = symbol then
                     result.add(function);
