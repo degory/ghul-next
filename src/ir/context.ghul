@@ -211,11 +211,43 @@ namespace IR is
             current_output.write(value);
         si
             
+        // Text IL reaching this while a method body is being encoded
+        // means some value has no binary branch and has fallen through
+        // to its text one. There is no file open to receive it, so
+        // without this it would be dropped: the encoded body would
+        // simply be missing those instructions, and the first sign of
+        // it would be a JIT-time InvalidProgramException naming the
+        // method but nothing inside it. Failing here names the
+        // instruction that was not emitted.
+        _reject_text_in_binary_body(value: object) is
+            if !current_srm_body_emitter? then
+                return;
+            fi
+
+            let text = "{value}";
+
+            // `.maxstack` is a body-header field that
+            // MethodBodyStreamEncoder takes as an argument rather than
+            // an instruction, and `.line` is a debug sequence point the
+            // binary path does not emit yet. Neither is a dropped
+            // instruction.
+            if text.starts_with(".maxstack") \/ text.starts_with(".line") then
+                return;
+            fi
+
+            throw System.NotImplementedException(
+                "the binary back end has no emission for '{value}' yet");
+        si
+
         write_line(value: object) is
+            _reject_text_in_binary_body(value);
+
             current_output.write_line(_indent, value);
         si
 
         write_line(value: object, comment: object) is            
+            _reject_text_in_binary_body(value);
+
             current_output.write_line(_indent, value, comment);
         si
 
@@ -320,6 +352,31 @@ namespace IR is
                 "argument '{symbol.name}' is not declared by {function.name}";
 
             return 0;
+        si
+
+        // The metadata token naming a type, for instructions that take
+        // one directly (box, castclass, isinst). A constructed generic
+        // needs a TypeSpec rather than a bare reference, which is not
+        // built yet, so those report rather than emitting a token that
+        // names the open definition.
+        resolve_type_token(type: Semantic.Types.Type) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            if type.arguments.count > 0 then
+                throw System.NotImplementedException(
+                    "the binary back end cannot yet name the constructed type '{type}' in an instruction");
+            fi
+
+            let symbol = cast Semantic.Symbols.Classy?(type.symbol);
+
+            assert symbol? else "cannot name the type '{type}' in an instruction";
+
+            if let definition = emitter.handles.type_definition(symbol) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                Emitter.SRM_SIGNATURE_ENCODER(emitter).type_reference_for(symbol));
         si
 
         // The metadata token naming a field, for a load or store.

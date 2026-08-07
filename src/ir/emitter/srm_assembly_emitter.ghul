@@ -235,7 +235,10 @@ namespace IR.Emitter is
                     _[System.Reflection.Metadata.StandaloneSignatureHandle]
                 fi;
 
-            return _body_stream.add_method_body(encoder, 8, locals, _);
+            // The text path declares `.maxstack 64` on every body it
+            // emits rather than computing a bound, so the binary path
+            // reserves the same depth.
+            return _body_stream.add_method_body(encoder, 64, locals, _);
         si
 
         add_local_variable_signature(

@@ -1535,7 +1535,7 @@ namespace Syntax.Process is
             add("ldc.i4.m1");
             add("stfld {state_field_ref}");
             add("ldc.i4.0");
-            add("ret");
+            add(Values.RET());
 
             // If any yield inside an inner `.try` used the
             // leave-return-true label, emit it now (outside any try)
@@ -1544,7 +1544,7 @@ namespace Syntax.Process is
             if _current_generator_yield_return_label? then
                 add("{_current_generator_yield_return_label}:");
                 add("ldc.i4.1");
-                add("ret");
+                add(Values.RET());
             fi
 
             _current_generator_yield_return_label = prev_yield_return;
@@ -2527,7 +2527,7 @@ namespace Syntax.Process is
                 add("ldloc '.default'");
             fi
 
-            add("ret");
+            add(Values.RET());
 
             super.visit(expression_body);
         si
@@ -2758,7 +2758,7 @@ namespace Syntax.Process is
             // visit. (See error.ghul:30-34 for the underlying rule.)
             if closure.return_type? /\ closure.return_type.is_error then
                 _logger.error(function.location, "cannot infer return type here");
-                add("ret");
+                add(Values.RET());
                 _context.enter_buffer(false);
                 _context.reset_line_tracking();
                 current_block.gen(_context);
@@ -2783,7 +2783,7 @@ namespace Syntax.Process is
 
             add("// end IL body {closure}");
 
-            add("ret");
+            add(Values.RET());
 
             _context.enter_buffer(false);
 
@@ -2958,7 +2958,7 @@ namespace Syntax.Process is
             );
 
             add(launch);
-            add("ret");
+            add(Values.RET());
 
             _context.enter_buffer(false);
             _context.reset_line_tracking();
@@ -3818,7 +3818,7 @@ namespace Syntax.Process is
                     add(value);
                 fi
 
-                add("ret");
+                add(Values.RET());
             fi
         si
 
@@ -4012,7 +4012,7 @@ namespace Syntax.Process is
                 add("leave {_current_generator_yield_return_label}");
             else
                 add("ldc.i4.1");
-                add("ret");
+                add(Values.RET());
             fi
 
             add("{resume}:");
@@ -4912,7 +4912,7 @@ namespace Syntax.Process is
                     add(return_value.load());
                 fi
 
-                add("ret");
+                add(Values.RET());
             fi
 
             brancher.label(label.end);

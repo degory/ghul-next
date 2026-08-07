@@ -69,4 +69,26 @@ namespace IR.Values is
 
         to_string() -> string => "store-temp:[{type}]({name})";
     si
+
+    // Returns from the enclosing method. Raw text in the text back end,
+    // and a value here for the same reason as DECLARE_LOCAL: the binary
+    // path cannot read text, and silently dropping an instruction
+    // produces a body that fails verification with nothing to point at.
+    class RET: Value is
+        init() is
+            super.init();
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ret();
+
+                return;
+            fi
+
+            context.write_line("ret");
+        si
+
+        to_string() -> string => "ret";
+    si
 si
