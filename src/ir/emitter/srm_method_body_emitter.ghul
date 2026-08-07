@@ -120,6 +120,7 @@ namespace IR.Emitter is
         ldflda(`field: EntityHandle) is _field_instruction(ILOpCode.LDFLDA, `field); si
         stfld(`field: EntityHandle) is _field_instruction(ILOpCode.STFLD, `field); si
         ldsfld(`field: EntityHandle) is _field_instruction(ILOpCode.LDSFLD, `field); si
+        ldsflda(`field: EntityHandle) is _field_instruction(ILOpCode.LDSFLDA, `field); si
         stsfld(`field: EntityHandle) is _field_instruction(ILOpCode.STSFLD, `field); si
 
         _field_instruction(op_code: ILOpCode, `field: EntityHandle) is

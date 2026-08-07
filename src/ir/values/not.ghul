@@ -17,6 +17,12 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             Value.gen(value, context);
 
+            if let body = context.current_srm_body_emitter then
+                body.ldc_i4(0);
+
+                return;
+            fi
+
             context.write_line("ldc.i4.0");
             context.write_line("ceq");
         si
