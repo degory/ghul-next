@@ -75,6 +75,30 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // A constructor on a constructed generic, taking one argument
+        // per type parameter. The arguments are written as indexes for
+        // the same reason Invoke's are: the reference is to the open
+        // type's constructor, and the instantiation lives in the owning
+        // TypeSpec.
+        generic_constructor_signature(argument_count: int) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(argument_count, return_type ref, parameters ref);
+
+            return_type.void();
+
+            for i in 0..argument_count do
+                parameters.add_parameter().`type(false).generic_type_parameter(i);
+            od
+
+            return builder.to_array();
+        si
+
         // A delegate's Invoke, whose parameters and return are the
         // delegate type's own type parameters. They are written as
         // indexes rather than as the arguments the delegate was
