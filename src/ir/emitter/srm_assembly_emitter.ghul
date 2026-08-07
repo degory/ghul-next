@@ -38,7 +38,6 @@ namespace IR.Emitter is
         _assembly_refs: Collections.MAP[string, AssemblyReferenceHandle];
         _type_refs: Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle];
         _named_type_refs: Collections.MAP[string, TypeReferenceHandle];
-        _member_refs: Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle];
 
 
         _entry_point: MethodDefinitionHandle?;
@@ -61,7 +60,6 @@ namespace IR.Emitter is
             _method_specs = Collections.MAP[string, System.Reflection.Metadata.MethodSpecificationHandle]();
             _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
             handles = SRM_HANDLES();
-            _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
 
             _want_library = want_library;
 
@@ -297,26 +295,6 @@ namespace IR.Emitter is
         si
 
         _named_member_refs: Collections.MAP[string, MemberReferenceHandle];
-
-        add_member_reference(
-            symbol: Semantic.Symbols.Function,
-            owner: TypeReferenceHandle,
-            name: string,
-            signature_bytes: ubyte[]
-        ) -> MemberReferenceHandle is
-            if _member_refs.contains_key(symbol) then
-                return _member_refs[symbol];
-            fi
-
-            let handle = _metadata.add_member_reference(
-                cast EntityHandle(owner),
-                _metadata.get_or_add_string(name),
-                _metadata.get_or_add_blob(signature_bytes));
-
-            _member_refs[symbol] = handle;
-
-            return handle;
-        si
 
 
         // A method with locals needs a StandAloneSig naming their
