@@ -972,6 +972,12 @@ namespace Syntax.Process is
                     return;
                 fi
 
+                if _context.srm_assembly_emitter? then
+                    _gen_unit_variant_singleton_srm(variant_symbol);
+
+                    return;
+                fi
+
                 let ref_buffer = StringBuilder();
                 variant_symbol.gen_reference(ref_buffer);
                 let variant_ref = ref_buffer.to_string();
@@ -989,7 +995,35 @@ namespace Syntax.Process is
             fi
         si
 
-        gen_ienumerable_boilerplate(symbol: Semantic.Symbols.Classy) is            
+        // The rows for the field and this initializer are written by the
+        // structure walk, which cannot encode a body; the body is
+        // deposited here, in the pass that encodes every other body.
+        _gen_unit_variant_singleton_srm(variant: Semantic.Symbols.VARIANT) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let handles = assembly_emitter.handles;
+
+            let instance = handles.unit_variant_instance(variant);
+
+            if !instance? then
+                return;
+            fi
+
+            let constructors = cast Semantic.Symbols.FUNCTION_GROUP?(variant.find_direct("init"));
+
+            if !constructors? \/ constructors.functions.count == 0 then
+                return;
+            fi
+
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            body.new_object(_context.resolve_call_target(constructors.functions[0]));
+            body.stsfld(cast System.Reflection.Metadata.EntityHandle(instance!));
+            body.ret();
+
+            handles.set_unit_variant_initializer_body(variant, body.flush(assembly_emitter));
+        si
+
+        gen_ienumerable_boilerplate(symbol: Semantic.Symbols.Classy) is
             if symbol.is_derived_from_iterable_trait then
                 // FIXME: check if class implements these methods and don't emit them if they're not needed:
 

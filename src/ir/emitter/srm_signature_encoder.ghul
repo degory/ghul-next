@@ -26,6 +26,32 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // The same, for a field the back end synthesises and so has no
+        // symbol to read a type off.
+        field_signature(type: Semantic.Types.Type) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            encode_type(BlobEncoder(builder).field_signature(), type);
+
+            return builder.to_array();
+        si
+
+        // A static constructor's signature: static, void, no arguments.
+        static_initializer_signature() -> ubyte[] is
+            let builder = BlobBuilder(8);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, false)
+                .parameters(0, return_type ref, parameters ref);
+
+            return_type.void();
+
+            return builder.to_array();
+        si
+
         // A constructor's signature: an instance method returning void,
         // taking the given argument types. Built from types rather than
         // from a Function because the constructors that need this are

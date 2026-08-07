@@ -31,11 +31,23 @@ namespace IR.Emitter is
         // body, which is what an abstract or bodyless member is.
         _bodies: Collections.MAP[Function, int];
 
+        // A unit variant carries one interned instance in a static
+        // field, initialized by a static constructor. Neither is
+        // declared: the back end synthesises both, so they are keyed on
+        // the variant they belong to rather than on a symbol of their
+        // own.
+        _unit_variant_instances: Collections.MAP[Classy, FieldDefinitionHandle];
+        _unit_variant_initializers: Collections.MAP[Classy, MethodDefinitionHandle];
+        _unit_variant_initializer_bodies: Collections.MAP[Classy, int];
+
         init() is
             _type_defs = Collections.MAP[Classy, TypeDefinitionHandle]();
             _method_defs = Collections.MAP[Function, MethodDefinitionHandle]();
             _field_defs = Collections.MAP[Field, FieldDefinitionHandle]();
             _bodies = Collections.MAP[Function, int]();
+            _unit_variant_instances = Collections.MAP[Classy, FieldDefinitionHandle]();
+            _unit_variant_initializers = Collections.MAP[Classy, MethodDefinitionHandle]();
+            _unit_variant_initializer_bodies = Collections.MAP[Classy, int]();
         si
 
         set_type_definition(symbol: Classy, handle: TypeDefinitionHandle) is
@@ -82,6 +94,35 @@ namespace IR.Emitter is
 
             return null;
         si
+
+        set_unit_variant_instance(variant: Classy, handle: FieldDefinitionHandle) is
+            _unit_variant_instances[variant] = handle;
+        si
+
+        set_unit_variant_initializer(variant: Classy, handle: MethodDefinitionHandle) is
+            _unit_variant_initializers[variant] = handle;
+        si
+
+        set_unit_variant_initializer_body(variant: Classy, offset: int) is
+            _unit_variant_initializer_bodies[variant] = offset;
+        si
+
+        unit_variant_instance(variant: Classy) -> FieldDefinitionHandle? is
+            let root = cast Classy?(variant.root_specialized_from);
+
+            if root? /\ _unit_variant_instances.contains_key(root) then
+                return _unit_variant_instances[root];
+            fi
+
+            return null;
+        si
+
+        unit_variant_initializer_body(variant: Classy) -> int? =>
+            if _unit_variant_initializer_bodies.contains_key(variant) then
+                _unit_variant_initializer_bodies[variant];
+            else
+                null;
+            fi;
 
         set_body_offset(symbol: Function, offset: int) is
             _bodies[symbol] = offset;
