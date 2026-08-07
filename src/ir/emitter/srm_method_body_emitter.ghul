@@ -133,6 +133,21 @@ namespace IR.Emitter is
         cast_class(type: EntityHandle) is _encoder.op_code(ILOpCode.CASTCLASS); _encoder.token(type); si
         is_instance(type: EntityHandle) is _encoder.op_code(ILOpCode.ISINST); _encoder.token(type); si
 
+        new_array(element_type: EntityHandle) is
+            _encoder.op_code(ILOpCode.NEWARR);
+            _encoder.token(element_type);
+        si
+
+        store_element(element_type: EntityHandle) is
+            _encoder.op_code(ILOpCode.STELEM);
+            _encoder.token(element_type);
+        si
+
+        load_element(element_type: EntityHandle) is
+            _encoder.op_code(ILOpCode.LDELEM);
+            _encoder.token(element_type);
+        si
+
         load_object(type: EntityHandle) is _encoder.op_code(ILOpCode.LDOBJ); _encoder.token(type); si
         store_object(type: EntityHandle) is _encoder.op_code(ILOpCode.STOBJ); _encoder.token(type); si
 
