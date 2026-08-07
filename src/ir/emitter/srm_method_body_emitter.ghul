@@ -2,6 +2,8 @@ namespace IR.Emitter is
     use System.Reflection.Metadata.BlobBuilder;
     use System.Reflection.Metadata.EntityHandle;
     use System.Reflection.Metadata.Ecma335.InstructionEncoder;
+    use System.Reflection.Metadata.Ecma335.ControlFlowBuilder;
+    use System.Reflection.Metadata.Ecma335.LabelHandle;
     use System.Reflection.Metadata.ILOpCode;
 
     use Semantic.Types.Type;
@@ -25,11 +27,39 @@ namespace IR.Emitter is
         _local_slots: Collections.MAP[string, int];
         _local_types: Collections.LIST[Type];
 
+        // IR label id to the encoder's own label. A branch can name a
+        // label the walk has not reached yet - every forward jump does,
+        // and a loop's exit is always one - so the handle is defined on
+        // first mention from either side and the encoder patches the
+        // offsets in when the body is serialized.
+        _labels: Collections.MAP[int, LabelHandle];
+
         init() is
-            _encoder = InstructionEncoder(BlobBuilder(32), null);
+            _encoder = InstructionEncoder(BlobBuilder(32), ControlFlowBuilder());
 
             _local_slots = Collections.MAP[string, int]();
             _local_types = Collections.LIST[Type]();
+            _labels = Collections.MAP[int, LabelHandle]();
+        si
+
+        _label(label: IR.LABEL) -> LabelHandle is
+            if _labels.contains_key(label.id) then
+                return _labels[label.id];
+            fi
+
+            let handle = _encoder.define_label();
+
+            _labels[label.id] = handle;
+
+            return handle;
+        si
+
+        mark_label(label: IR.LABEL) is
+            _encoder.mark_label(_label(label));
+        si
+
+        branch(op_code: ILOpCode, label: IR.LABEL) is
+            _encoder.branch(op_code, _label(label));
         si
 
         // Declaring the same name twice is not an error: the text path

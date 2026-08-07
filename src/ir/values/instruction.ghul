@@ -34,59 +34,193 @@ namespace IR.Values is
         si
 
         op_code_for(mnemonic: string) -> ILOpCode static is
-            case mnemonic
-            when "add" then return ILOpCode.ADD;
-            when "add.ovf" then return ILOpCode.ADD_OVF;
-            when "add.ovf.un" then return ILOpCode.ADD_OVF_UN;
-            when "sub" then return ILOpCode.SUB;
-            when "sub.ovf" then return ILOpCode.SUB_OVF;
-            when "sub.ovf.un" then return ILOpCode.SUB_OVF_UN;
-            when "mul" then return ILOpCode.MUL;
-            when "mul.ovf" then return ILOpCode.MUL_OVF;
-            when "mul.ovf.un" then return ILOpCode.MUL_OVF_UN;
-            when "div" then return ILOpCode.DIV;
-            when "div.un" then return ILOpCode.DIV_UN;
-            when "rem" then return ILOpCode.REM;
-            when "rem.un" then return ILOpCode.REM_UN;
-            when "and" then return ILOpCode.AND;
-            when "or" then return ILOpCode.OR;
-            when "xor" then return ILOpCode.XOR;
-            when "shl" then return ILOpCode.SHL;
-            when "shr" then return ILOpCode.SHR;
-            when "shr.un" then return ILOpCode.SHR_UN;
-            when "neg" then return ILOpCode.NEG;
-            when "not" then return ILOpCode.NOT;
-            when "ceq" then return ILOpCode.CEQ;
-            when "cgt" then return ILOpCode.CGT;
-            when "cgt.un" then return ILOpCode.CGT_UN;
-            when "clt" then return ILOpCode.CLT;
-            when "clt.un" then return ILOpCode.CLT_UN;
-            when "pop" then return ILOpCode.POP;
-            when "dup" then return ILOpCode.DUP;
-            when "ldnull" then return ILOpCode.LDNULL;
-            when "throw" then return ILOpCode.THROW;
-            when "ret" then return ILOpCode.RET;
-            when "ldc.i4.m1" then return ILOpCode.LDC_I4_M1;
-            when "ldc.i4.0" then return ILOpCode.LDC_I4_0;
-            when "ldc.i4.1" then return ILOpCode.LDC_I4_1;
-            when "conv.i1" then return ILOpCode.CONV_I1;
-            when "conv.u1" then return ILOpCode.CONV_U1;
-            when "conv.i2" then return ILOpCode.CONV_I2;
-            when "conv.u2" then return ILOpCode.CONV_U2;
-            when "conv.i4" then return ILOpCode.CONV_I4;
-            when "conv.u4" then return ILOpCode.CONV_U4;
-            when "conv.i8" then return ILOpCode.CONV_I8;
-            when "conv.u8" then return ILOpCode.CONV_U8;
-            when "conv.r4" then return ILOpCode.CONV_R4;
-            when "conv.r8" then return ILOpCode.CONV_R8;
-            when "conv.i" then return ILOpCode.CONV_I;
-            when "conv.u" then return ILOpCode.CONV_U;
+            if mnemonic =~ "add" then
+                return ILOpCode.ADD;
+            elif mnemonic =~ "add.ovf" then
+                return ILOpCode.ADD_OVF;
+            elif mnemonic =~ "add.ovf.un" then
+                return ILOpCode.ADD_OVF_UN;
+            elif mnemonic =~ "sub" then
+                return ILOpCode.SUB;
+            elif mnemonic =~ "sub.ovf" then
+                return ILOpCode.SUB_OVF;
+            elif mnemonic =~ "sub.ovf.un" then
+                return ILOpCode.SUB_OVF_UN;
+            elif mnemonic =~ "mul" then
+                return ILOpCode.MUL;
+            elif mnemonic =~ "mul.ovf" then
+                return ILOpCode.MUL_OVF;
+            elif mnemonic =~ "mul.ovf.un" then
+                return ILOpCode.MUL_OVF_UN;
+            elif mnemonic =~ "div" then
+                return ILOpCode.DIV;
+            elif mnemonic =~ "div.un" then
+                return ILOpCode.DIV_UN;
+            elif mnemonic =~ "rem" then
+                return ILOpCode.REM;
+            elif mnemonic =~ "rem.un" then
+                return ILOpCode.REM_UN;
+            elif mnemonic =~ "and" then
+                return ILOpCode.AND;
+            elif mnemonic =~ "or" then
+                return ILOpCode.OR;
+            elif mnemonic =~ "xor" then
+                return ILOpCode.XOR;
+            elif mnemonic =~ "shl" then
+                return ILOpCode.SHL;
+            elif mnemonic =~ "shr" then
+                return ILOpCode.SHR;
+            elif mnemonic =~ "shr.un" then
+                return ILOpCode.SHR_UN;
+            elif mnemonic =~ "neg" then
+                return ILOpCode.NEG;
+            elif mnemonic =~ "not" then
+                return ILOpCode.NOT;
+            elif mnemonic =~ "ceq" then
+                return ILOpCode.CEQ;
+            elif mnemonic =~ "cgt" then
+                return ILOpCode.CGT;
+            elif mnemonic =~ "cgt.un" then
+                return ILOpCode.CGT_UN;
+            elif mnemonic =~ "clt" then
+                return ILOpCode.CLT;
+            elif mnemonic =~ "clt.un" then
+                return ILOpCode.CLT_UN;
+            elif mnemonic =~ "pop" then
+                return ILOpCode.POP;
+            elif mnemonic =~ "dup" then
+                return ILOpCode.DUP;
+            elif mnemonic =~ "ldnull" then
+                return ILOpCode.LDNULL;
+            elif mnemonic =~ "throw" then
+                return ILOpCode.THROW;
+            elif mnemonic =~ "ret" then
+                return ILOpCode.RET;
+            elif mnemonic =~ "ldc.i4.m1" then
+                return ILOpCode.LDC_I4_M1;
+            elif mnemonic =~ "ldc.i4.0" then
+                return ILOpCode.LDC_I4_0;
+            elif mnemonic =~ "ldc.i4.1" then
+                return ILOpCode.LDC_I4_1;
+            elif mnemonic =~ "conv.i1" then
+                return ILOpCode.CONV_I1;
+            elif mnemonic =~ "conv.u1" then
+                return ILOpCode.CONV_U1;
+            elif mnemonic =~ "conv.i2" then
+                return ILOpCode.CONV_I2;
+            elif mnemonic =~ "conv.u2" then
+                return ILOpCode.CONV_U2;
+            elif mnemonic =~ "conv.i4" then
+                return ILOpCode.CONV_I4;
+            elif mnemonic =~ "conv.u4" then
+                return ILOpCode.CONV_U4;
+            elif mnemonic =~ "conv.i8" then
+                return ILOpCode.CONV_I8;
+            elif mnemonic =~ "conv.u8" then
+                return ILOpCode.CONV_U8;
+            elif mnemonic =~ "conv.r4" then
+                return ILOpCode.CONV_R4;
+            elif mnemonic =~ "conv.r8" then
+                return ILOpCode.CONV_R8;
+            elif mnemonic =~ "conv.i" then
+                return ILOpCode.CONV_I;
+            elif mnemonic =~ "conv.u" then
+                return ILOpCode.CONV_U;
             else
                 throw System.NotImplementedException(
                     "the binary back end has no opcode for the instruction '{mnemonic}' yet");
-            esac
+            fi
         si
 
         to_string() -> string => mnemonic;
+    si
+
+    // Marks the position a branch names.
+    class MARK_LABEL: Value is
+        label: IR.LABEL;
+
+        init(label: IR.LABEL) is
+            super.init();
+
+            self.label = label;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.mark_label(label);
+
+                return;
+            fi
+
+            context.write_line("{label}:");
+        si
+
+        to_string() -> string => "{label}:";
+    si
+
+    // A branch to a label, named by its ilasm mnemonic for the same
+    // reason INSTRUCTION carries one: the brancher picks the mnemonic
+    // from a BRANCH enum, and both back ends want the same choice.
+    //
+    // The text form is the short-form-agnostic mnemonic and ilasm picks
+    // the encoding; the encoder does the same from the eventual offset,
+    // so the long-form opcode here is not the final encoding.
+    class BRANCH_TO: Value is
+        mnemonic: string;
+        label: IR.LABEL;
+
+        init(mnemonic: string, label: IR.LABEL) is
+            super.init();
+
+            self.mnemonic = mnemonic;
+            self.label = label;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.branch(op_code_for(mnemonic), label);
+
+                return;
+            fi
+
+            context.write_line("{mnemonic} {label}");
+        si
+
+        op_code_for(mnemonic: string) -> System.Reflection.Metadata.ILOpCode static is
+            if mnemonic =~ "br" then
+                return System.Reflection.Metadata.ILOpCode.BR;
+            elif mnemonic =~ "brtrue" then
+                return System.Reflection.Metadata.ILOpCode.BRTRUE;
+            elif mnemonic =~ "brfalse" then
+                return System.Reflection.Metadata.ILOpCode.BRFALSE;
+            elif mnemonic =~ "beq" then
+                return System.Reflection.Metadata.ILOpCode.BEQ;
+            elif mnemonic =~ "bne.un" then
+                return System.Reflection.Metadata.ILOpCode.BNE_UN;
+            elif mnemonic =~ "bge" then
+                return System.Reflection.Metadata.ILOpCode.BGE;
+            elif mnemonic =~ "bge.un" then
+                return System.Reflection.Metadata.ILOpCode.BGE_UN;
+            elif mnemonic =~ "bgt" then
+                return System.Reflection.Metadata.ILOpCode.BGT;
+            elif mnemonic =~ "bgt.un" then
+                return System.Reflection.Metadata.ILOpCode.BGT_UN;
+            elif mnemonic =~ "ble" then
+                return System.Reflection.Metadata.ILOpCode.BLE;
+            elif mnemonic =~ "ble.un" then
+                return System.Reflection.Metadata.ILOpCode.BLE_UN;
+            elif mnemonic =~ "blt" then
+                return System.Reflection.Metadata.ILOpCode.BLT;
+            elif mnemonic =~ "blt.un" then
+                return System.Reflection.Metadata.ILOpCode.BLT_UN;
+            elif mnemonic =~ "leave" then
+                return System.Reflection.Metadata.ILOpCode.LEAVE;
+            else
+                throw System.NotImplementedException(
+                    "the binary back end has no opcode for the branch '{mnemonic}' yet");
+            fi
+        si
+
+        to_string() -> string => "{mnemonic} {label}";
     si
 si

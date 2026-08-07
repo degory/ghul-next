@@ -44,36 +44,48 @@ namespace IR.Values.Literal is
         // mnemonic (`i4`, `i8`, `r4`, `r8`), and `value` is the literal
         // exactly as written in source, so each size parses its own.
         _gen_srm(body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is
-            case suffix
-            when "i4" then body.ldc_i4(int.parse(value));
-            when "i8" then body.ldc_i8(long.parse(value));
-            when "r4" then body.ldc_r4(single.parse(value));
-            when "r8" then body.ldc_r8(double.parse(value));
+            if suffix =~ "i4" then
+                body.ldc_i4(int.parse(value));
+            elif suffix =~ "i8" then
+                body.ldc_i8(long.parse(value));
+            elif suffix =~ "r4" then
+                body.ldc_r4(single.parse(value));
+            elif suffix =~ "r8" then
+                body.ldc_r8(double.parse(value));
             else
                 throw System.NotImplementedException(
                     "the binary back end cannot load a numeric literal of size '{suffix}' yet");
-            esac
+            fi
         si
 
         // `conv` is a bare ilasm conversion mnemonic appended after the
         // load, narrowing the pushed constant to the literal's declared
         // type.
         _gen_srm_conversion(body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is
-            case conv!
-            when "conv.i1" then body.op(System.Reflection.Metadata.ILOpCode.CONV_I1);
-            when "conv.u1" then body.op(System.Reflection.Metadata.ILOpCode.CONV_U1);
-            when "conv.i2" then body.op(System.Reflection.Metadata.ILOpCode.CONV_I2);
-            when "conv.u2" then body.op(System.Reflection.Metadata.ILOpCode.CONV_U2);
-            when "conv.i4" then body.op(System.Reflection.Metadata.ILOpCode.CONV_I4);
-            when "conv.u4" then body.op(System.Reflection.Metadata.ILOpCode.CONV_U4);
-            when "conv.i8" then body.op(System.Reflection.Metadata.ILOpCode.CONV_I8);
-            when "conv.u8" then body.op(System.Reflection.Metadata.ILOpCode.CONV_U8);
-            when "conv.i" then body.op(System.Reflection.Metadata.ILOpCode.CONV_I);
-            when "conv.u" then body.op(System.Reflection.Metadata.ILOpCode.CONV_U);
+            if conv! =~ "conv.i1" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_I1);
+            elif conv! =~ "conv.u1" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_U1);
+            elif conv! =~ "conv.i2" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_I2);
+            elif conv! =~ "conv.u2" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_U2);
+            elif conv! =~ "conv.i4" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_I4);
+            elif conv! =~ "conv.u4" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_U4);
+            elif conv! =~ "conv.i8" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_I8);
+            elif conv! =~ "conv.u8" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_U8);
+            elif conv! =~ "conv.i" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_I);
+            elif conv! =~ "conv.u" then
+                body.op(System.Reflection.Metadata.ILOpCode.CONV_U);
             else
                 throw System.NotImplementedException(
                     "the binary back end cannot emit the conversion '{conv!}' yet");
-            esac
+            fi
         si
 
         to_string() -> string =>

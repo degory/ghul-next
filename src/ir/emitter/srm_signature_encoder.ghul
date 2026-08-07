@@ -127,25 +127,38 @@ namespace IR.Emitter is
         si
 
         encode_primitive(encoder: SignatureTypeEncoder, il_name: string) static is
-            case il_name
-            when "bool" then encoder.boolean();
-            when "char" then encoder.char();
-            when "int8" then encoder.sbyte();
-            when "unsigned int8" then encoder.byte();
-            when "int16" then encoder.int16();
-            when "unsigned int16" then encoder.uint16();
-            when "int32" then encoder.int32();
-            when "unsigned int32" then encoder.uint32();
-            when "int64" then encoder.int64();
-            when "unsigned int64" then encoder.uint64();
-            when "native int" then encoder.int_ptr();
-            when "native unsigned int" then encoder.uint_ptr();
-            when "float32" then encoder.single();
-            when "float64" then encoder.double();
+            if il_name =~ "bool" then
+                encoder.boolean();
+            elif il_name =~ "char" then
+                encoder.char();
+            elif il_name =~ "int8" then
+                encoder.sbyte();
+            elif il_name =~ "unsigned int8" then
+                encoder.byte();
+            elif il_name =~ "int16" then
+                encoder.int16();
+            elif il_name =~ "unsigned int16" then
+                encoder.uint16();
+            elif il_name =~ "int32" then
+                encoder.int32();
+            elif il_name =~ "unsigned int32" then
+                encoder.uint32();
+            elif il_name =~ "int64" then
+                encoder.int64();
+            elif il_name =~ "unsigned int64" then
+                encoder.uint64();
+            elif il_name =~ "native int" then
+                encoder.int_ptr();
+            elif il_name =~ "native unsigned int" then
+                encoder.uint_ptr();
+            elif il_name =~ "float32" then
+                encoder.single();
+            elif il_name =~ "float64" then
+                encoder.double();
             else
                 throw System.NotImplementedException(
                     "the binary back end cannot encode the primitive type '{il_name}' yet");
-            esac
+            fi
         si
 
         // il_name_override carries the name already quoted for ilasm, so
