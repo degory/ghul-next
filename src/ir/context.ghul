@@ -513,8 +513,85 @@ namespace IR is
                 return cast System.Reflection.Metadata.EntityHandle(definition);
             fi
 
-            throw System.NotImplementedException(
-                "the binary back end cannot yet reference the imported field '{`field.name}'");
+            let root = cast Semantic.Symbols.Field?(`field.root_specialized_from) ?? `field;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    cast System.Reflection.Metadata.EntityHandle(_imported_owner_reference(root)),
+                    root.name,
+                    "field {root.owner}::{root.name}",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter).field_signature(root)));
+        si
+
+        // The reference row for the type an imported member hangs off.
+        // A global function or variable hangs off its namespace's
+        // globals carrier, which is a naming convention rather than a
+        // declared type; everything else hangs off its owning type.
+        _imported_owner_reference(
+            member: Semantic.Symbols.Symbol
+        ) -> System.Reflection.Metadata.TypeReferenceHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let globals_assembly_name =
+                if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = member then
+                    global_function.il_assembly_name ?? "";
+                elif let global_variable: Semantic.Symbols.GLOBAL_VARIABLE = member then
+                    global_variable.il_assembly_name ?? "";
+                else
+                    null;
+                fi;
+
+            // Anything a namespace owns is emitted onto that namespace's
+            // globals carrier, whatever kind of member it is. The owner
+            // is sometimes the namespace symbol and sometimes the scope
+            // standing for it, and only the latter answers
+            // `containing_namespace`.
+            let owner_namespace =
+                if let declared: Semantic.Symbols.NAMESPACE = member.owner then
+                    declared;
+                elif let scope: Semantic.NAMESPACE_SCOPE = member.owner then
+                    scope.containing_namespace;
+                else
+                    null;
+                fi;
+
+            if owner_namespace? then
+                return emitter.add_type_reference(
+                    owner_namespace,
+                    globals_assembly_name ?? "",
+                    owner_namespace.qualified_name.substring(1),
+                    Semantic.DotNet.GLOBALS_CARRIER.name);
+            fi
+
+            // A constructed generic owner holds the open definition
+            // rather than being one, and the reference is to the open
+            // type: the instantiation lives in the specification built
+            // over it.
+            let owner_classy =
+                if let generic: Semantic.Symbols.GENERIC = member.owner then
+                    cast Semantic.Symbols.Classy?(generic.symbol)
+                else
+                    cast Semantic.Symbols.Classy?(member.owner)
+                fi;
+
+            assert owner_classy? else "cannot reference a member owned by {member.owner}";
+
+            // il_name_override on an imported type is the CLR-side
+            // dotted full name (see symbol_factory.ghul's get_il_name),
+            // unlike qualified_name which is the ghūl-mapped spelling
+            // (e.g. "IO.Std" for System.Console). It arrives quoted
+            // for ilasm, which metadata must not carry.
+            let clr_type_name =
+                Emitter.SRM_SIGNATURE_ENCODER.unquote(
+                    owner_classy.il_name_override ?? owner_classy.qualified_name);
+
+            let dot = clr_type_name.last_index_of('.');
+
+            return emitter.add_type_reference(
+                owner_classy,
+                owner_classy.il_assembly_name ?? "",
+                if dot >= 0 then clr_type_name.substring(0, dot) else "" fi,
+                if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi);
         si
 
         resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
@@ -528,43 +605,7 @@ namespace IR is
                 return cast System.Reflection.Metadata.EntityHandle(definition);
             fi
 
-            let owner_symbol: Semantic.Symbols.Symbol mut;
-            let assembly_name: string mut;
-            let owner_namespace_path: string mut;
-            let owner_simple_name: string mut;
-
-            if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = function then
-                let owner_namespace = cast Semantic.Symbols.NAMESPACE(global_function.owner);
-
-                owner_symbol = owner_namespace;
-                assembly_name = global_function.il_assembly_name ?? "";
-                owner_namespace_path = owner_namespace.qualified_name.substring(1);
-                owner_simple_name = Semantic.DotNet.GLOBALS_CARRIER.name;
-            elif let owner_classy: Semantic.Symbols.Classy = function.owner then
-                // il_name_override on an imported type is the CLR-side
-                // dotted full name (see symbol_factory.ghul's get_il_name),
-                // unlike qualified_name which is the ghūl-mapped spelling
-                // (e.g. "IO.Std" for System.Console). It arrives quoted
-                // for ilasm, which metadata must not carry.
-                let clr_type_name =
-                    Emitter.SRM_SIGNATURE_ENCODER.unquote(
-                        owner_classy.il_name_override ?? owner_classy.qualified_name);
-
-                let dot = clr_type_name.last_index_of('.');
-
-                owner_symbol = owner_classy;
-
-                assembly_name = owner_classy.il_assembly_name ?? "";
-                owner_namespace_path = if dot >= 0 then clr_type_name.substring(0, dot) else "" fi;
-                owner_simple_name = if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi;
-            else
-                assert false else "cannot resolve a call target owned by {function.owner}";
-
-                return _;
-            fi
-
-            let owner_ref =
-                emitter.add_type_reference(owner_symbol, assembly_name, owner_namespace_path, owner_simple_name);
+            let owner_ref = _imported_owner_reference(function);
 
             // An instantiation of a generic method is named by a
             // MethodSpec over the open method, not by a reference of its
