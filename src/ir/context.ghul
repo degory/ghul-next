@@ -465,6 +465,46 @@ namespace IR is
                         .generic_constructor_signature(argument_count)));
         si
 
+        // `assert` joins its location to its message and wraps the
+        // result in an exception. Both members belong to types no symbol
+        // in this compilation names, so both are built from their known
+        // shapes rather than read off a declaration.
+        resolve_string_concat() -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_object_type());
+            arguments.add(lookup.get_object_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_type_reference_by_name("System.Runtime", "System", "String")),
+                    "Concat",
+                    "String::Concat(object,object)",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .static_signature(lookup.get_string_type(), arguments)));
+        si
+
+        resolve_assert_failed_constructor() -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_string_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_type_reference_by_name(
+                            "ghul-runtime", "Ghul", "AssertFailedException")),
+                    "AssertFailedException::.ctor(string)",
+                    arguments));
+        si
+
         // A range struct is constructed from its two integer bounds.
         resolve_range_constructor(
             range_type: Semantic.Types.Type

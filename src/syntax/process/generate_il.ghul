@@ -4145,7 +4145,7 @@ namespace Syntax.Process is
                 )
             );
 
-            add("throw");
+            add(Values.INSTRUCTION("throw"));
         si
 
         // Build an AWAIT_SUSPEND for `awaited`: allocates a state
@@ -4247,7 +4247,7 @@ namespace Syntax.Process is
 
                     add(message_value!);
 
-                    add("call string string::Concat(object,object)");
+                    add(Values.CALL_STRING_CONCAT());
                 else
                     add(message_value!);
                     need_exception_wrapper = false;
@@ -4262,10 +4262,10 @@ namespace Syntax.Process is
             fi
 
             if need_exception_wrapper then
-                add("newobj instance void class ['ghul-runtime']Ghul.AssertFailedException::.ctor(class [System.Runtime]System.String)");
+                add(Values.NEW_ASSERT_FAILED_EXCEPTION());
             fi
 
-            add("throw");
+            add(Values.INSTRUCTION("throw"));
 
             brancher.label(end);
         si
@@ -4900,8 +4900,8 @@ namespace Syntax.Process is
                         _innate_symbol_lookup.get_string_type()
                     )
                 );
-                add("newobj instance void class ['ghul-runtime']Ghul.AssertFailedException::.ctor(class [System.Runtime]System.String)");
-                add("throw");
+                add(Values.NEW_ASSERT_FAILED_EXCEPTION());
+                add(Values.INSTRUCTION("throw"));
             elif `case.want_value /\ `case.requires_default_fallthrough /\ !has_else then
                 // Open-domain case-expression with a defaultable
                 // expected type and no `else` arm — push default(T)
