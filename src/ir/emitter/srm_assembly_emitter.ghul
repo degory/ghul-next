@@ -60,7 +60,6 @@ namespace IR.Emitter is
             _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
             _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
             _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
-            entry_point_name = "entry";
             handles = SRM_HANDLES();
             _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
             _pending_types = Collections.LIST[SRM_TYPE_EMITTER]();
@@ -121,10 +120,12 @@ namespace IR.Emitter is
         next_type_row: int => _metadata.get_row_count(TableIndex.TYPE_DEF) + 1;
         next_parameter_row: int => _metadata.get_row_count(TableIndex.PARAM) + 1;
 
-        // The name generate-il recognises as the entry point, so the
-        // structure walk can mark the row it writes without reaching
-        // back into the build flags.
-        entry_point_name: string public;
+        // The function the entrypoint pragma named during the tree
+        // walk, so the structure walk can mark its row. Which function
+        // is the entry point is not a naming rule the emitter can
+        // reapply: it can be a global function or a static method, and
+        // `@entry` overrides the name entirely.
+        entry_point_function: Semantic.Symbols.Function? public;
 
         // Every row this assembly has promised a symbol. Held here so
         // that anything with the emitter can resolve a definition

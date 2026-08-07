@@ -1186,9 +1186,13 @@ namespace Syntax.Process is
 
             _context.current_srm_body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
-            if isa Semantic.Symbols.GLOBAL_FUNCTION(symbol) /\ symbol.name =~ _context.entry_point_name then
-                _context.seen_entrypoint = true;
-            fi
+            // Entry-point detection is a semantic question, not a
+            // naming rule the emitter can reapply: it accepts a global
+            // function or a static method, checks the signature, and
+            // reports a second candidate. The text path reaches this
+            // through `gen_body_header`, which the binary path does not
+            // emit.
+            symbol.gen_entrypoint(_context);
 
             enter_block();
 
@@ -2682,7 +2686,12 @@ namespace Syntax.Process is
                         _logger.error(pragma.location, "duplicate entrypoint");
                     else
                         _context.seen_entrypoint = true;
-                        _context.write_line(".entrypoint");
+
+                        if let emitter = _context.srm_assembly_emitter then
+                            emitter.entry_point_function = current_function;
+                        else
+                            _context.write_line(".entrypoint");
+                        fi
                     fi
                 fi
             elif name =~ "test" then

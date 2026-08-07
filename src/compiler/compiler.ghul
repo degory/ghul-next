@@ -124,8 +124,6 @@ namespace Compiler is
                         // Assign every definition its metadata row before
                         // any body is encoded, so a body can name a target
                         // whose row is not written yet.
-                        srm_emitter.entry_point_name = container.ir_context.entry_point_name;
-
                         IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
                             .number(container.symbol_table.global_scope);
                     else

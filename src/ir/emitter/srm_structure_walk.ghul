@@ -114,8 +114,10 @@ namespace IR.Emitter is
                 body_offset,
                 first_parameter);
 
-            if method.name =~ _assembly.entry_point_name /\ !method.is_instance then
-                _assembly.set_entry_point(handle);
+            if let entry_point = _assembly.entry_point_function then
+                if entry_point == method then
+                    _assembly.set_entry_point(handle);
+                fi
             fi
         si
 
