@@ -312,7 +312,11 @@ namespace IR.Emitter is
         type_reference_for(symbol: Semantic.Symbols.Classy) -> System.Reflection.Metadata.TypeReferenceHandle is
             let assembly_name = symbol.il_assembly_name;
 
-            if !assembly_name? then
+            // An empty name is as absent as a null one, and worse to
+            // act on: it yields a reference row the runtime resolves to
+            // the assembly being built, so the type appears to be one
+            // this assembly defines and fails to load.
+            if !assembly_name? \/ assembly_name.length == 0 then
                 throw System.NotImplementedException(
                     "the binary back end cannot yet reference '{symbol.qualified_name}', "
                     "a type defined in the assembly being built");
