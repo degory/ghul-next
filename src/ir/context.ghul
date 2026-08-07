@@ -395,7 +395,12 @@ namespace IR is
         resolve_type_token(type: Semantic.Types.Type) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
 
-            if type.arguments.count > 0 then
+            // A constructed generic has no row of its own, and neither
+            // does a type parameter: both are structural types, named by
+            // a specification carrying their encoded shape.
+            if type.arguments.count > 0 \/
+               isa Semantic.Symbols.GenericArgument(type.symbol)
+            then
                 return cast System.Reflection.Metadata.EntityHandle(
                     emitter.add_type_specification(type));
             fi

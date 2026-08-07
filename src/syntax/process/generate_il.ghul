@@ -3547,6 +3547,22 @@ namespace Syntax.Process is
                 fi
             fi
 
+            if _context.srm_assembly_emitter? then
+                if _block_context.is_in_block then
+                    for c in rb.clauses do
+                        for name in c.pattern.names! do
+                            let local = cast Semantic.Symbols.LOCAL_VARIABLE?(find(name));
+
+                            if local? /\ local.type? then
+                                current_block.add(Values.DECLARE_LOCAL(local.il_name, local.type!));
+                            fi
+                        od
+                    od
+                fi
+
+                return false;
+            fi
+
             let buffer = System.Text.StringBuilder();
 
             for c in rb.clauses do
