@@ -101,49 +101,49 @@ namespace IR is
             BLOCK_BRANCHER(block, self);
         
         label(block: BLOCK, l: LABEL, comment: string) is
-            block.add("{l}:");
+            block.add(Values.MARK_LABEL(l));
         si
 
         label(block: BLOCK, l: LABEL) is
-            block.add("{l}:");
+            block.add(Values.MARK_LABEL(l));
         si
 
         leave(block: BLOCK, l: LABEL) is
-            block.add("leave {l}");
+            block.add(Values.BRANCH_TO("leave", l));
         si
         
         branch(block: BLOCK, b: BRANCH, value: Value, l: LABEL, comment: string) is
             block.add(value);
             
-            block.add("{get_branch_instruction(b)} {l}");
+            block.add(Values.BRANCH_TO(get_branch_instruction(b), l));
         si
 
         branch(block: BLOCK, b: BRANCH, value: Value, l: LABEL) is
             block.add(value);
             
-            block.add("{get_branch_instruction(b)} {l}");
+            block.add(Values.BRANCH_TO(get_branch_instruction(b), l));
         si
 
         branch(block: BLOCK, b: BRANCH, left: Value, right: Value, l: LABEL, comment: string) is
             block.add(left);
             block.add(right);
             
-            block.add("{get_branch_instruction(b)} {l}");
+            block.add(Values.BRANCH_TO(get_branch_instruction(b), l));
         si
 
         branch(block: BLOCK, b: BRANCH, left: Value, right: Value, l: LABEL) is
             block.add(left);
             block.add(right);
             
-            block.add("{get_branch_instruction(b)} {l}");
+            block.add(Values.BRANCH_TO(get_branch_instruction(b), l));
         si
 
         branch(block: BLOCK, l: LABEL, comment: string) is
-            block.add("{_branch_instructions[BRANCH.ALWAYS]} {l}");
+            block.add(Values.BRANCH_TO(_branch_instructions[BRANCH.ALWAYS], l));
         si
 
         branch(block: BLOCK, l: LABEL) is
-            block.add("{_branch_instructions[BRANCH.ALWAYS]} {l}");
+            block.add(Values.BRANCH_TO(_branch_instructions[BRANCH.ALWAYS], l));
         si
 
         get_branch_instruction(b: BRANCH) -> string =>

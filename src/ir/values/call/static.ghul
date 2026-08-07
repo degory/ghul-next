@@ -36,7 +36,7 @@ namespace IR.Values.Call is
                 assert !constrained_receiver? else
                     "constrained calls are not yet emitted";
 
-                body.call(cast System.Reflection.Metadata.EntityHandle(context.resolve_call_target(function)));
+                body.call(context.resolve_call_target(function));
 
                 return;
             fi

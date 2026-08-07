@@ -1,0 +1,258 @@
+namespace IR.Values is
+    use System.Reflection.Metadata.ILOpCode;
+
+    // A single operand-less IL instruction, named by its ilasm
+    // mnemonic.
+    //
+    // The innate operator generator picks arithmetic and comparison
+    // instructions by mnemonic — `op_name` on the operation, `cgt` or
+    // `clt` chosen from the comparison direction — and pushes the
+    // string into the block. Rather than restructure that choice, the
+    // mnemonic is carried to whichever back end consumes it: written
+    // as text, or looked up here.
+    //
+    // The lookup is exhaustive by construction: an unrecognised
+    // mnemonic throws rather than emitting nothing, so a gap names
+    // itself instead of producing a body that fails verification.
+    class INSTRUCTION: Value is
+        mnemonic: string;
+
+        init(mnemonic: string) is
+            super.init();
+
+            self.mnemonic = mnemonic;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.op(op_code_for(mnemonic));
+
+                return;
+            fi
+
+            context.write_line(mnemonic);
+        si
+
+        op_code_for(mnemonic: string) -> ILOpCode static is
+            if mnemonic =~ "add" then
+                return ILOpCode.ADD;
+            elif mnemonic =~ "add.ovf" then
+                return ILOpCode.ADD_OVF;
+            elif mnemonic =~ "add.ovf.un" then
+                return ILOpCode.ADD_OVF_UN;
+            elif mnemonic =~ "sub" then
+                return ILOpCode.SUB;
+            elif mnemonic =~ "sub.ovf" then
+                return ILOpCode.SUB_OVF;
+            elif mnemonic =~ "sub.ovf.un" then
+                return ILOpCode.SUB_OVF_UN;
+            elif mnemonic =~ "mul" then
+                return ILOpCode.MUL;
+            elif mnemonic =~ "mul.ovf" then
+                return ILOpCode.MUL_OVF;
+            elif mnemonic =~ "mul.ovf.un" then
+                return ILOpCode.MUL_OVF_UN;
+            elif mnemonic =~ "div" then
+                return ILOpCode.DIV;
+            elif mnemonic =~ "div.un" then
+                return ILOpCode.DIV_UN;
+            elif mnemonic =~ "rem" then
+                return ILOpCode.REM;
+            elif mnemonic =~ "rem.un" then
+                return ILOpCode.REM_UN;
+            elif mnemonic =~ "and" then
+                return ILOpCode.AND;
+            elif mnemonic =~ "or" then
+                return ILOpCode.OR;
+            elif mnemonic =~ "xor" then
+                return ILOpCode.XOR;
+            elif mnemonic =~ "shl" then
+                return ILOpCode.SHL;
+            elif mnemonic =~ "shr" then
+                return ILOpCode.SHR;
+            elif mnemonic =~ "shr.un" then
+                return ILOpCode.SHR_UN;
+            elif mnemonic =~ "neg" then
+                return ILOpCode.NEG;
+            elif mnemonic =~ "not" then
+                return ILOpCode.NOT;
+            elif mnemonic =~ "ceq" then
+                return ILOpCode.CEQ;
+            elif mnemonic =~ "cgt" then
+                return ILOpCode.CGT;
+            elif mnemonic =~ "cgt.un" then
+                return ILOpCode.CGT_UN;
+            elif mnemonic =~ "clt" then
+                return ILOpCode.CLT;
+            elif mnemonic =~ "clt.un" then
+                return ILOpCode.CLT_UN;
+            elif mnemonic =~ "pop" then
+                return ILOpCode.POP;
+            elif mnemonic =~ "dup" then
+                return ILOpCode.DUP;
+            elif mnemonic =~ "ldnull" then
+                return ILOpCode.LDNULL;
+            elif mnemonic =~ "throw" then
+                return ILOpCode.THROW;
+            elif mnemonic =~ "ret" then
+                return ILOpCode.RET;
+            elif mnemonic =~ "ldc.i4.m1" then
+                return ILOpCode.LDC_I4_M1;
+            elif mnemonic =~ "ldc.i4.0" \/ mnemonic =~ "ldc.i4 0" then
+                return ILOpCode.LDC_I4_0;
+            elif mnemonic =~ "ldc.i4.1" \/ mnemonic =~ "ldc.i4 1" then
+                return ILOpCode.LDC_I4_1;
+            elif mnemonic =~ "conv.i1" then
+                return ILOpCode.CONV_I1;
+            elif mnemonic =~ "conv.u1" then
+                return ILOpCode.CONV_U1;
+            elif mnemonic =~ "conv.i2" then
+                return ILOpCode.CONV_I2;
+            elif mnemonic =~ "conv.u2" then
+                return ILOpCode.CONV_U2;
+            elif mnemonic =~ "conv.i4" then
+                return ILOpCode.CONV_I4;
+            elif mnemonic =~ "conv.u4" then
+                return ILOpCode.CONV_U4;
+            elif mnemonic =~ "conv.i8" then
+                return ILOpCode.CONV_I8;
+            elif mnemonic =~ "conv.u8" then
+                return ILOpCode.CONV_U8;
+            elif mnemonic =~ "conv.r4" then
+                return ILOpCode.CONV_R4;
+            elif mnemonic =~ "conv.r8" then
+                return ILOpCode.CONV_R8;
+            elif mnemonic =~ "conv.i" then
+                return ILOpCode.CONV_I;
+            elif mnemonic =~ "conv.u" then
+                return ILOpCode.CONV_U;
+            else
+                throw System.NotImplementedException(
+                    "the binary back end has no opcode for the instruction '{mnemonic}' yet");
+            fi
+        si
+
+        to_string() -> string => mnemonic;
+    si
+
+    // Constructs one of the built-in integer range structs from the
+    // two bounds already on the stack. Its constructor is not reachable
+    // from a Function symbol, so the reference is built from the range
+    // type and the known (int, int) signature.
+    class NEW_RANGE: Value is
+        type: Semantic.Types.Type;
+
+        init(type: Semantic.Types.Type) is
+            super.init();
+
+            self.type = type;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_range_constructor(type));
+
+                return;
+            fi
+
+            let buffer = System.Text.StringBuilder();
+
+            buffer.append("newobj instance void ");
+            type.gen_type(buffer);
+            buffer.append("::'.ctor'(int32,int32)");
+
+            context.write_line(buffer);
+        si
+
+        to_string() -> string => "new-range:[{type}]()";
+    si
+
+    // Marks the position a branch names.
+    class MARK_LABEL: Value is
+        label: IR.LABEL;
+
+        init(label: IR.LABEL) is
+            super.init();
+
+            self.label = label;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.mark_label(label);
+
+                return;
+            fi
+
+            context.write_line("{label}:");
+        si
+
+        to_string() -> string => "{label}:";
+    si
+
+    // A branch to a label, named by its ilasm mnemonic for the same
+    // reason INSTRUCTION carries one: the brancher picks the mnemonic
+    // from a BRANCH enum, and both back ends want the same choice.
+    //
+    // The text form is the short-form-agnostic mnemonic and ilasm picks
+    // the encoding; the encoder does the same from the eventual offset,
+    // so the long-form opcode here is not the final encoding.
+    class BRANCH_TO: Value is
+        mnemonic: string;
+        label: IR.LABEL;
+
+        init(mnemonic: string, label: IR.LABEL) is
+            super.init();
+
+            self.mnemonic = mnemonic;
+            self.label = label;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.branch(op_code_for(mnemonic), label);
+
+                return;
+            fi
+
+            context.write_line("{mnemonic} {label}");
+        si
+
+        op_code_for(mnemonic: string) -> System.Reflection.Metadata.ILOpCode static is
+            if mnemonic =~ "br" then
+                return System.Reflection.Metadata.ILOpCode.BR;
+            elif mnemonic =~ "brtrue" then
+                return System.Reflection.Metadata.ILOpCode.BRTRUE;
+            elif mnemonic =~ "brfalse" then
+                return System.Reflection.Metadata.ILOpCode.BRFALSE;
+            elif mnemonic =~ "beq" then
+                return System.Reflection.Metadata.ILOpCode.BEQ;
+            elif mnemonic =~ "bne.un" then
+                return System.Reflection.Metadata.ILOpCode.BNE_UN;
+            elif mnemonic =~ "bge" then
+                return System.Reflection.Metadata.ILOpCode.BGE;
+            elif mnemonic =~ "bge.un" then
+                return System.Reflection.Metadata.ILOpCode.BGE_UN;
+            elif mnemonic =~ "bgt" then
+                return System.Reflection.Metadata.ILOpCode.BGT;
+            elif mnemonic =~ "bgt.un" then
+                return System.Reflection.Metadata.ILOpCode.BGT_UN;
+            elif mnemonic =~ "ble" then
+                return System.Reflection.Metadata.ILOpCode.BLE;
+            elif mnemonic =~ "ble.un" then
+                return System.Reflection.Metadata.ILOpCode.BLE_UN;
+            elif mnemonic =~ "blt" then
+                return System.Reflection.Metadata.ILOpCode.BLT;
+            elif mnemonic =~ "blt.un" then
+                return System.Reflection.Metadata.ILOpCode.BLT_UN;
+            elif mnemonic =~ "leave" then
+                return System.Reflection.Metadata.ILOpCode.LEAVE;
+            else
+                throw System.NotImplementedException(
+                    "the binary back end has no opcode for the branch '{mnemonic}' yet");
+            fi
+        si
+
+        to_string() -> string => "{mnemonic} {label}";
+    si
+si

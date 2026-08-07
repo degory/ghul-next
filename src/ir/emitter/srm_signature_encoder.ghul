@@ -1,0 +1,236 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.BlobBuilder;
+    use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.SignatureCallingConvention;
+    use System.Reflection.Metadata.Ecma335.BlobEncoder;
+    use System.Reflection.Metadata.Ecma335.MethodSignatureEncoder;
+    use System.Reflection.Metadata.Ecma335.ReturnTypeEncoder;
+    use System.Reflection.Metadata.Ecma335.ParametersEncoder;
+    use System.Reflection.Metadata.Ecma335.SignatureTypeEncoder;
+
+    // Encodes a function's argument and return types as an ECMA-335
+    // signature blob.
+    //
+    // The shape mirrors Symbols.Classy.gen_type's decision tree — the
+    // il_is_primitive_type short-circuit, then a class-versus-valuetype
+    // split, then generic instantiation — with metadata handles in place
+    // of the text that path appends. Keeping the two in step matters:
+    // a methodref whose signature disagrees with the target's own
+    // declaration resolves to nothing at run time.
+    class SRM_SIGNATURE_ENCODER(_assembly: SRM_ASSEMBLY_EMITTER) is
+        field_signature(`field: Semantic.Symbols.Field) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            encode_type(BlobEncoder(builder).field_signature(), `field.type!);
+
+            return builder.to_array();
+        si
+
+        // A constructor's signature: an instance method returning void,
+        // taking the given argument types. Built from types rather than
+        // from a Function because the constructors that need this are
+        // the ones with no symbol to read a signature off.
+        constructor_signature(argument_types: Collections.List[Semantic.Types.Type]) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(argument_types.count, return_type ref, parameters ref);
+
+            return_type.void();
+
+            for argument in argument_types do
+                encode_type(parameters.add_parameter().`type(false), argument);
+            od
+
+            return builder.to_array();
+        si
+
+        // The blob a TypeSpec row holds: the constructed type encoded
+        // structurally, exactly as it would appear inside any other
+        // signature.
+        type_specification_signature(type: Semantic.Types.Type) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            encode_type(BlobEncoder(builder).type_specification_signature(), type);
+
+            return builder.to_array();
+        si
+
+        method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
+            let builder = BlobBuilder(32);
+
+            let arguments = function.arguments;
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, function.is_instance)
+                .parameters(arguments.count, return_type ref, parameters ref);
+
+            encode_return(return_type, function.return_type);
+
+            for argument in arguments do
+                encode_type(parameters.add_parameter().`type(false), argument);
+            od
+
+            return builder.to_array();
+        si
+
+        encode_return(encoder: ReturnTypeEncoder, type: Semantic.Types.Type?) is
+            if !type? \/ is_void(type) then
+                encoder.void();
+
+                return;
+            fi
+
+            encode_type(encoder.`type(false), type);
+        si
+
+        is_void(type: Semantic.Types.Type) -> bool static =>
+            type.symbol.il_name_override =~ "void";
+
+        encode_type(encoder: SignatureTypeEncoder, type: Semantic.Types.Type) is
+            if let array: Semantic.Types.ARRAY = type then
+                encode_type(encoder.szarray(), array.arguments[0]);
+
+                return;
+            fi
+
+            let symbol = type.symbol;
+
+            if let generic_argument: Semantic.Symbols.GenericArgument = symbol then
+                if isa Semantic.Symbols.FUNCTION_GENERIC_ARGUMENT(generic_argument) then
+                    encoder.generic_method_type_parameter(generic_argument.index);
+                else
+                    encoder.generic_type_parameter(generic_argument.index);
+                fi
+
+                return;
+            fi
+
+            if symbol.il_is_primitive_type then
+                encode_primitive(encoder, symbol.il_name_override ?? "");
+
+                return;
+            fi
+
+            if !isa Semantic.Symbols.Classy(symbol) then
+                throw System.NotImplementedException(
+                    "the binary back end cannot encode the type '{type}' yet");
+            fi
+
+            // string and object have dedicated element-type codes rather
+            // than a typeref, and il_is_primitive_type does not cover
+            // them — neither is a CLR primitive. A signature spelling
+            // them as a class reference is well-formed, but no other
+            // assembly declares them that way, so a methodref built from
+            // one binds to nothing.
+            let ghul_name = symbol.qualified_name;
+
+            if ghul_name =~ "Ghul.string" then
+                encoder.string();
+
+                return;
+            elif ghul_name =~ "Ghul.object" then
+                encoder.object();
+
+                return;
+            fi
+
+            let handle = _type_handle_for(symbol);
+
+            let arguments = type.arguments;
+
+            if arguments.count > 0 then
+                let generic_arguments =
+                    encoder.generic_instantiation(handle, arguments.count, symbol.is_value_type);
+
+                for argument in arguments do
+                    encode_type(generic_arguments.add_argument(), argument);
+                od
+
+                return;
+            fi
+
+            encoder.`type(handle, symbol.is_value_type);
+        si
+
+        encode_primitive(encoder: SignatureTypeEncoder, il_name: string) static is
+            if il_name =~ "bool" then
+                encoder.boolean();
+            elif il_name =~ "char" then
+                encoder.char();
+            elif il_name =~ "int8" then
+                encoder.sbyte();
+            elif il_name =~ "unsigned int8" then
+                encoder.byte();
+            elif il_name =~ "int16" then
+                encoder.int16();
+            elif il_name =~ "unsigned int16" then
+                encoder.uint16();
+            elif il_name =~ "int32" then
+                encoder.int32();
+            elif il_name =~ "unsigned int32" then
+                encoder.uint32();
+            elif il_name =~ "int64" then
+                encoder.int64();
+            elif il_name =~ "unsigned int64" then
+                encoder.uint64();
+            elif il_name =~ "native int" then
+                encoder.int_ptr();
+            elif il_name =~ "native unsigned int" then
+                encoder.uint_ptr();
+            elif il_name =~ "float32" then
+                encoder.single();
+            elif il_name =~ "float64" then
+                encoder.double();
+            else
+                throw System.NotImplementedException(
+                    "the binary back end cannot encode the primitive type '{il_name}' yet");
+            fi
+        si
+
+        // il_name_override carries the name already quoted for ilasm, so
+        // a segment colliding with an IL keyword arrives as 'System'.'String'.
+        // Metadata stores the bare name; leaving the quotes in produces a
+        // type reference that resolves to nothing.
+        unquote(value: string) -> string static => value.replace("'", "");
+
+        // A type this assembly defines is named by its own TypeDef row,
+        // not by a reference; every other type resolves to a TypeRef.
+        // The TypeDef row need not exist yet — the numbering pass has
+        // already fixed which row it will be.
+        _type_handle_for(symbol: Semantic.Symbols.Classy) -> EntityHandle is
+            if let definition = _assembly.handles.type_definition(symbol) then
+                return cast EntityHandle(definition);
+            fi
+
+            return cast EntityHandle(type_reference_for(symbol));
+        si
+
+        type_reference_for(symbol: Semantic.Symbols.Classy) -> System.Reflection.Metadata.TypeReferenceHandle is
+            let assembly_name = symbol.il_assembly_name;
+
+            if !assembly_name? then
+                throw System.NotImplementedException(
+                    "the binary back end cannot yet reference '{symbol.qualified_name}', "
+                    "a type defined in the assembly being built");
+            fi
+
+            let clr_type_name = unquote(symbol.il_name_override ?? symbol.qualified_name);
+            let dot = clr_type_name.last_index_of('.');
+
+            let namespace_path = if dot >= 0 then clr_type_name.substring(0, dot) else "" fi;
+            let simple_name = if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi;
+
+            _assembly.add_assembly_reference(assembly_name, "8:0:0:0");
+
+            return _assembly.add_type_reference(symbol, assembly_name, namespace_path, simple_name);
+        si
+    si
+si

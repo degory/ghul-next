@@ -24,6 +24,12 @@ namespace IR.Values.Load is
                 return;
             fi
 
+            if let body = context.current_srm_body_emitter then
+                body.ldarg(context.resolve_argument_index(symbol));
+
+                return;
+            fi
+
             context.write_line("ldarg {symbol.il_name}");
         si
 
@@ -33,6 +39,12 @@ namespace IR.Values.Load is
             if field_reference? then
                 context.write_line("ldarg.0");
                 context.write_line("ldflda {field_reference}");
+                return;
+            fi
+
+            if let body = context.current_srm_body_emitter then
+                body.ldarga(context.resolve_argument_index(symbol));
+
                 return;
             fi
 

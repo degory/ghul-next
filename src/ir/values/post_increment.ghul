@@ -21,6 +21,12 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             context.write_line("ldloc {_counter_il_name}");
             context.write_line("ldloc {_counter_il_name}");
+            if let body = context.current_srm_body_emitter then
+                body.ldc_i4(1);
+
+                return;
+            fi
+
             context.write_line("ldc.i4.1");
             context.write_line("add");
             context.write_line("stloc {_counter_il_name}");

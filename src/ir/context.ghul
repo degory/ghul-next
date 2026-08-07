@@ -115,11 +115,10 @@ namespace IR is
         // Binary emission state, carried here so that a value's `gen`
         // can reach the method body it is being emitted into without
         // every caller threading it through. The assembly emitter is
-        // set by the driver when a build targets an assembly; the type
-        // and body emitters track what the IL visitor currently has
-        // open, and are null outside one.
+        // set by the driver when a build targets an assembly; the body
+        // emitter tracks the method the IL visitor currently has open,
+        // and is null outside one.
         srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER? public;
-        current_srm_type_emitter: Emitter.SRM_TYPE_EMITTER? public;
         current_srm_body_emitter: Emitter.SRM_METHOD_BODY_EMITTER? public;
 
         // Reads `--debug` off the shared build-flags singleton so
@@ -211,11 +210,43 @@ namespace IR is
             current_output.write(value);
         si
             
+        // Text IL reaching this while a method body is being encoded
+        // means some value has no binary branch and has fallen through
+        // to its text one. There is no file open to receive it, so
+        // without this it would be dropped: the encoded body would
+        // simply be missing those instructions, and the first sign of
+        // it would be a JIT-time InvalidProgramException naming the
+        // method but nothing inside it. Failing here names the
+        // instruction that was not emitted.
+        _reject_text_in_binary_body(value: object) is
+            if !current_srm_body_emitter? then
+                return;
+            fi
+
+            let text = "{value}";
+
+            // `.maxstack` is a body-header field that
+            // MethodBodyStreamEncoder takes as an argument rather than
+            // an instruction, and `.line` is a debug sequence point the
+            // binary path does not emit yet. Neither is a dropped
+            // instruction.
+            if text.starts_with(".maxstack") \/ text.starts_with(".line") \/ text.starts_with("//") then
+                return;
+            fi
+
+            throw System.NotImplementedException(
+                "the binary back end has no emission for '{value}' yet");
+        si
+
         write_line(value: object) is
+            _reject_text_in_binary_body(value);
+
             current_output.write_line(_indent, value);
         si
 
         write_line(value: object, comment: object) is            
+            _reject_text_in_binary_body(value);
+
             current_output.write_line(_indent, value, comment);
         si
 
@@ -296,9 +327,125 @@ namespace IR is
         // Only void-returning signatures taking zero or one string
         // argument are encoded; anything else needs the signature blob
         // built from the function's actual argument and return types.
-        resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.MemberReferenceHandle is
+        // The CLR parameter index of a named argument.
+        //
+        // The text back end addresses arguments by name and lets ilasm
+        // resolve them against the method's declared parameters;
+        // metadata has only positions. An instance method's slot 0 is
+        // the receiver, so a declared argument sits one further along.
+        resolve_argument_index(symbol: Semantic.Symbols.Symbol) -> int is
+            let function = cast Semantic.Symbols.Function?(symbol.owner);
+
+            assert function? else
+                "argument '{symbol.name}' is not owned by a function";
+
+            let names = function.argument_names;
+
+            for i in 0..names.count do
+                if names[i] =~ symbol.name then
+                    return if function.is_instance then i + 1 else i fi;
+                fi
+            od
+
+            assert false else
+                "argument '{symbol.name}' is not declared by {function.name}";
+
+            return 0;
+        si
+
+        // The metadata token naming a type, for instructions that take
+        // one directly (box, castclass, isinst). A constructed generic
+        // needs a TypeSpec rather than a bare reference, which is not
+        // built yet, so those report rather than emitting a token that
+        // names the open definition.
+        resolve_type_token(type: Semantic.Types.Type) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
 
+            if type.arguments.count > 0 then
+                return cast System.Reflection.Metadata.EntityHandle(
+                    emitter.add_type_specification(type));
+            fi
+
+            let symbol = cast Semantic.Symbols.Classy?(type.symbol);
+
+            assert symbol? else "cannot name the type '{type}' in an instruction";
+
+            if let definition = emitter.handles.type_definition(symbol) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                Emitter.SRM_SIGNATURE_ENCODER(emitter).type_reference_for(symbol));
+        si
+
+        // A range struct is constructed from its two integer bounds.
+        resolve_range_constructor(
+            range_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_int_type());
+            arguments.add(lookup.get_int_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    resolve_type_token(range_type),
+                    "range .ctor {range_type}",
+                    arguments));
+        si
+
+        // A delegate is constructed from a receiver and a function
+        // pointer, so its constructor always takes (object, native int).
+        // The delegate type is normally a constructed generic, which
+        // has no reference row of its own: its TypeSpec is the owner.
+        resolve_delegate_constructor(
+            delegate_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_object_type());
+            arguments.add(lookup.get_word_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    resolve_type_token(delegate_type),
+                    "delegate .ctor {delegate_type}",
+                    arguments));
+        si
+
+        // The metadata token naming a field, for a load or store.
+        // Same rule as resolve_call_target: a field this assembly
+        // defines is named by its own FieldDef row, whose number the
+        // numbering pass has already fixed.
+        resolve_field_target(`field: Semantic.Symbols.Field) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            if let definition = emitter.handles.field_definition(`field) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
+
+            throw System.NotImplementedException(
+                "the binary back end cannot yet reference the imported field '{`field.name}'");
+        si
+
+        resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            // A target this assembly defines is called through its own
+            // MethodDef row. The row does not exist yet — the numbering
+            // pass fixed which row it will be, and the token embedded
+            // here resolves once the structure walk writes it.
+            if let definition = emitter.handles.method_definition(function) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
+
+            let owner_symbol: Semantic.Symbols.Symbol mut;
             let assembly_name: string mut;
             let owner_namespace_path: string mut;
             let owner_simple_name: string mut;
@@ -306,6 +453,7 @@ namespace IR is
             if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = function then
                 let owner_namespace = cast Semantic.Symbols.NAMESPACE(global_function.owner);
 
+                owner_symbol = owner_namespace;
                 assembly_name = global_function.il_assembly_name ?? "";
                 owner_namespace_path = owner_namespace.qualified_name.substring(1);
                 owner_simple_name = Semantic.DotNet.GLOBALS_CARRIER.name;
@@ -313,9 +461,15 @@ namespace IR is
                 // il_name_override on an imported type is the CLR-side
                 // dotted full name (see symbol_factory.ghul's get_il_name),
                 // unlike qualified_name which is the ghūl-mapped spelling
-                // (e.g. "IO.Std" for System.Console).
-                let clr_type_name = owner_classy.il_name_override ?? owner_classy.qualified_name;
+                // (e.g. "IO.Std" for System.Console). It arrives quoted
+                // for ilasm, which metadata must not carry.
+                let clr_type_name =
+                    Emitter.SRM_SIGNATURE_ENCODER.unquote(
+                        owner_classy.il_name_override ?? owner_classy.qualified_name);
+
                 let dot = clr_type_name.last_index_of('.');
+
+                owner_symbol = owner_classy;
 
                 assembly_name = owner_classy.il_assembly_name ?? "";
                 owner_namespace_path = if dot >= 0 then clr_type_name.substring(0, dot) else "" fi;
@@ -326,18 +480,17 @@ namespace IR is
                 return _;
             fi
 
-            let owner_key = "{assembly_name}|{owner_namespace_path}.{owner_simple_name}";
+            let owner_ref =
+                emitter.add_type_reference(owner_symbol, assembly_name, owner_namespace_path, owner_simple_name);
 
-            let owner_ref = emitter.add_type_reference(assembly_name, owner_namespace_path, owner_simple_name);
+            let signature = Emitter.SRM_SIGNATURE_ENCODER(emitter).method_signature(function);
 
-            let signature =
-                if function.arguments.count == 0 then
-                    [0x00ub, 0x00ub, 0x01ub];
-                else
-                    [0x00ub, 0x01ub, 0x01ub, 0x0eub];
-                fi;
-
-            return emitter.add_member_reference(owner_ref, owner_key, function.il_bare_name, signature);
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_member_reference(
+                    function,
+                    owner_ref,
+                    Emitter.SRM_FLAGS.method_name(function),
+                    signature));
         si
     si
 si

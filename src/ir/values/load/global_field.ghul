@@ -11,10 +11,22 @@ namespace IR.Values.Load is
         si
 
         gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ldsfld(context.resolve_field_target(cast Semantic.Symbols.Field(symbol)));
+
+                return;
+            fi
+
             context.write_line("ldsfld {symbol.get_il_reference()}");
         si
 
         gen_address(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ldsflda(context.resolve_field_target(cast Semantic.Symbols.Field(symbol)));
+
+                return;
+            fi
+
             context.write_line("ldsflda {symbol.get_il_reference()}");
         si
 

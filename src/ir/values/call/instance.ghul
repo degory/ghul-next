@@ -35,6 +35,18 @@ namespace IR.Values.Call is
                 (cast CONSTRAINED(from)).gen_prefix(context);
             fi
 
+            if let body = context.current_srm_body_emitter then
+                let target = context.resolve_call_target(function);
+
+                if from.is_super \/ !function.is_virtual then
+                    body.call(target);
+                else
+                    body.call_virtual(target);
+                fi
+
+                return;
+            fi
+
             let il_ref = function.get_il_reference();
 
             if from.is_super \/ !function.is_virtual then

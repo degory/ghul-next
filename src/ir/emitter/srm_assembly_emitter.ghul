@@ -26,17 +26,20 @@ namespace IR.Emitter is
     // this layer's job — a metadata table holds one row per distinct
     // reference, with no merging of repeats after the fact.
     //
-    // Emission is split across three objects, narrowing in scope: this
-    // one, SRM_TYPE_EMITTER for one in-flight type, and
-    // SRM_METHOD_BODY_EMITTER for one method body's instructions.
+    // Emission is split across two objects: this one, and
+    // SRM_METHOD_BODY_EMITTER for one method body's instructions. The
+    // structure of the assembly comes from SRM_STRUCTURE_WALK, which
+    // reads it from the symbol table rather than accumulating it here.
     class SRM_ASSEMBLY_EMITTER is
         _metadata: MetadataBuilder;
         _il_builder: BlobBuilder;
         _body_stream: MethodBodyStreamEncoder;
 
         _assembly_refs: Collections.MAP[string, AssemblyReferenceHandle];
-        _type_refs: Collections.MAP[string, TypeReferenceHandle];
-        _member_refs: Collections.MAP[string, MemberReferenceHandle];
+        _type_refs: Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle];
+        _named_type_refs: Collections.MAP[string, TypeReferenceHandle];
+        _member_refs: Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle];
+
 
         _entry_point: MethodDefinitionHandle?;
         _want_library: bool;
@@ -52,8 +55,12 @@ namespace IR.Emitter is
             _body_stream = MethodBodyStreamEncoder(_il_builder);
 
             _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
-            _type_refs = Collections.MAP[string, TypeReferenceHandle]();
-            _member_refs = Collections.MAP[string, MemberReferenceHandle]();
+            _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
+            _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
+            _named_member_refs = Collections.MAP[string, MemberReferenceHandle]();
+            _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
+            handles = SRM_HANDLES();
+            _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
 
             _want_library = want_library;
 
@@ -108,6 +115,20 @@ namespace IR.Emitter is
 
         next_field_row: int => _metadata.get_row_count(TableIndex.FIELD) + 1;
         next_method_row: int => _metadata.get_row_count(TableIndex.METHOD_DEF) + 1;
+        next_type_row: int => _metadata.get_row_count(TableIndex.TYPE_DEF) + 1;
+        next_parameter_row: int => _metadata.get_row_count(TableIndex.PARAM) + 1;
+
+        // The function the entrypoint pragma named during the tree
+        // walk, so the structure walk can mark its row. Which function
+        // is the entry point is not a naming rule the emitter can
+        // reapply: it can be a global function or a static method, and
+        // `@entry` overrides the name entirely.
+        entry_point_function: Semantic.Symbols.Function? public;
+
+        // Every row this assembly has promised a symbol. Held here so
+        // that anything with the emitter can resolve a definition
+        // without being handed a second object.
+        handles: SRM_HANDLES;
 
         add_assembly_reference(name: string, version: string) -> AssemblyReferenceHandle is
             if _assembly_refs.contains_key(name) then
@@ -127,11 +148,14 @@ namespace IR.Emitter is
             return handle;
         si
 
-        add_type_reference(assembly_name: string, namespace_name: string, simple_name: string) -> TypeReferenceHandle is
-            let key = "{assembly_name}|{namespace_name}.{simple_name}";
-
-            if _type_refs.contains_key(key) then
-                return _type_refs[key];
+        add_type_reference(
+            symbol: Semantic.Symbols.Symbol,
+            assembly_name: string,
+            namespace_name: string,
+            simple_name: string
+        ) -> TypeReferenceHandle is
+            if _type_refs.contains_key(symbol) then
+                return _type_refs[symbol];
             fi
 
             assert _assembly_refs.contains_key(assembly_name) else
@@ -144,21 +168,94 @@ namespace IR.Emitter is
                 _metadata.get_or_add_string(namespace_name),
                 _metadata.get_or_add_string(simple_name));
 
-            _type_refs[key] = handle;
+            _type_refs[symbol] = handle;
 
             return handle;
         si
 
+        // Reference to a type that no symbol names — the framework
+        // types every assembly needs as a base type regardless of what
+        // the source declares.
+        add_type_reference_by_name(
+            assembly_name: string,
+            namespace_name: string,
+            simple_name: string
+        ) -> TypeReferenceHandle is
+            let key = "{assembly_name}|{namespace_name}|{simple_name}";
+
+            if _named_type_refs.contains_key(key) then
+                return _named_type_refs[key];
+            fi
+
+            add_assembly_reference(assembly_name, "8:0:0:0");
+
+            let handle = _metadata.add_type_reference(
+                cast EntityHandle(_assembly_refs[assembly_name]),
+                _metadata.get_or_add_string(namespace_name),
+                _metadata.get_or_add_string(simple_name));
+
+            _named_type_refs[key] = handle;
+
+            return handle;
+        si
+
+        // A TypeSpec names a constructed generic where a table-level
+        // reference is needed. Cached per type spelling: two references
+        // to the same instantiation are the same row.
+        _type_specs: Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle];
+
+        add_type_specification(
+            type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.TypeSpecificationHandle is
+            let key = "{type}";
+
+            if _type_specs.contains_key(key) then
+                return _type_specs[key];
+            fi
+
+            let signature = SRM_SIGNATURE_ENCODER(self).type_specification_signature(type);
+
+            let handle = _metadata.add_type_specification(_metadata.get_or_add_blob(signature));
+
+            _type_specs[key] = handle;
+
+            return handle;
+        si
+
+        // A reference to a constructor on a type this assembly does not
+        // define. The owner is a handle rather than a symbol because the
+        // constructors that need this are named by a constructed type.
+        add_constructor_reference(
+            owner: EntityHandle,
+            key: string,
+            argument_types: Collections.List[Semantic.Types.Type]
+        ) -> MemberReferenceHandle is
+            if _named_member_refs.contains_key(key) then
+                return _named_member_refs[key];
+            fi
+
+            let signature = SRM_SIGNATURE_ENCODER(self).constructor_signature(argument_types);
+
+            let handle = _metadata.add_member_reference(
+                owner,
+                _metadata.get_or_add_string(".ctor"),
+                _metadata.get_or_add_blob(signature));
+
+            _named_member_refs[key] = handle;
+
+            return handle;
+        si
+
+        _named_member_refs: Collections.MAP[string, MemberReferenceHandle];
+
         add_member_reference(
+            symbol: Semantic.Symbols.Function,
             owner: TypeReferenceHandle,
-            owner_key: string,
             name: string,
             signature_bytes: ubyte[]
         ) -> MemberReferenceHandle is
-            let key = "{owner_key}::{name}";
-
-            if _member_refs.contains_key(key) then
-                return _member_refs[key];
+            if _member_refs.contains_key(symbol) then
+                return _member_refs[symbol];
             fi
 
             let handle = _metadata.add_member_reference(
@@ -166,13 +263,45 @@ namespace IR.Emitter is
                 _metadata.get_or_add_string(name),
                 _metadata.get_or_add_blob(signature_bytes));
 
-            _member_refs[key] = handle;
+            _member_refs[symbol] = handle;
 
             return handle;
         si
 
-        add_method_body(encoder: InstructionEncoder) -> int =>
-            _body_stream.add_method_body(encoder, 8, _, _);
+
+        // A method with locals needs a StandAloneSig naming their
+        // types, in slot order, for the body header to point at.
+        add_method_body(encoder: InstructionEncoder, body: SRM_METHOD_BODY_EMITTER) -> int is
+            let locals =
+                if body.has_locals then
+                    add_local_variable_signature(body.local_types)
+                else
+                    _[System.Reflection.Metadata.StandaloneSignatureHandle]
+                fi;
+
+            // The text path declares `.maxstack 64` on every body it
+            // emits rather than computing a bound, so the binary path
+            // reserves the same depth.
+            return _body_stream.add_method_body(encoder, 64, locals, _);
+        si
+
+        add_local_variable_signature(
+            types: Collections.List[Semantic.Types.Type]
+        ) -> System.Reflection.Metadata.StandaloneSignatureHandle is
+            let builder = BlobBuilder(32);
+
+            let variables =
+                System.Reflection.Metadata.Ecma335.BlobEncoder(builder)
+                    .local_variable_signature(types.count);
+
+            let signatures = SRM_SIGNATURE_ENCODER(self);
+
+            for type in types do
+                signatures.encode_type(variables.add_variable().`type(false, false), type);
+            od
+
+            return _metadata.add_standalone_signature(_metadata.get_or_add_blob(builder.to_array()));
+        si
 
         add_method_definition(
             flags: MethodAttributes,
@@ -183,6 +312,19 @@ namespace IR.Emitter is
             parameter_list: System.Reflection.Metadata.ParameterHandle
         ) -> MethodDefinitionHandle =>
             _metadata.add_method_definition(flags, impl_flags, name, signature, body_offset, parameter_list);
+
+        add_parameter(
+            name: StringHandle,
+            sequence_number: int
+        ) -> System.Reflection.Metadata.ParameterHandle =>
+            _metadata.add_parameter(cast System.Reflection.ParameterAttributes(0), name, sequence_number);
+
+        add_field_definition(
+            flags: System.Reflection.FieldAttributes,
+            name: StringHandle,
+            signature: BlobHandle
+        ) -> System.Reflection.Metadata.FieldDefinitionHandle =>
+            _metadata.add_field_definition(flags, name, signature);
 
         add_type_definition(
             flags: System.Reflection.TypeAttributes,

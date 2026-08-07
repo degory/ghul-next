@@ -528,6 +528,13 @@ namespace Syntax.Process is
             ADDRESS.reset_id();
             TEMP.reset_id();
             LABEL.reset_id();
+
+            // A body that fails to emit unwinds to `Classy.walk`, which
+            // restores the symbol table and the diagnostics but knows
+            // nothing about emission state. Without this the abandoned
+            // body emitter is still installed when the next class opens,
+            // and everything that class emits is reported against it.
+            _context.current_srm_body_emitter = null;
         si
 
         leave_class(symbol: Semantic.Symbols.Classy) is
@@ -553,8 +560,10 @@ namespace Syntax.Process is
         // global function/property/variable definition. Multiple wrappers for
         // the same class get merged by ilasm (partial class definitions).
         gen_globals_class_open(`namespace: Semantic.Symbols.NAMESPACE) is
+            // The binary back end derives the carrier and its members
+            // from the namespace itself, so a global member needs no
+            // wrapper opened around it here.
             if _context.srm_assembly_emitter? then
-                gen_globals_class_open_srm(`namespace);
                 return;
             fi
 
@@ -574,29 +583,8 @@ namespace Syntax.Process is
             fi
         si
 
-        // Assumes at most one global-function wrapper per namespace, so
-        // the type emitter opens and closes around a single member. A
-        // metadata TypeDef row points at a contiguous run of its members,
-        // so supporting several global members in one namespace means
-        // keeping the type emitter open across every wrapper for that
-        // namespace and closing it once the walk has passed them all.
-        gen_globals_class_open_srm(`namespace: Semantic.Symbols.NAMESPACE) is
-            let emitter = _context.srm_assembly_emitter!;
-
-            let object_ref = emitter.add_type_reference("System.Runtime", "System", "Object");
-
-            _context.current_srm_type_emitter = IR.Emitter.SRM_TYPE_EMITTER(
-                emitter,
-                `namespace.qualified_name.substring(1),
-                Semantic.DotNet.GLOBALS_CARRIER.name,
-                cast System.Reflection.Metadata.EntityHandle(object_ref),
-                cast System.Reflection.TypeAttributes(385));   // public | abstract | sealed
-        si
-
         gen_globals_class_close() is
             if _context.srm_assembly_emitter? then
-                _context.current_srm_type_emitter!.close();
-                _context.current_srm_type_emitter = null;
                 return;
             fi
 
@@ -1139,6 +1127,10 @@ namespace Syntax.Process is
         pre(function: Definitions.FUNCTION) -> bool is
             let symbol = function_for(function)!;
 
+            if _context.srm_assembly_emitter? then
+                return _pre_function_srm(function, cast Semantic.Symbols.Function?(symbol)!);
+            fi
+
             // Generator branch: a `*_GENERATOR_*` function expands
             // into TWO IL methods (the outer stub returning a fresh
             // state-machine instance + the state machine class with
@@ -1161,10 +1153,6 @@ namespace Syntax.Process is
 
             if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = symbol then
                 gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(global_function.owner)!);
-
-                if _context.srm_assembly_emitter? then
-                    return _pre_global_function_srm(function, global_function);
-                fi
             fi
 
             println_comment("define {symbol.description}");
@@ -1186,28 +1174,35 @@ namespace Syntax.Process is
             return false;
         si
 
-        // Binary counterpart of the global-function branch of
-        // `pre(function)` above. Only the entry point emits; any other
-        // global function is skipped rather than reported, so that a
-        // program with no entry point still reaches the pass-level check
-        // that diagnoses it. Attributes, state machines and non-void
-        // returns are not handled for the entry point either.
-        _pre_global_function_srm(function: Definitions.FUNCTION, global_function: Semantic.Symbols.GLOBAL_FUNCTION) -> bool is
-            if global_function.name !~ _context.entry_point_name then
-                gen_globals_class_close();
-
-                // True suppresses the body walk (see FUNCTION.walk):
-                // no block is opened for a skipped function, so walking
-                // its body would emit into nothing.
+        // Binary counterpart of `pre(function)`'s text body, for every
+        // function the assembly defines. The structure walk has already
+        // reserved this function's MethodDef row and will write it once
+        // the walk is done, so nothing here touches metadata: the body
+        // is encoded into its own buffer and its offset left against
+        // the symbol.
+        _pre_function_srm(function: Definitions.FUNCTION, symbol: Semantic.Symbols.Function) -> bool is
+            // A declaration with no body - an abstract method, or a
+            // trait member left to its implementors - has nothing to
+            // encode, and its row is marked abstract rather than
+            // pointed at an empty body.
+            if symbol.is_abstract then
                 return true;
             fi
 
             enter_scope(function);
 
             _context.current_srm_body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
-            _context.seen_entrypoint = true;
+
+            // Entry-point detection is a semantic question, not a
+            // naming rule the emitter can reapply: it accepts a global
+            // function or a static method, checks the signature, and
+            // reports a second candidate. The text path reaches this
+            // through `gen_body_header`, which the binary path does not
+            // emit.
+            symbol.gen_entrypoint(_context);
 
             enter_block();
+
             return false;
         si
 
@@ -1323,11 +1318,9 @@ namespace Syntax.Process is
             _context.write_line(".custom instance void ['ghul-runtime']Ghul.Internal.PURE_ATTRIBUTE::.ctor() = ( 01 00 00 00 )");
         si
 
-        // SRM counterpart of the tail of `visit(function)` below, for the
-        // global-function branch opened by `_pre_global_function_srm`.
-        _visit_global_function_srm(function: Definitions.FUNCTION, global_function: Semantic.Symbols.GLOBAL_FUNCTION) is
+        // SRM counterpart of the tail of `visit(function)` below.
+        _visit_function_srm(function: Definitions.FUNCTION, symbol: Semantic.Symbols.Function) is
             let body_emitter = _context.current_srm_body_emitter!;
-            let type_emitter = _context.current_srm_type_emitter!;
             let assembly_emitter = _context.srm_assembly_emitter!;
 
             current_block.gen(_context);
@@ -1335,42 +1328,21 @@ namespace Syntax.Process is
 
             body_emitter.ret();
 
-            let body_offset = body_emitter.flush(assembly_emitter);
-
-            let signature =
-                if global_function.arguments.count == 0 then
-                    [0x00ub, 0x00ub, 0x01ub];
-                else
-                    [0x00ub, 0x01ub, 0x01ub, 0x0eub];
-                fi;
-
-            let method_handle = type_emitter.add_method(
-                global_function.il_bare_name,
-                cast System.Reflection.MethodAttributes(150),   // public | static | hidebysig
-                signature,
-                body_offset);
-
-            assembly_emitter.set_entry_point(method_handle);
+            assembly_emitter.handles.set_body_offset(symbol, body_emitter.flush(assembly_emitter));
 
             _context.current_srm_body_emitter = null;
 
             leave_scope(function);
-
-            gen_globals_class_close();
         si
 
         visit(function: Definitions.FUNCTION) is
             let symbol = symbol_for(function);
 
-            if _context.srm_assembly_emitter? /\ isa Semantic.Symbols.GLOBAL_FUNCTION(symbol) then
-                let global_function = cast Semantic.Symbols.GLOBAL_FUNCTION(symbol);
+            if _context.srm_assembly_emitter? then
+                let symbol_function = cast Semantic.Symbols.Function?(symbol)!;
 
-                // Only the entry point was actually opened by
-                // `_pre_global_function_srm` (see its comment); every
-                // other global function's body walk was skipped there,
-                // so there's nothing here to flush either.
-                if global_function.name =~ _context.entry_point_name then
-                    _visit_global_function_srm(function, global_function);
+                if !symbol_function.is_abstract then
+                    _visit_function_srm(function, symbol_function);
                 fi
 
                 return;
@@ -1409,8 +1381,7 @@ namespace Syntax.Process is
                         function_symbol.return_type? /\
                         function_symbol.return_type.compare(_innate_symbol_lookup.get_void_type()) != Semantic.Types.MATCH.SAME
                     then
-                        _context.write_line(".locals init ({function_symbol.return_type!.get_il_type()} '.default')");
-                        _context.write_line("ldloc '.default'");
+                        add(Values.DEFAULT_RETURN(function_symbol.return_type!));
                     fi
 
                     _context.write_line("ret");
@@ -1570,7 +1541,7 @@ namespace Syntax.Process is
             add("ldc.i4.m1");
             add("stfld {state_field_ref}");
             add("ldc.i4.0");
-            add("ret");
+            add(Values.RET());
 
             // If any yield inside an inner `.try` used the
             // leave-return-true label, emit it now (outside any try)
@@ -1579,7 +1550,7 @@ namespace Syntax.Process is
             if _current_generator_yield_return_label? then
                 add("{_current_generator_yield_return_label}:");
                 add("ldc.i4.1");
-                add("ret");
+                add(Values.RET());
             fi
 
             _current_generator_yield_return_label = prev_yield_return;
@@ -2558,11 +2529,10 @@ namespace Syntax.Process is
                 // already terminates control flow. Emit a default-value
                 // trailer so the unreachable fall-off is verifiable,
                 // matching statement-bodied functions that end in throw.
-                add(".locals init ({current_function.return_type!.get_il_type()} '.default')");
-                add("ldloc '.default'");
+                add(Values.DEFAULT_RETURN(current_function.return_type!));
             fi
 
-            add("ret");
+            add(Values.RET());
 
             super.visit(expression_body);
         si
@@ -2721,7 +2691,12 @@ namespace Syntax.Process is
                         _logger.error(pragma.location, "duplicate entrypoint");
                     else
                         _context.seen_entrypoint = true;
-                        _context.write_line(".entrypoint");
+
+                        if let emitter = _context.srm_assembly_emitter then
+                            emitter.entry_point_function = current_function;
+                        else
+                            _context.write_line(".entrypoint");
+                        fi
                     fi
                 fi
             elif name =~ "test" then
@@ -2788,7 +2763,7 @@ namespace Syntax.Process is
             // visit. (See error.ghul:30-34 for the underlying rule.)
             if closure.return_type? /\ closure.return_type.is_error then
                 _logger.error(function.location, "cannot infer return type here");
-                add("ret");
+                add(Values.RET());
                 _context.enter_buffer(false);
                 _context.reset_line_tracking();
                 current_block.gen(_context);
@@ -2807,13 +2782,12 @@ namespace Syntax.Process is
                 closure.return_type? /\
                 closure.return_type.compare(_innate_symbol_lookup.get_void_type()) != Semantic.Types.MATCH.SAME
             then
-                add(".locals init ({closure.return_type!.get_il_type()} '.default')");
-                add("ldloc '.default'");
+                add(Values.DEFAULT_RETURN(closure.return_type!));
             fi
 
             add("// end IL body {closure}");
 
-            add("ret");
+            add(Values.RET());
 
             _context.enter_buffer(false);
 
@@ -2988,7 +2962,7 @@ namespace Syntax.Process is
             );
 
             add(launch);
-            add("ret");
+            add(Values.RET());
 
             _context.enter_buffer(false);
             _context.reset_line_tracking();
@@ -3363,6 +3337,22 @@ namespace Syntax.Process is
                 if async_sm? /\ async_sm.frame? then
                     return false;
                 fi
+            fi
+
+            // A local's declaration is a value in the block for the
+            // binary path: metadata has no `.locals init` directive,
+            // and the slot it allocates has to be in place before any
+            // load of the same name is encoded.
+            if _context.srm_assembly_emitter? /\ _block_context.is_in_block then
+                for name in variable.names do
+                    let local = cast Semantic.Symbols.LOCAL_VARIABLE?(find(name));
+
+                    if local? /\ local.type? then
+                        current_block.add(Values.DECLARE_LOCAL(local.il_name, local.type!));
+                    fi
+                od
+
+                return false;
             fi
 
             let buffer = System.Text.StringBuilder();
@@ -3832,7 +3822,7 @@ namespace Syntax.Process is
                     add(value);
                 fi
 
-                add("ret");
+                add(Values.RET());
             fi
         si
 
@@ -4026,7 +4016,7 @@ namespace Syntax.Process is
                 add("leave {_current_generator_yield_return_label}");
             else
                 add("ldc.i4.1");
-                add("ret");
+                add(Values.RET());
             fi
 
             add("{resume}:");
@@ -4926,7 +4916,7 @@ namespace Syntax.Process is
                     add(return_value.load());
                 fi
 
-                add("ret");
+                add(Values.RET());
             fi
 
             brancher.label(label.end);

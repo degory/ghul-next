@@ -30,6 +30,12 @@ namespace IR.Values.Store is
 
             gen(value, context);
 
+            if let body = context.current_srm_body_emitter then
+                body.stloc(symbol.il_name);
+
+                return;
+            fi
+
             context.write_line("stloc {symbol.il_name}");
         si
 
