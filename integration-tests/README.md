@@ -102,6 +102,37 @@ an existing test clearly needs a feature tag that doesn't exist yet. Don't go
 looking for mistagged tests outside of what you're already touching — this is
 opportunistic upkeep, not a project.
 
+## The text-IL snapshot tests are disabled in this repository
+
+Every test under `il/` carrying an `il.expected` snapshot is disabled here, 84
+of the group's 86. They assert the output of the text-IL emitter, which this
+repository is replacing with direct binary emission, so none of them can say
+anything about whether that work is going well.
+
+They fail in two different ways, and the second is the more misleading. A test
+whose declaration still takes the text path produces an `il.out` that no longer
+matches, and fails. A test whose declaration has moved to the binary back end
+produces no `il.out` at all — and step 4 below **skips** the comparison when
+that file is missing rather than failing, so the test passes while asserting
+nothing.
+
+That means each test flips from failing to vacuously passing as its emission is
+migrated. The suite's pass count would climb as the work proceeds, driven
+entirely by tests that have stopped checking anything. Reading it as progress
+would be exactly backwards.
+
+The two still enabled assert something that does not depend on the back end:
+`boolean-literals` checks runtime output and `def-namespace-minimal` checks
+that a build fails.
+
+Disabled rather than deleted for two reasons: the snapshots record what the
+emitter is expected to produce, which is the reference the binary back end is
+written against; and keeping the directories in place lets merges from upstream
+ghul apply to them cleanly.
+
+Re-enable a test by deleting its `disabled` file, once binary emission covers
+what it exercises and its snapshot has been recaptured.
+
 ## Expectation comparison workflow
 
 1. The runner invokes the compiler using the arguments in `ghulflags` and the test sources. Compiler output goes to `compiler.out`.
