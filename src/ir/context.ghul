@@ -396,10 +396,14 @@ namespace IR is
             let emitter = srm_assembly_emitter!;
 
             // A constructed generic has no row of its own, and neither
-            // does a type parameter: both are structural types, named by
-            // a specification carrying their encoded shape.
+            // does a type parameter or a primitive: all three are
+            // structural types, named by a specification carrying their
+            // encoded shape. A primitive especially cannot be named by
+            // reference — its il_name_override is the assembler keyword
+            // (`int8`, `int32`), which is not what the type is called.
             if type.arguments.count > 0 \/
-               isa Semantic.Symbols.GenericArgument(type.symbol)
+               isa Semantic.Symbols.GenericArgument(type.symbol) \/
+               type.symbol.il_is_primitive_type
             then
                 return cast System.Reflection.Metadata.EntityHandle(
                     emitter.add_type_specification(type));
@@ -558,7 +562,7 @@ namespace IR is
             if owner_namespace? then
                 return emitter.add_type_reference(
                     owner_namespace,
-                    _referenced_assembly(globals_assembly_name ?? ""),
+                    _referenced_assembly(globals_assembly_name ?? "", owner_namespace),
                     owner_namespace.qualified_name.substring(1),
                     Semantic.DotNet.GLOBALS_CARRIER.name);
             fi
@@ -589,14 +593,22 @@ namespace IR is
 
             return emitter.add_type_reference(
                 owner_classy,
-                _referenced_assembly(owner_classy.il_assembly_name ?? ""),
+                _referenced_assembly(owner_classy.il_assembly_name ?? "", owner_classy),
                 if dot >= 0 then clr_type_name.substring(0, dot) else "" fi,
                 if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi);
         si
 
         // A type reference names the assembly it points into, which has
         // to have a row of its own before anything can name it.
-        _referenced_assembly(assembly_name: string) -> string is
+        //
+        // An empty name is not a usable reference: it produces a row the
+        // runtime resolves to the assembly being built, so every type
+        // named through it appears to be one this assembly defines and
+        // fails to load. Refuse it rather than emit that.
+        _referenced_assembly(assembly_name: string, owner: Semantic.Symbols.Symbol) -> string is
+            assert assembly_name.length > 0 else
+                "'{owner.qualified_name}' names no assembly to reference it through";
+
             srm_assembly_emitter!.add_assembly_reference(assembly_name, "8:0:0:0");
 
             return assembly_name;
