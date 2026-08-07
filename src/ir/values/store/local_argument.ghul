@@ -24,6 +24,12 @@ namespace IR.Values.Store is
             fi
 
             gen(value, context);
+            if let body = context.current_srm_body_emitter then
+                body.starg(context.resolve_argument_index(symbol));
+
+                return;
+            fi
+
             context.write_line("starg {symbol.il_name}");
         si
 
