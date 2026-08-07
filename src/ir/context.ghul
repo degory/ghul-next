@@ -115,11 +115,10 @@ namespace IR is
         // Binary emission state, carried here so that a value's `gen`
         // can reach the method body it is being emitted into without
         // every caller threading it through. The assembly emitter is
-        // set by the driver when a build targets an assembly; the type
-        // and body emitters track what the IL visitor currently has
-        // open, and are null outside one.
+        // set by the driver when a build targets an assembly; the body
+        // emitter tracks the method the IL visitor currently has open,
+        // and is null outside one.
         srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER? public;
-        current_srm_type_emitter: Emitter.SRM_TYPE_EMITTER? public;
         current_srm_body_emitter: Emitter.SRM_METHOD_BODY_EMITTER? public;
 
         // Reads `--debug` off the shared build-flags singleton so

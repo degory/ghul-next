@@ -26,9 +26,10 @@ namespace IR.Emitter is
     // this layer's job — a metadata table holds one row per distinct
     // reference, with no merging of repeats after the fact.
     //
-    // Emission is split across three objects, narrowing in scope: this
-    // one, SRM_TYPE_EMITTER for one in-flight type, and
-    // SRM_METHOD_BODY_EMITTER for one method body's instructions.
+    // Emission is split across two objects: this one, and
+    // SRM_METHOD_BODY_EMITTER for one method body's instructions. The
+    // structure of the assembly comes from SRM_STRUCTURE_WALK, which
+    // reads it from the symbol table rather than accumulating it here.
     class SRM_ASSEMBLY_EMITTER is
         _metadata: MetadataBuilder;
         _il_builder: BlobBuilder;
@@ -39,10 +40,6 @@ namespace IR.Emitter is
         _named_type_refs: Collections.MAP[string, TypeReferenceHandle];
         _member_refs: Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle];
 
-        // Types in the order they finished, each still holding its
-        // methods as records rather than rows. See SRM_TYPE_EMITTER for
-        // why rows cannot be written during the walk.
-        _pending_types: Collections.LIST[SRM_TYPE_EMITTER];
 
         _entry_point: MethodDefinitionHandle?;
         _want_library: bool;
@@ -64,7 +61,6 @@ namespace IR.Emitter is
             _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
             handles = SRM_HANDLES();
             _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
-            _pending_types = Collections.LIST[SRM_TYPE_EMITTER]();
 
             _want_library = want_library;
 
@@ -272,9 +268,6 @@ namespace IR.Emitter is
             return handle;
         si
 
-        add_pending_type(type_emitter: SRM_TYPE_EMITTER) is
-            _pending_types.add(type_emitter);
-        si
 
         // A method with locals needs a StandAloneSig naming their
         // types, in slot order, for the body header to point at.
