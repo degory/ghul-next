@@ -152,6 +152,21 @@ namespace IR.Emitter is
         si
 
         _collect_frames_from_function(function: Function, into: Collections.LIST[Classy]) static is
+            // A generator or async function compiles into a state
+            // machine whose frame is a type of its own, reached from
+            // the function rather than from any scope.
+            if let state_machine = Semantic.Symbols.state_machine_for(function) then
+                if let frame = state_machine.frame then
+                    into.add(frame);
+                fi
+            fi
+
+            if let async_state_machine = Semantic.Symbols.async_state_machine_for(function) then
+                if let frame = async_state_machine.frame then
+                    into.add(frame);
+                fi
+            fi
+
             for symbol in function.symbols do
                 if let closure: Semantic.Symbols.Closure = symbol then
                     if let frame = closure.frame then
