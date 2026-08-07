@@ -42,6 +42,12 @@ namespace IR.Values.Load is
                 return;
             fi
 
+            if let body = context.current_srm_body_emitter then
+                body.ldarga(context.resolve_argument_index(symbol));
+
+                return;
+            fi
+
             context.write_line("ldarga {symbol.il_name}");
         si
 

@@ -102,6 +102,9 @@ namespace IR.Emitter is
         cast_class(type: EntityHandle) is _encoder.op_code(ILOpCode.CASTCLASS); _encoder.token(type); si
         is_instance(type: EntityHandle) is _encoder.op_code(ILOpCode.ISINST); _encoder.token(type); si
 
+        load_object(type: EntityHandle) is _encoder.op_code(ILOpCode.LDOBJ); _encoder.token(type); si
+        store_object(type: EntityHandle) is _encoder.op_code(ILOpCode.STOBJ); _encoder.token(type); si
+
         op(op_code: ILOpCode) is _encoder.op_code(op_code); si
 
         ret() is _encoder.op_code(ILOpCode.RET); si

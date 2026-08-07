@@ -21,6 +21,12 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             gen(value, context);
 
+            if let body = context.current_srm_body_emitter then
+                body.is_instance(context.resolve_type_token(isa_type));
+
+                return;
+            fi
+
             context.write_line("isinst {isa_type.get_il_type()}");
             context.write_line("ldnull");
             context.write_line("cgt.un");

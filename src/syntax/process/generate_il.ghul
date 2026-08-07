@@ -1374,8 +1374,7 @@ namespace Syntax.Process is
                         function_symbol.return_type? /\
                         function_symbol.return_type.compare(_innate_symbol_lookup.get_void_type()) != Semantic.Types.MATCH.SAME
                     then
-                        _context.write_line(".locals init ({function_symbol.return_type!.get_il_type()} '.default')");
-                        _context.write_line("ldloc '.default'");
+                        add(Values.DEFAULT_RETURN(function_symbol.return_type!));
                     fi
 
                     _context.write_line("ret");
@@ -2523,8 +2522,7 @@ namespace Syntax.Process is
                 // already terminates control flow. Emit a default-value
                 // trailer so the unreachable fall-off is verifiable,
                 // matching statement-bodied functions that end in throw.
-                add(".locals init ({current_function.return_type!.get_il_type()} '.default')");
-                add("ldloc '.default'");
+                add(Values.DEFAULT_RETURN(current_function.return_type!));
             fi
 
             add(Values.RET());
@@ -2777,8 +2775,7 @@ namespace Syntax.Process is
                 closure.return_type? /\
                 closure.return_type.compare(_innate_symbol_lookup.get_void_type()) != Semantic.Types.MATCH.SAME
             then
-                add(".locals init ({closure.return_type!.get_il_type()} '.default')");
-                add("ldloc '.default'");
+                add(Values.DEFAULT_RETURN(closure.return_type!));
             fi
 
             add("// end IL body {closure}");

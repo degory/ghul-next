@@ -86,7 +86,7 @@ namespace IR is
             let operation = value.op_name;
 
             // FIXME: do we need to convert the inputs or outputs?
-            block.add(operation);
+            block.add(Values.INSTRUCTION(operation));
         si
 
         gen_bool_not(value: INNATE, block: BLOCK) is
@@ -94,8 +94,8 @@ namespace IR is
 
             gen_arguments(value, block);
 
-            block.add("ldc.i4 0");
-            block.add("ceq");
+            block.add(Values.INSTRUCTION("ldc.i4.0"));
+            block.add(Values.INSTRUCTION("ceq"));
         si
 
         gen_short_circuit_bool(value: INNATE, block: BLOCK) is
@@ -108,9 +108,9 @@ namespace IR is
 
             // push speculative result:
             if operation =~ "and_then" then
-                block.add("ldc.i4 0");
+                block.add(Values.INSTRUCTION("ldc.i4.0"));
             else
-                block.add("ldc.i4 1");
+                block.add(Values.INSTRUCTION("ldc.i4.1"));
             fi
         
             // branch to exit if speculative result is correct based on evaluating left argument:
@@ -121,7 +121,7 @@ namespace IR is
             fi
 
             // speculative result may not be correct, discard it:
-            block.add("pop");
+            block.add(Values.INSTRUCTION("pop"));
             
             // result is value of right side: 
             gen_argument(value, 1, block);
@@ -157,11 +157,11 @@ namespace IR is
                 instruction = "{instruction}.un";
             fi
                             
-            block.add(instruction);
+            block.add(Values.INSTRUCTION(instruction));
 
             if needs_not then
-                block.add("ldc.i4 0");
-                block.add("ceq");
+                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ceq"));
             fi            
         si        
         
@@ -174,8 +174,8 @@ namespace IR is
                 block.add("call bool string::op_Equality(string, string)");
 
                 if value.actual_operation =~ "!~" then
-                    block.add("ldc.i4 0");
-                    block.add("ceq");
+                    block.add(Values.INSTRUCTION("ldc.i4.0"));
+                    block.add(Values.INSTRUCTION("ceq"));
                 fi
             else
                 throw System.Exception("unexpected string innate operation: {innate_name}");
@@ -196,11 +196,11 @@ namespace IR is
             block.add(left);
             block.add(right);
 
-            block.add("ceq");
+            block.add(Values.INSTRUCTION("ceq"));
 
             if value.actual_operation =~ "!=" then
-                block.add("ldc.i4 0");
-                block.add("ceq");
+                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ceq"));
             fi                
         si
 
@@ -209,11 +209,11 @@ namespace IR is
 
             gen_arguments(value, block);
 
-            block.add("ceq");
+            block.add(Values.INSTRUCTION("ceq"));
 
             if value.actual_operation =~ "!=" then
-                block.add("ldc.i4 0");
-                block.add("ceq");
+                block.add(Values.INSTRUCTION("ldc.i4.0"));
+                block.add(Values.INSTRUCTION("ceq"));
             fi                
         si
 
@@ -282,8 +282,8 @@ namespace IR is
                 block.add("call bool {decimal_il}::op_Equality({decimal_il}, {decimal_il})");
 
                 if value.actual_operation =~ "!=" then
-                    block.add("ldc.i4 0");
-                    block.add("ceq");
+                    block.add(Values.INSTRUCTION("ldc.i4.0"));
+                    block.add(Values.INSTRUCTION("ceq"));
                 fi
 
                 return;

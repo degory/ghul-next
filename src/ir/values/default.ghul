@@ -19,12 +19,26 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             let id = TEMP.get_next_id();
 
+            if let body = context.current_srm_body_emitter then
+                body.declare_local("'.default.{id}'", type);
+                body.ldloc("'.default.{id}'");
+
+                return;
+            fi
+
             context.write_line(".locals init ({type.get_il_type()} '.default.{id}')");
             context.write_line("ldloc '.default.{id}'");
         si
 
         gen_address(context: IR.CONTEXT) is
             let id = TEMP.get_next_id();
+
+            if let body = context.current_srm_body_emitter then
+                body.declare_local("'.default.{id}'", type);
+                body.ldloca("'.default.{id}'");
+
+                return;
+            fi
 
             context.write_line(".locals init ({type.get_il_type()} '.default.{id}')");
             context.write_line("ldloca '.default.{id}'");

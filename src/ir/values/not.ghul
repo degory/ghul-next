@@ -17,7 +17,7 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             Value.gen(value, context);
 
-            context.write_line("ldc.i4 0");
+            context.write_line("ldc.i4.0");
             context.write_line("ceq");
         si
 

@@ -231,7 +231,7 @@ namespace IR is
             // an instruction, and `.line` is a debug sequence point the
             // binary path does not emit yet. Neither is a dropped
             // instruction.
-            if text.starts_with(".maxstack") \/ text.starts_with(".line") then
+            if text.starts_with(".maxstack") \/ text.starts_with(".line") \/ text.starts_with("//") then
                 return;
             fi
 

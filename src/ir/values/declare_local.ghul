@@ -91,4 +91,33 @@ namespace IR.Values is
 
         to_string() -> string => "ret";
     si
+
+    // The value a non-void function falls out of the bottom with: a
+    // fresh local of the return type, never assigned, loaded so the
+    // trailing `ret` has something to return. The local is anonymous
+    // and used once, so it is declared and loaded together rather than
+    // through the usual declare-then-load pair.
+    class DEFAULT_RETURN: Value is
+        type: Type;
+
+        init(type: Type) is
+            super.init();
+
+            self.type = type;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.declare_local("'.default'", type);
+                body.ldloc("'.default'");
+
+                return;
+            fi
+
+            context.write_line(".locals init ({type.get_il_type()} '.default')");
+            context.write_line("ldloc '.default'");
+        si
+
+        to_string() -> string => "default-return:[{type}]()";
+    si
 si
