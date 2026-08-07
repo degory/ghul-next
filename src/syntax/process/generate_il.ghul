@@ -3335,6 +3335,22 @@ namespace Syntax.Process is
                 fi
             fi
 
+            // A local's declaration is a value in the block for the
+            // binary path: metadata has no `.locals init` directive,
+            // and the slot it allocates has to be in place before any
+            // load of the same name is encoded.
+            if _context.srm_assembly_emitter? /\ _block_context.is_in_block then
+                for name in variable.names do
+                    let local = cast Semantic.Symbols.LOCAL_VARIABLE?(find(name));
+
+                    if local? /\ local.type? then
+                        current_block.add(Values.DECLARE_LOCAL(local.il_name, local.type!));
+                    fi
+                od
+
+                return false;
+            fi
+
             let buffer = System.Text.StringBuilder();
             let globals_namespace: Semantic.Symbols.NAMESPACE? mut = null;
 

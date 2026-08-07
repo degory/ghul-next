@@ -4,30 +4,104 @@ namespace IR.Emitter is
     use System.Reflection.Metadata.Ecma335.InstructionEncoder;
     use System.Reflection.Metadata.ILOpCode;
 
+    use Semantic.Types.Type;
+
     // Instruction-level surface for one method body. Backed by SRM's
     // InstructionEncoder; `flush` hands the encoded body to the owning
     // assembly emitter's method body stream and returns the body offset
     // that AddMethodDefinition takes directly (not a handle).
+    //
+    // Locals are addressed by name here, as they are in the text back
+    // end, even though the encoded instructions address them by slot
+    // index. The text path writes `.locals init (int32 'result.0')` and
+    // `ldloc 'result.0'`, and leaves the numbering to ilasm; those names
+    // are generated all over generate-il and the IR values. Keeping the
+    // same name-shaped calls means each value's binary branch reads like
+    // its text branch, and the slot numbering lives in one place rather
+    // than being threaded through every site that invents a local.
     class SRM_METHOD_BODY_EMITTER is
         _encoder: InstructionEncoder;
 
+        _local_slots: Collections.MAP[string, int];
+        _local_types: Collections.LIST[Type];
+
         init() is
             _encoder = InstructionEncoder(BlobBuilder(32), null);
+
+            _local_slots = Collections.MAP[string, int]();
+            _local_types = Collections.LIST[Type]();
         si
+
+        // Declaring the same name twice is not an error: the text path
+        // emits a `.locals init` per declaration site and lets ilasm
+        // merge repeats, and at least one value declares its temp on
+        // both arms of a branch. The first declaration wins, so the
+        // slot a later load resolves to is the one already in use.
+        declare_local(name: string, type: Type) -> int is
+            if _local_slots.contains_key(name) then
+                return _local_slots[name];
+            fi
+
+            let slot = _local_types.count;
+
+            _local_types.add(type);
+            _local_slots[name] = slot;
+
+            return slot;
+        si
+
+        // A load of a name that was never declared means the value that
+        // declares it has no binary branch yet. Failing here names the
+        // local, which is a far shorter path to the culprit than the
+        // invalid program it would otherwise produce.
+        _slot(name: string) -> int is
+            assert _local_slots.contains_key(name) else
+                "local '{name}' is loaded but never declared";
+
+            return _local_slots[name];
+        si
+
+        has_locals: bool => _local_types.count > 0;
+        local_types: Collections.List[Type] => _local_types;
+
+        ldloc(name: string) is _encoder.load_local(_slot(name)); si
+        stloc(name: string) is _encoder.store_local(_slot(name)); si
+        ldloca(name: string) is _encoder.load_local_address(_slot(name)); si
+
+        ldarg(index: int) is _encoder.load_argument(index); si
+        starg(index: int) is _encoder.store_argument(index); si
+        ldarga(index: int) is _encoder.load_argument_address(index); si
 
         ldstr(metadata: SRM_ASSEMBLY_EMITTER, value: string) is
             _encoder.load_string(metadata.get_or_add_user_string(value));
         si
 
-        call(member_ref: EntityHandle) is
-            _encoder.call(member_ref);
+        ldc_i4(value: int) is _encoder.load_constant_i4(value); si
+        ldc_i8(value: long) is _encoder.load_constant_i8(value); si
+        ldc_r4(value: single) is _encoder.load_constant_r4(value); si
+        ldc_r8(value: double) is _encoder.load_constant_r8(value); si
+        ldnull() is _encoder.op_code(ILOpCode.LDNULL); si
+
+        call(target: EntityHandle) is _encoder.call(target); si
+        call_virtual(target: EntityHandle) is _encoder.op_code(ILOpCode.CALLVIRT); _encoder.token(target); si
+        new_object(constructor: EntityHandle) is _encoder.op_code(ILOpCode.NEWOBJ); _encoder.token(constructor); si
+
+        ldfld(`field: EntityHandle) is _field_instruction(ILOpCode.LDFLD, `field); si
+        ldflda(`field: EntityHandle) is _field_instruction(ILOpCode.LDFLDA, `field); si
+        stfld(`field: EntityHandle) is _field_instruction(ILOpCode.STFLD, `field); si
+        ldsfld(`field: EntityHandle) is _field_instruction(ILOpCode.LDSFLD, `field); si
+        stsfld(`field: EntityHandle) is _field_instruction(ILOpCode.STSFLD, `field); si
+
+        _field_instruction(op_code: ILOpCode, `field: EntityHandle) is
+            _encoder.op_code(op_code);
+            _encoder.token(`field);
         si
 
-        ret() is
-            _encoder.op_code(ILOpCode.RET);
-        si
+        op(op_code: ILOpCode) is _encoder.op_code(op_code); si
+
+        ret() is _encoder.op_code(ILOpCode.RET); si
 
         flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int =>
-            assembly_emitter.add_method_body(_encoder);
+            assembly_emitter.add_method_body(_encoder, self);
     si
 si

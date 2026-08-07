@@ -49,6 +49,12 @@ namespace IR.Values is
                 gen(a, context);
             od
 
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_call_target(constructor));
+
+                return;
+            fi
+
             context.write_line("newobj {constructor.get_il_reference()}");
         si
 

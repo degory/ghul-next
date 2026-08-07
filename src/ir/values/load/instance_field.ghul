@@ -23,6 +23,13 @@ namespace IR.Values.Load is
 
         gen(context: IR.CONTEXT) is
             gen(from, context);
+
+            if let body = context.current_srm_body_emitter then
+                body.ldfld(context.resolve_field_target(cast Semantic.Symbols.Field(symbol)));
+
+                return;
+            fi
+
             context.write_line("ldfld {symbol.get_il_reference()}");
         si
 

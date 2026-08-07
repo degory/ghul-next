@@ -225,8 +225,36 @@ namespace IR.Emitter is
             _pending_types.add(type_emitter);
         si
 
-        add_method_body(encoder: InstructionEncoder) -> int =>
-            _body_stream.add_method_body(encoder, 8, _, _);
+        // A method with locals needs a StandAloneSig naming their
+        // types, in slot order, for the body header to point at.
+        add_method_body(encoder: InstructionEncoder, body: SRM_METHOD_BODY_EMITTER) -> int is
+            let locals =
+                if body.has_locals then
+                    add_local_variable_signature(body.local_types)
+                else
+                    _[System.Reflection.Metadata.StandaloneSignatureHandle]
+                fi;
+
+            return _body_stream.add_method_body(encoder, 8, locals, _);
+        si
+
+        add_local_variable_signature(
+            types: Collections.List[Semantic.Types.Type]
+        ) -> System.Reflection.Metadata.StandaloneSignatureHandle is
+            let builder = BlobBuilder(32);
+
+            let variables =
+                System.Reflection.Metadata.Ecma335.BlobEncoder(builder)
+                    .local_variable_signature(types.count);
+
+            let signatures = SRM_SIGNATURE_ENCODER(self);
+
+            for type in types do
+                signatures.encode_type(variables.add_variable().`type(false, false), type);
+            od
+
+            return _metadata.add_standalone_signature(_metadata.get_or_add_blob(builder.to_array()));
+        si
 
         add_method_definition(
             flags: MethodAttributes,

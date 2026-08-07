@@ -296,6 +296,47 @@ namespace IR is
         // Only void-returning signatures taking zero or one string
         // argument are encoded; anything else needs the signature blob
         // built from the function's actual argument and return types.
+        // The CLR parameter index of a named argument.
+        //
+        // The text back end addresses arguments by name and lets ilasm
+        // resolve them against the method's declared parameters;
+        // metadata has only positions. An instance method's slot 0 is
+        // the receiver, so a declared argument sits one further along.
+        resolve_argument_index(symbol: Semantic.Symbols.Symbol) -> int is
+            let function = cast Semantic.Symbols.Function?(symbol.owner);
+
+            assert function? else
+                "argument '{symbol.name}' is not owned by a function";
+
+            let names = function.argument_names;
+
+            for i in 0..names.count do
+                if names[i] =~ symbol.name then
+                    return if function.is_instance then i + 1 else i fi;
+                fi
+            od
+
+            assert false else
+                "argument '{symbol.name}' is not declared by {function.name}";
+
+            return 0;
+        si
+
+        // The metadata token naming a field, for a load or store.
+        // Same rule as resolve_call_target: a field this assembly
+        // defines is named by its own FieldDef row, whose number the
+        // numbering pass has already fixed.
+        resolve_field_target(`field: Semantic.Symbols.Field) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            if let definition = emitter.handles.field_definition(`field) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
+
+            throw System.NotImplementedException(
+                "the binary back end cannot yet reference the imported field '{`field.name}'");
+        si
+
         resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
 
