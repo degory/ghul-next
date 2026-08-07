@@ -1947,7 +1947,45 @@ namespace Semantic.Symbols is
 
         gen_constructor(context: IR.CONTEXT, symbol_loader: SYMBOL_LOADER) is
             let internal = LOCATION.internal;
-           
+
+            // The binary path encodes the constructor into a body of its
+            // own. Without one its row carries no code at all, which is
+            // not a constructor a runtime will accept: the image is
+            // rejected outright, before any type in it is loaded.
+            if let assembly_emitter = context.srm_assembly_emitter then
+                let enclosing = context.current_srm_body_emitter;
+                let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+                context.current_srm_body_emitter = body_emitter;
+
+                try
+                    for c in _captures |> filter(c => c.name !~ "$recurse") do
+                        let argument = LOCAL_ARGUMENT(internal, _constructor!, c.name);
+                        argument.set_type(c.type!);
+
+                        c.store(
+                            internal,
+                            IR.Values.Load.REFERENCE_SELF(self),
+                            argument.load(LOCATION.internal, null, symbol_loader),
+                            symbol_loader,
+                            true
+                        ).gen(context);
+                    od
+                catch ex: System.Exception
+                    IoC.CONTAINER.instance.logger.exception(
+                        location, ex, "error generating closure frame constructor");
+                yrt
+
+                body_emitter.ret();
+
+                assembly_emitter!.handles.set_body_offset(
+                    _constructor!, body_emitter.flush(assembly_emitter!));
+
+                context.current_srm_body_emitter = enclosing;
+
+                return;
+            fi
+
             _constructor!.gen_definition_header(context);
 
             context.write_line("{{");
