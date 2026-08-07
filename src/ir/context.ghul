@@ -296,8 +296,16 @@ namespace IR is
         // Only void-returning signatures taking zero or one string
         // argument are encoded; anything else needs the signature blob
         // built from the function's actual argument and return types.
-        resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.MemberReferenceHandle is
+        resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
+
+            // A target this assembly defines is called through its own
+            // MethodDef row. The row does not exist yet — the numbering
+            // pass fixed which row it will be, and the token embedded
+            // here resolves once the structure walk writes it.
+            if let definition = emitter.handles.method_definition(function) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
 
             let owner_symbol: Semantic.Symbols.Symbol mut;
             let assembly_name: string mut;
@@ -339,7 +347,12 @@ namespace IR is
 
             let signature = Emitter.SRM_SIGNATURE_ENCODER(emitter).method_signature(function);
 
-            return emitter.add_member_reference(function, owner_ref, function.il_bare_name, signature);
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_member_reference(
+                    function,
+                    owner_ref,
+                    Emitter.SRM_FLAGS.method_name(function),
+                    signature));
         si
     si
 si

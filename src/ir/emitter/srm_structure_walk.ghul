@@ -1,0 +1,196 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.Ecma335.MetadataTokens;
+
+    use Semantic.Symbols.Scope;
+    use Semantic.Symbols.Classy;
+    use Semantic.Symbols.Function;
+    use Semantic.Symbols.Field;
+
+    // Derives the emitted assembly's structure from the symbol table, in
+    // two passes over the same sequence.
+    //
+    // `number` runs before any body is encoded and assigns every type,
+    // method and field its metadata row, so a body can embed a token for
+    // a target whose row does not exist yet. `write_rows` runs after the
+    // tree walk and writes those rows, in the order `number` assumed.
+    // Between the two, the tree walk deposits body offsets against
+    // function symbols.
+    //
+    // A row number is only a prediction until `write_rows` makes it
+    // true, and nothing checks: a member run written in a different
+    // order than it was numbered reparents members onto the wrong type
+    // and still loads. Both passes therefore drive off SRM_MEMBER_ORDER
+    // rather than iterating anything themselves.
+    class SRM_STRUCTURE_WALK(_assembly: SRM_ASSEMBLY_EMITTER) is
+        _handles: SRM_HANDLES => _assembly.handles;
+        _signatures: SRM_SIGNATURE_ENCODER;
+
+        init(..) is
+            _signatures = SRM_SIGNATURE_ENCODER(_assembly);
+        si
+
+        number(root: Scope) is
+            // <Module> already occupies TypeDef row 1, and its member
+            // runs start at 1 and are empty, so user rows follow it.
+            let next_type mut = _assembly.next_type_row;
+            let next_method mut = _assembly.next_method_row;
+            let next_field mut = _assembly.next_field_row;
+
+            for type in SRM_MEMBER_ORDER.types(root) do
+                if let declared = type.declared then
+                    _handles.set_type_definition(declared, MetadataTokens.type_definition_handle(next_type));
+                fi
+
+                next_type = next_type + 1;
+
+                for `field in SRM_MEMBER_ORDER.fields(type) do
+                    _handles.set_field_definition(`field, MetadataTokens.field_definition_handle(next_field));
+
+                    next_field = next_field + 1;
+                od
+
+                for method in SRM_MEMBER_ORDER.methods(type) do
+                    _handles.set_method_definition(method, MetadataTokens.method_definition_handle(next_method));
+
+                    next_method = next_method + 1;
+                od
+            od
+        si
+
+        write_rows(root: Scope) is
+            for type in SRM_MEMBER_ORDER.types(root) do
+                let first_field = MetadataTokens.field_definition_handle(_assembly.next_field_row);
+                let first_method = MetadataTokens.method_definition_handle(_assembly.next_method_row);
+
+                for `field in SRM_MEMBER_ORDER.fields(type) do
+                    _write_field(`field);
+                od
+
+                for method in SRM_MEMBER_ORDER.methods(type) do
+                    _write_method(method);
+                od
+
+                _assembly.add_type_definition(
+                    _type_attributes(type),
+                    _assembly.get_or_add_string(_namespace_name(type)),
+                    _assembly.get_or_add_string(type.name),
+                    _base_type(type),
+                    first_field,
+                    first_method);
+            od
+        si
+
+        _write_field(`field: Field) is
+            _assembly.add_field_definition(
+                SRM_FLAGS.field_attributes(`field),
+                _assembly.get_or_add_string(`field.name),
+                _assembly.get_or_add_blob(_signatures.field_signature(`field)));
+        si
+
+        _write_method(method: Function) is
+            // A function with no deposited body never had one walked:
+            // an abstract declaration, or a trait member left to its
+            // implementors. -1 is the metadata encoding of "no body".
+            let body_offset = _handles.body_offset(method) ?? -1;
+
+            // A MethodDef's ParamList is a run pointer like a TypeDef's
+            // member lists, so it names the next free row even when the
+            // method takes nothing; a nil handle is not an empty run,
+            // it is an invalid index that faults on first read.
+            let first_parameter = MetadataTokens.parameter_handle(_assembly.next_parameter_row);
+
+            let names = method.argument_names;
+
+            for i in 0..names.count do
+                _assembly.add_parameter(_assembly.get_or_add_string(names[i]), i + 1);
+            od
+
+            let handle = _assembly.add_method_definition(
+                SRM_FLAGS.method_attributes(method),
+                cast System.Reflection.MethodImplAttributes(0),   // IL, managed
+                _assembly.get_or_add_string(SRM_FLAGS.method_name(method)),
+                _assembly.get_or_add_blob(_signatures.method_signature(method)),
+                body_offset,
+                first_parameter);
+
+            if method.name =~ _assembly.entry_point_name /\ !method.is_instance then
+                _assembly.set_entry_point(handle);
+            fi
+        si
+
+        // A globals carrier is abstract and sealed: never constructed,
+        // never extended, only a home for static members.
+        _type_attributes(type: SRM_EMITTED_TYPE) -> System.Reflection.TypeAttributes is
+            if let declared = type.declared then
+                return SRM_FLAGS.type_attributes(declared);
+            fi
+
+            return SRM_FLAGS.globals_carrier_type_attributes();
+        si
+
+        // A type's metadata namespace is its owning namespace's
+        // qualified name. The symbol table's root namespace has an empty
+        // name and qualifies its children with a leading separator, so
+        // that is stripped rather than emitted as part of the name.
+        _namespace_name(type: SRM_EMITTED_TYPE) -> string is
+            let owner = type.owning_namespace;
+
+            if !owner? \/ !owner.is_namespace then
+                return "";
+            fi
+
+            let qualified = owner.qualified_name;
+
+            if qualified.starts_with('.') then
+                return qualified.substring(1);
+            fi
+
+            return qualified;
+        si
+
+        // The first non-trait ancestor, which is what the type extends;
+        // traits extend nothing, and a class with no declared superclass
+        // extends System.Object.
+        _base_type(emitted: SRM_EMITTED_TYPE) -> EntityHandle is
+            let type = emitted.declared;
+
+            if !type? then
+                return cast EntityHandle(
+                    _assembly.add_type_reference_by_name("System.Runtime", "System", "Object"));
+            fi
+
+            if type.is_trait then
+                return _[EntityHandle];
+            fi
+
+            for ancestor in type.ancestors do
+                if ancestor.is_trait then
+                    continue;
+                fi
+
+                if let ancestor_symbol: Classy = ancestor.symbol then
+                    return _type_handle(ancestor_symbol);
+                fi
+            od
+
+            if type.is_value_type then
+                return cast EntityHandle(
+                    _assembly.add_type_reference_by_name("System.Runtime", "System", "ValueType"));
+            fi
+
+            return cast EntityHandle(
+                _assembly.add_type_reference_by_name("System.Runtime", "System", "Object"));
+        si
+
+        // A same-assembly ancestor resolves to its own TypeDef row;
+        // anything else is an ordinary imported reference.
+        _type_handle(symbol: Classy) -> EntityHandle is
+            if let definition = _handles.type_definition(symbol) then
+                return cast EntityHandle(definition);
+            fi
+
+            return cast EntityHandle(_signatures.type_reference_for(symbol));
+        si
+    si
+si

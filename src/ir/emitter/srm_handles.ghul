@@ -1,0 +1,93 @@
+namespace IR.Emitter is
+    use System.Reflection.Metadata.TypeDefinitionHandle;
+    use System.Reflection.Metadata.MethodDefinitionHandle;
+    use System.Reflection.Metadata.FieldDefinitionHandle;
+
+    use Semantic.Symbols.Symbol;
+    use Semantic.Symbols.Classy;
+    use Semantic.Symbols.Function;
+    use Semantic.Symbols.Field;
+
+    // Every metadata identity the emitter has assigned to a symbol, one
+    // map per table.
+    //
+    // These are deliberately not fields on the symbols themselves.
+    // `specialize` clones symbols, so a row number stored on a symbol
+    // would be copied onto every specialization and silently name the
+    // wrong row; a map forces each table to state which identity it
+    // keys on. Definitions key on the symbol, because a definition is
+    // never specialized in the assembly that emits it. References key
+    // on `root_specialized_from`, because the format expects one
+    // TypeRef / MemberRef per open definition, with instantiations
+    // expressed as TypeSpec / MethodSpec built on top of it.
+    class SRM_HANDLES is
+        _type_defs: Collections.MAP[Classy, TypeDefinitionHandle];
+        _method_defs: Collections.MAP[Function, MethodDefinitionHandle];
+        _field_defs: Collections.MAP[Field, FieldDefinitionHandle];
+
+        // Offsets into the method body stream, deposited by the tree
+        // walk as each body is encoded and read back when the owning
+        // MethodDef row is written. A function with no entry has no
+        // body, which is what an abstract or bodyless member is.
+        _bodies: Collections.MAP[Function, int];
+
+        init() is
+            _type_defs = Collections.MAP[Classy, TypeDefinitionHandle]();
+            _method_defs = Collections.MAP[Function, MethodDefinitionHandle]();
+            _field_defs = Collections.MAP[Field, FieldDefinitionHandle]();
+            _bodies = Collections.MAP[Function, int]();
+        si
+
+        set_type_definition(symbol: Classy, handle: TypeDefinitionHandle) is
+            _type_defs[symbol] = handle;
+        si
+
+        set_method_definition(symbol: Function, handle: MethodDefinitionHandle) is
+            _method_defs[symbol] = handle;
+        si
+
+        set_field_definition(symbol: Field, handle: FieldDefinitionHandle) is
+            _field_defs[symbol] = handle;
+        si
+
+        // Type and method lookups take the root symbol, so a call
+        // through a specialization still finds the definition it was
+        // specialized from.
+        type_definition(symbol: Classy) -> TypeDefinitionHandle? is
+            let root = cast Classy?(symbol.root_specialized_from);
+
+            if root? /\ _type_defs.contains_key(root) then
+                return _type_defs[root];
+            fi
+
+            return null;
+        si
+
+        method_definition(symbol: Function) -> MethodDefinitionHandle? is
+            let root = cast Function?(symbol.root_specialized_from);
+
+            if root? /\ _method_defs.contains_key(root) then
+                return _method_defs[root];
+            fi
+
+            return null;
+        si
+
+        field_definition(symbol: Field) -> FieldDefinitionHandle? is
+            let root = cast Field?(symbol.root_specialized_from);
+
+            if root? /\ _field_defs.contains_key(root) then
+                return _field_defs[root];
+            fi
+
+            return null;
+        si
+
+        set_body_offset(symbol: Function, offset: int) is
+            _bodies[symbol] = offset;
+        si
+
+        body_offset(symbol: Function) -> int? =>
+            if _bodies.contains_key(symbol) then _bodies[symbol] else null fi;
+    si
+si

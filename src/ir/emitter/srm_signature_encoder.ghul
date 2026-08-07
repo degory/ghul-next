@@ -18,6 +18,14 @@ namespace IR.Emitter is
     // a methodref whose signature disagrees with the target's own
     // declaration resolves to nothing at run time.
     class SRM_SIGNATURE_ENCODER(_assembly: SRM_ASSEMBLY_EMITTER) is
+        field_signature(`field: Semantic.Symbols.Field) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            encode_type(BlobEncoder(builder).field_signature(), `field.type!);
+
+            return builder.to_array();
+        si
+
         method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
             let builder = BlobBuilder(32);
 
@@ -100,7 +108,7 @@ namespace IR.Emitter is
                 return;
             fi
 
-            let handle = cast EntityHandle(type_reference_for(symbol));
+            let handle = _type_handle_for(symbol);
 
             let arguments = type.arguments;
 
@@ -145,6 +153,18 @@ namespace IR.Emitter is
         // Metadata stores the bare name; leaving the quotes in produces a
         // type reference that resolves to nothing.
         unquote(value: string) -> string static => value.replace("'", "");
+
+        // A type this assembly defines is named by its own TypeDef row,
+        // not by a reference; every other type resolves to a TypeRef.
+        // The TypeDef row need not exist yet — the numbering pass has
+        // already fixed which row it will be.
+        _type_handle_for(symbol: Semantic.Symbols.Classy) -> EntityHandle is
+            if let definition = _assembly.handles.type_definition(symbol) then
+                return cast EntityHandle(definition);
+            fi
+
+            return cast EntityHandle(type_reference_for(symbol));
+        si
 
         type_reference_for(symbol: Semantic.Symbols.Classy) -> System.Reflection.Metadata.TypeReferenceHandle is
             let assembly_name = symbol.il_assembly_name;

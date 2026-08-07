@@ -36,6 +36,7 @@ namespace IR.Emitter is
 
         _assembly_refs: Collections.MAP[string, AssemblyReferenceHandle];
         _type_refs: Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle];
+        _named_type_refs: Collections.MAP[string, TypeReferenceHandle];
         _member_refs: Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle];
 
         // Types in the order they finished, each still holding its
@@ -58,6 +59,9 @@ namespace IR.Emitter is
 
             _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
             _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
+            _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
+            entry_point_name = "entry";
+            handles = SRM_HANDLES();
             _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
             _pending_types = Collections.LIST[SRM_TYPE_EMITTER]();
 
@@ -114,6 +118,18 @@ namespace IR.Emitter is
 
         next_field_row: int => _metadata.get_row_count(TableIndex.FIELD) + 1;
         next_method_row: int => _metadata.get_row_count(TableIndex.METHOD_DEF) + 1;
+        next_type_row: int => _metadata.get_row_count(TableIndex.TYPE_DEF) + 1;
+        next_parameter_row: int => _metadata.get_row_count(TableIndex.PARAM) + 1;
+
+        // The name generate-il recognises as the entry point, so the
+        // structure walk can mark the row it writes without reaching
+        // back into the build flags.
+        entry_point_name: string public;
+
+        // Every row this assembly has promised a symbol. Held here so
+        // that anything with the emitter can resolve a definition
+        // without being handed a second object.
+        handles: SRM_HANDLES;
 
         add_assembly_reference(name: string, version: string) -> AssemblyReferenceHandle is
             if _assembly_refs.contains_key(name) then
@@ -158,6 +174,32 @@ namespace IR.Emitter is
             return handle;
         si
 
+        // Reference to a type that no symbol names — the framework
+        // types every assembly needs as a base type regardless of what
+        // the source declares.
+        add_type_reference_by_name(
+            assembly_name: string,
+            namespace_name: string,
+            simple_name: string
+        ) -> TypeReferenceHandle is
+            let key = "{assembly_name}|{namespace_name}|{simple_name}";
+
+            if _named_type_refs.contains_key(key) then
+                return _named_type_refs[key];
+            fi
+
+            add_assembly_reference(assembly_name, "8:0:0:0");
+
+            let handle = _metadata.add_type_reference(
+                cast EntityHandle(_assembly_refs[assembly_name]),
+                _metadata.get_or_add_string(namespace_name),
+                _metadata.get_or_add_string(simple_name));
+
+            _named_type_refs[key] = handle;
+
+            return handle;
+        si
+
         add_member_reference(
             symbol: Semantic.Symbols.Function,
             owner: TypeReferenceHandle,
@@ -195,6 +237,19 @@ namespace IR.Emitter is
         ) -> MethodDefinitionHandle =>
             _metadata.add_method_definition(flags, impl_flags, name, signature, body_offset, parameter_list);
 
+        add_parameter(
+            name: StringHandle,
+            sequence_number: int
+        ) -> System.Reflection.Metadata.ParameterHandle =>
+            _metadata.add_parameter(cast System.Reflection.ParameterAttributes(0), name, sequence_number);
+
+        add_field_definition(
+            flags: System.Reflection.FieldAttributes,
+            name: StringHandle,
+            signature: BlobHandle
+        ) -> System.Reflection.Metadata.FieldDefinitionHandle =>
+            _metadata.add_field_definition(flags, name, signature);
+
         add_type_definition(
             flags: System.Reflection.TypeAttributes,
             namespace_name: StringHandle,
@@ -211,10 +266,6 @@ namespace IR.Emitter is
         si
 
         write_to(path: string) is
-            for type_emitter in _pending_types do
-                type_emitter.flush();
-            od
-
             let pe_header =
                 if _want_library then
                     PEHeaderBuilder.create_library_header();

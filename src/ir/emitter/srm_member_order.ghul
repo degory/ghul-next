@@ -1,0 +1,184 @@
+namespace IR.Emitter is
+    use Semantic.Symbols.Symbol;
+    use Semantic.Symbols.Scope;
+    use Semantic.Symbols.Classy;
+    use Semantic.Symbols.Function;
+    use Semantic.Symbols.Field;
+    use Semantic.Symbols.FUNCTION_GROUP;
+    use Semantic.Symbols.NAMESPACE;
+
+    // One type in the emitted assembly.
+    //
+    // Most are declared: a class, struct, trait, union or variant the
+    // source wrote, and a symbol the emitter can read everything from.
+    // A namespace holding global functions or variables has no such
+    // symbol - `$globals` is a naming convention the back end applies,
+    // not a declaration - so the namespace stands in for its carrier and
+    // supplies the same answers.
+    class SRM_EMITTED_TYPE is
+        declared: Classy?;
+        globals_of: NAMESPACE?;
+
+        init(declared: Classy) is
+            self.declared = declared;
+        si
+
+        init(globals_of: NAMESPACE) is
+            self.globals_of = globals_of;
+        si
+
+        is_globals_carrier: bool => globals_of?;
+
+        name: string =>
+            if let d = declared then d.name else Semantic.DotNet.GLOBALS_CARRIER.name fi;
+
+        // The scope whose members become this type's members, and whose
+        // owner supplies the metadata namespace. For a carrier both are
+        // the namespace itself.
+        scope: Scope => if let d = declared then d else globals_of! fi;
+
+        owning_namespace: Scope? =>
+            if let d = declared then d.owner else globals_of! fi;
+    si
+
+    // The order in which types and their members are written to
+    // metadata.
+    //
+    // Two separate passes read this: one to assign row numbers before
+    // any body is encoded, and one to write the rows afterwards. They
+    // must produce the same sequence or every pre-computed handle names
+    // the wrong row, so both go through here rather than iterating a
+    // scope directly.
+    //
+    // A scope stores its members in a map keyed by name, so iterating it
+    // yields neither declaration order nor an order that is obviously
+    // stable against unrelated edits. Sorting on source position
+    // recovers declaration order, which a struct's sequential layout
+    // depends on, and gives the same answer however the map chose to
+    // enumerate. Overloads share one name, so a scope yields a
+    // FUNCTION_GROUP where the tables want one row per function; the
+    // group is flattened here.
+    class SRM_MEMBER_ORDER is
+        // Every type the assembly defines. Imported types are reachable
+        // from the same root and are excluded: they are referenced,
+        // never defined, here.
+        types(root: Scope) -> Collections.List[SRM_EMITTED_TYPE] static is
+            let declared = Collections.LIST[Classy]();
+            let namespaces = Collections.LIST[NAMESPACE]();
+
+            _collect(root, declared, namespaces);
+
+            _sort_by_declaration(declared);
+            _sort_by_declaration(namespaces);
+
+            let result = Collections.LIST[SRM_EMITTED_TYPE]();
+
+            for type in declared do
+                result.add(SRM_EMITTED_TYPE(type));
+            od
+
+            // Carriers last, so that adding a global to a namespace
+            // cannot renumber any declared type's members.
+            for `namespace in namespaces do
+                if _has_globals(`namespace) then
+                    result.add(SRM_EMITTED_TYPE(`namespace));
+                fi
+            od
+
+            return result;
+        si
+
+        _collect(
+            scope: Scope,
+            declared: Collections.LIST[Classy],
+            namespaces: Collections.LIST[NAMESPACE]
+        ) static is
+            for symbol in scope.symbols do
+                if symbol.is_reflected then
+                    continue;
+                fi
+
+                if let `namespace: NAMESPACE = symbol then
+                    namespaces.add(`namespace);
+
+                    _collect(`namespace, declared, namespaces);
+                elif let type: Classy = symbol then
+                    declared.add(type);
+                fi
+            od
+        si
+
+        _has_globals(`namespace: NAMESPACE) -> bool static =>
+            fields(SRM_EMITTED_TYPE(`namespace)).count > 0 \/
+            methods(SRM_EMITTED_TYPE(`namespace)).count > 0;
+
+        fields(type: SRM_EMITTED_TYPE) -> Collections.List[Field] static is
+            let result = Collections.LIST[Field]();
+
+            for symbol in type.scope.symbols do
+                if symbol.is_reflected then
+                    continue;
+                fi
+
+                if let `field: Field = symbol then
+                    result.add(`field);
+                fi
+            od
+
+            _sort_by_declaration(result);
+
+            return result;
+        si
+
+        methods(type: SRM_EMITTED_TYPE) -> Collections.List[Function] static is
+            let result = Collections.LIST[Function]();
+
+            for symbol in type.scope.symbols do
+                if symbol.is_reflected then
+                    continue;
+                fi
+
+                if let group: FUNCTION_GROUP = symbol then
+                    for function in group.functions do
+                        result.add(function);
+                    od
+                elif let function: Function = symbol then
+                    result.add(function);
+                fi
+            od
+
+            _sort_by_declaration(result);
+
+            return result;
+        si
+
+        // Overloads declared on one line, and synthesised members that
+        // share the internal location, would otherwise order
+        // arbitrarily; name and then description break the tie so the
+        // sequence is reproducible.
+        _sort_by_declaration[T: Symbol](symbols: Collections.LIST[T]) static is
+            symbols.sort(
+                (left: T, right: T) -> int is
+                    let by_file = left.location.file_name <> right.location.file_name;
+
+                    if by_file != 0 then
+                        return by_file;
+                    fi
+
+                    let by_position = left.location.start - right.location.start;
+
+                    if by_position != 0 then
+                        return by_position;
+                    fi
+
+                    let by_name = left.name <> right.name;
+
+                    if by_name != 0 then
+                        return by_name;
+                    fi
+
+                    return left.description <> right.description;
+                si);
+        si
+    si
+si

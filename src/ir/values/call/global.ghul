@@ -28,7 +28,7 @@ namespace IR.Values.Call is
             od
 
             if let body = context.current_srm_body_emitter then
-                body.call(cast System.Reflection.Metadata.EntityHandle(context.resolve_call_target(function)));
+                body.call(context.resolve_call_target(function));
             else
                 context.write_line("call {function.get_il_reference()}");
             fi

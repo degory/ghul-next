@@ -120,12 +120,29 @@ namespace Compiler is
 
                     if srm_emitter? then
                         container.referenced_assemblies.gen(srm_emitter);
+
+                        // Assign every definition its metadata row before
+                        // any body is encoded, so a body can name a target
+                        // whose row is not written yet.
+                        srm_emitter.entry_point_name = container.ir_context.entry_point_name;
+
+                        IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
+                            .number(container.symbol_table.global_scope);
                     else
                         container.referenced_assemblies.gen();
                     fi
                 si,
                 (source_file) -> bool => generate_il_pass(source_file),
                 () -> void is
+                    let srm_emitter = container.ir_context.srm_assembly_emitter;
+
+                    // Write the rows the numbering pass promised, now
+                    // that every body has been encoded and deposited.
+                    if srm_emitter? /\ !container.logger.any_errors then
+                        IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
+                            .write_rows(container.symbol_table.global_scope);
+                    fi
+
                     // An executable build with no `.entrypoint` emitted would
                     // otherwise reach ilasm, which fails with the cryptic "No
                     // entry point declared for executable". Surface it as a
