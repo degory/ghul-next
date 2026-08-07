@@ -60,6 +60,8 @@ namespace IR.Emitter is
             _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
             _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
             _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
+            _named_member_refs = Collections.MAP[string, MemberReferenceHandle]();
+            _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
             handles = SRM_HANDLES();
             _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
             _pending_types = Collections.LIST[SRM_TYPE_EMITTER]();
@@ -200,6 +202,55 @@ namespace IR.Emitter is
 
             return handle;
         si
+
+        // A TypeSpec names a constructed generic where a table-level
+        // reference is needed. Cached per type spelling: two references
+        // to the same instantiation are the same row.
+        _type_specs: Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle];
+
+        add_type_specification(
+            type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.TypeSpecificationHandle is
+            let key = "{type}";
+
+            if _type_specs.contains_key(key) then
+                return _type_specs[key];
+            fi
+
+            let signature = SRM_SIGNATURE_ENCODER(self).type_specification_signature(type);
+
+            let handle = _metadata.add_type_specification(_metadata.get_or_add_blob(signature));
+
+            _type_specs[key] = handle;
+
+            return handle;
+        si
+
+        // A reference to a constructor on a type this assembly does not
+        // define. The owner is a handle rather than a symbol because the
+        // constructors that need this are named by a constructed type.
+        add_constructor_reference(
+            owner: EntityHandle,
+            key: string,
+            argument_types: Collections.List[Semantic.Types.Type]
+        ) -> MemberReferenceHandle is
+            if _named_member_refs.contains_key(key) then
+                return _named_member_refs[key];
+            fi
+
+            let signature = SRM_SIGNATURE_ENCODER(self).constructor_signature(argument_types);
+
+            let handle = _metadata.add_member_reference(
+                owner,
+                _metadata.get_or_add_string(".ctor"),
+                _metadata.get_or_add_blob(signature));
+
+            _named_member_refs[key] = handle;
+
+            return handle;
+        si
+
+        _named_member_refs: Collections.MAP[string, MemberReferenceHandle];
 
         add_member_reference(
             symbol: Semantic.Symbols.Function,

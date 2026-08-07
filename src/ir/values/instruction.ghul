@@ -135,6 +135,38 @@ namespace IR.Values is
         to_string() -> string => mnemonic;
     si
 
+    // Constructs one of the built-in integer range structs from the
+    // two bounds already on the stack. Its constructor is not reachable
+    // from a Function symbol, so the reference is built from the range
+    // type and the known (int, int) signature.
+    class NEW_RANGE: Value is
+        type: Semantic.Types.Type;
+
+        init(type: Semantic.Types.Type) is
+            super.init();
+
+            self.type = type;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.new_object(context.resolve_range_constructor(type));
+
+                return;
+            fi
+
+            let buffer = System.Text.StringBuilder();
+
+            buffer.append("newobj instance void ");
+            type.gen_type(buffer);
+            buffer.append("::'.ctor'(int32,int32)");
+
+            context.write_line(buffer);
+        si
+
+        to_string() -> string => "new-range:[{type}]()";
+    si
+
     // Marks the position a branch names.
     class MARK_LABEL: Value is
         label: IR.LABEL;

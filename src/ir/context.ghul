@@ -363,8 +363,8 @@ namespace IR is
             let emitter = srm_assembly_emitter!;
 
             if type.arguments.count > 0 then
-                throw System.NotImplementedException(
-                    "the binary back end cannot yet name the constructed type '{type}' in an instruction");
+                return cast System.Reflection.Metadata.EntityHandle(
+                    emitter.add_type_specification(type));
             fi
 
             let symbol = cast Semantic.Symbols.Classy?(type.symbol);
@@ -377,6 +377,47 @@ namespace IR is
 
             return cast System.Reflection.Metadata.EntityHandle(
                 Emitter.SRM_SIGNATURE_ENCODER(emitter).type_reference_for(symbol));
+        si
+
+        // A range struct is constructed from its two integer bounds.
+        resolve_range_constructor(
+            range_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_int_type());
+            arguments.add(lookup.get_int_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    resolve_type_token(range_type),
+                    "range .ctor {range_type}",
+                    arguments));
+        si
+
+        // A delegate is constructed from a receiver and a function
+        // pointer, so its constructor always takes (object, native int).
+        // The delegate type is normally a constructed generic, which
+        // has no reference row of its own: its TypeSpec is the owner.
+        resolve_delegate_constructor(
+            delegate_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_object_type());
+            arguments.add(lookup.get_word_type());
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    resolve_type_token(delegate_type),
+                    "delegate .ctor {delegate_type}",
+                    arguments));
         si
 
         // The metadata token naming a field, for a load or store.

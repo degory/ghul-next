@@ -224,13 +224,16 @@ namespace IR is
 
             let prefix = "['ghul-runtime']";
 
-            if value.op_name =~ "inclusive" then
-                block.add("newobj instance void valuetype {prefix}'Ghul'.'INT_RANGE_INCLUSIVE'::'.ctor'(int32,int32)");
-            elif value.op_name =~ "exclusive" then
-                block.add("newobj instance void valuetype {prefix}'Ghul'.'INT_RANGE'::'.ctor'(int32,int32)");                                
-            else
+            if value.op_name !~ "inclusive" /\ value.op_name !~ "exclusive" then
                 throw Exception("unexpected range innate operation: {value.innate_name}");
             fi
+
+            // The range's own type names the struct being constructed,
+            // so the constructor is reachable from a symbol rather than
+            // from the type's spelling.
+            block.add(Values.NEW_RANGE(value.type));
+
+            return;
         si
 
         gen_reference_read(value: INNATE, context: BLOCK) is
