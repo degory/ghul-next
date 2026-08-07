@@ -201,6 +201,15 @@ namespace IR.Emitter is
             let result = Collections.LIST[Field]();
 
             for symbol in type.scope.symbols do
+                // A scope holds members it does not declare: pulling a
+                // super's symbols down adds them here, and a member
+                // whose owner is elsewhere belongs to that owner's rows,
+                // not to these. Note this does not catch a pulled-down
+                // member that was re-owned on the way in.
+                if !_is_owned_by(symbol, type) then
+                    continue;
+                fi
+
                 if symbol.is_reflected then
                     continue;
                 fi
@@ -284,6 +293,15 @@ namespace IR.Emitter is
             fi
 
             for symbol in type.scope.symbols do
+                // A scope holds members it does not declare: pulling a
+                // super's symbols down adds them here, and a member
+                // whose owner is elsewhere belongs to that owner's rows,
+                // not to these. Note this does not catch a pulled-down
+                // member that was re-owned on the way in.
+                if !_is_owned_by(symbol, type) then
+                    continue;
+                fi
+
                 if symbol.is_reflected then
                     continue;
                 fi
