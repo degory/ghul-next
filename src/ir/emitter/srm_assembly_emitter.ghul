@@ -361,8 +361,25 @@ namespace IR.Emitter is
             base_type: EntityHandle,
             field_list: System.Reflection.Metadata.FieldDefinitionHandle,
             method_list: MethodDefinitionHandle
+        ) -> System.Reflection.Metadata.TypeDefinitionHandle =>
+            _metadata.add_type_definition(
+                flags, namespace_name, simple_name, base_type, field_list, method_list);
+
+        // A type or method that declares type parameters needs a row per
+        // parameter. Without them the declaration is not generic, and
+        // every signature that names one by index - a field of type !0,
+        // an argument of type !!0 - is naming something the type does
+        // not have.
+        add_generic_parameter(
+            owner: EntityHandle,
+            index: int,
+            name: string
         ) is
-            _metadata.add_type_definition(flags, namespace_name, simple_name, base_type, field_list, method_list);
+            _metadata.add_generic_parameter(
+                owner,
+                cast System.Reflection.GenericParameterAttributes(0),
+                _metadata.get_or_add_string(name),
+                index);
         si
 
         set_entry_point(method: MethodDefinitionHandle) is
