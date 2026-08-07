@@ -58,6 +58,7 @@ namespace IR.Emitter is
             _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
             _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
             _named_member_refs = Collections.MAP[string, MemberReferenceHandle]();
+            _method_specs = Collections.MAP[string, System.Reflection.Metadata.MethodSpecificationHandle]();
             _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
             handles = SRM_HANDLES();
             _member_refs = Collections.MAP[Semantic.Symbols.Function, MemberReferenceHandle]();
@@ -225,6 +226,41 @@ namespace IR.Emitter is
         // A reference to a constructor on a type this assembly does not
         // define. The owner is a handle rather than a symbol because the
         // constructors that need this are named by a constructed type.
+        // A generic method is called through a MethodSpec naming the
+        // open method plus the arguments it was instantiated with. The
+        // open method keeps one reference row however many
+        // instantiations there are.
+        _method_specs: Collections.MAP[string, System.Reflection.Metadata.MethodSpecificationHandle];
+
+        add_method_specification(
+            method: EntityHandle,
+            key: string,
+            type_arguments: Collections.List[Semantic.Types.Type]
+        ) -> System.Reflection.Metadata.MethodSpecificationHandle is
+            if _method_specs.contains_key(key) then
+                return _method_specs[key];
+            fi
+
+            let builder = BlobBuilder(16);
+
+            let encoder =
+                System.Reflection.Metadata.Ecma335.BlobEncoder(builder)
+                    .method_specification_signature(type_arguments.count);
+
+            let signatures = SRM_SIGNATURE_ENCODER(self);
+
+            for argument in type_arguments do
+                signatures.encode_type(encoder.add_argument(), argument);
+            od
+
+            let handle =
+                _metadata.add_method_specification(method, _metadata.get_or_add_blob(builder.to_array()));
+
+            _method_specs[key] = handle;
+
+            return handle;
+        si
+
         add_constructor_reference(
             owner: EntityHandle,
             key: string,

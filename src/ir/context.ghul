@@ -366,7 +366,15 @@ namespace IR is
                     emitter.add_type_specification(type));
             fi
 
-            let symbol = cast Semantic.Symbols.Classy?(type.symbol);
+            // Same unwrapping as the signature encoder: a constructed
+            // generic's symbol holds the open definition rather than
+            // being one, and only the definition has a row.
+            let symbol =
+                if let generic: Semantic.Symbols.GENERIC = type.symbol then
+                    generic.symbol
+                else
+                    cast Semantic.Symbols.Classy?(type.symbol)
+                fi;
 
             assert symbol? else "cannot name the type '{type}' in an instruction";
 
@@ -483,14 +491,30 @@ namespace IR is
             let owner_ref =
                 emitter.add_type_reference(owner_symbol, assembly_name, owner_namespace_path, owner_simple_name);
 
-            let signature = Emitter.SRM_SIGNATURE_ENCODER(emitter).method_signature(function);
+            // An instantiation of a generic method is named by a
+            // MethodSpec over the open method, not by a reference of its
+            // own: the reference carries the method's own type
+            // parameters as indexes, and the arguments live in the spec.
+            let root = cast Semantic.Symbols.Function?(function.root_specialized_from) ?? function;
+
+            let signature = Emitter.SRM_SIGNATURE_ENCODER(emitter).method_signature(root);
+
+            let reference =
+                emitter.add_member_reference(
+                    root,
+                    owner_ref,
+                    Emitter.SRM_FLAGS.method_name(root),
+                    signature);
+
+            if function.generic_arguments.count == 0 then
+                return cast System.Reflection.Metadata.EntityHandle(reference);
+            fi
 
             return cast System.Reflection.Metadata.EntityHandle(
-                emitter.add_member_reference(
-                    function,
-                    owner_ref,
-                    Emitter.SRM_FLAGS.method_name(function),
-                    signature));
+                emitter.add_method_specification(
+                    cast System.Reflection.Metadata.EntityHandle(reference),
+                    "{function}",
+                    function.generic_arguments));
         si
     si
 si
