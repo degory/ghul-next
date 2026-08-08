@@ -345,7 +345,7 @@ namespace IR is
 
             for i in 0..names.count do
                 if names[i] =~ symbol.name then
-                    return if function.is_instance then i + 1 else i fi;
+                    return if function.is_emitted_with_receiver then i + 1 else i fi;
                 fi
             od
 
