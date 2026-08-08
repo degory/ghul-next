@@ -195,7 +195,7 @@ namespace IR.Emitter is
                 // as the enum: a Constant row holds a primitive.
                 _assembly.add_constant(
                     cast EntityHandle(handle),
-                    cast object(int.parse(member.value)));
+                    cast object(member.numeric_value));
             od
         si
 
