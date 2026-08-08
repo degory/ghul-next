@@ -39,17 +39,21 @@ namespace IR.Values is
 
             if let body = context.current_srm_body_emitter then
                 body.ldc_i4(0);
-            else
-                context.write_line("ldc.i4 0");
+                body.op(INSTRUCTION.op_code_for(instruction));
+
+                if needs_not then
+                    body.ldc_i4(0);
+                    body.op(INSTRUCTION.op_code_for("ceq"));
+                fi
+
+                return;
             fi
+
+            context.write_line("ldc.i4 0");
             context.write_line(instruction);
 
             if needs_not then
-                if let body = context.current_srm_body_emitter then
-                body.ldc_i4(0);
-            else
                 context.write_line("ldc.i4 0");
-            fi
                 context.write_line("ceq");
             fi
         si

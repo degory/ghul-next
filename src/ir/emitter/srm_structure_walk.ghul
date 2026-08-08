@@ -12,6 +12,24 @@ namespace IR.Emitter is
     // for the MethodImpl row to name.
     class SRM_BOUND_METHOD(body: EntityHandle, declaration: EntityHandle);
 
+    // One type parameter, held until every row it could be ordered
+    // against exists.
+    //
+    // GenericParam is sorted on its owner, and an owner is a coded index
+    // over TypeDef *and* MethodDef, so the two row kinds interleave by
+    // row number. A type's parameters therefore cannot be written as the
+    // walk reaches the type: a later type's row can sort ahead of an
+    // earlier type's method. Unlike the other sorted side tables, SRM
+    // validates this one rather than ordering it, and rejects the
+    // assembly outright.
+    class SRM_TYPE_PARAMETER(owner: EntityHandle, index: int, name: string) is
+        // The coded index the table is sorted on: the owner's row,
+        // tagged with which table it points into.
+        order: int =>
+            MetadataTokens.get_row_number(owner) * 2 +
+                if owner.kind == System.Reflection.Metadata.HandleKind.METHOD_DEFINITION then 1 else 0 fi;
+    si
+
     // Derives the emitted assembly's structure from the symbol table, in
     // two passes over the same sequence.
     //
@@ -30,9 +48,11 @@ namespace IR.Emitter is
     class SRM_STRUCTURE_WALK(_assembly: SRM_ASSEMBLY_EMITTER) is
         _handles: SRM_HANDLES => _assembly.handles;
         _signatures: SRM_SIGNATURE_ENCODER;
+        _type_parameters: Collections.LIST[SRM_TYPE_PARAMETER];
 
         init(..) is
             _signatures = SRM_SIGNATURE_ENCODER(_assembly);
+            _type_parameters = Collections.LIST[SRM_TYPE_PARAMETER]();
         si
 
         number(root: Scope) is
@@ -158,8 +178,8 @@ namespace IR.Emitter is
                     let names = declared.argument_names;
 
                     for i in 0..names.count do
-                        _assembly.add_generic_parameter(
-                            cast EntityHandle(handle), i, names[i]);
+                        _type_parameters.add(
+                            SRM_TYPE_PARAMETER(cast EntityHandle(handle), i, names[i]));
                     od
 
                     for `interface in _interfaces(declared) do
@@ -170,6 +190,26 @@ namespace IR.Emitter is
                 for bound in boilerplate do
                     _assembly.add_method_implementation(handle, bound.body, bound.declaration);
                 od
+            od
+
+            _write_type_parameters();
+        si
+
+        _write_type_parameters() is
+            _type_parameters.sort(
+                (left: SRM_TYPE_PARAMETER, right: SRM_TYPE_PARAMETER) -> int is
+                    let by_owner = left.order - right.order;
+
+                    if by_owner != 0 then
+                        return by_owner;
+                    fi
+
+                    return left.index - right.index;
+                si);
+
+            for type_parameter in _type_parameters do
+                _assembly.add_generic_parameter(
+                    type_parameter.owner, type_parameter.index, type_parameter.name);
             od
         si
 
@@ -286,8 +326,9 @@ namespace IR.Emitter is
             let type_parameters = method.generic_arguments;
 
             for i in 0..type_parameters.count do
-                _assembly.add_generic_parameter(
-                    cast EntityHandle(handle), i, type_parameters[i].name ?? "T{i}");
+                _type_parameters.add(
+                    SRM_TYPE_PARAMETER(
+                        cast EntityHandle(handle), i, type_parameters[i].name ?? "T{i}"));
             od
 
             if let entry_point = _assembly.entry_point_function then
