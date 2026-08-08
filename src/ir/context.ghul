@@ -575,11 +575,21 @@ namespace IR is
 
             let root = cast Semantic.Symbols.Field?(`field.root_specialized_from) ?? `field;
 
+            // The parent names the constructed owner while the name and
+            // signature come from the open definition: a reference to a
+            // field of `Pair[int]` hangs off a specification for that
+            // instantiation, and says its type is `!0`. Taking both from
+            // the unspecialized field points the reference at the open
+            // type, which is not a type any instantiation has.
+            //
+            // The name is the CLR one. A reflected member can be
+            // renamed on the way in — a tuple's `Item1` is `0` in ghūl —
+            // and it is the original the metadata has to carry.
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
-                    _member_owner_handle(root),
-                    root.name,
-                    "field {root.owner}::{root.name}",
+                    _member_owner_handle(`field),
+                    root.il_bare_name,
+                    "field {root.owner}::{root.il_bare_name}",
                     Emitter.SRM_SIGNATURE_ENCODER(emitter).field_signature(root)));
         si
 
