@@ -86,6 +86,8 @@ namespace IR.Values is
                 return ILOpCode.CLT;
             elif mnemonic =~ "clt.un" then
                 return ILOpCode.CLT_UN;
+            elif mnemonic =~ "endfinally" then
+                return ILOpCode.ENDFINALLY;
             elif mnemonic =~ "pop" then
                 return ILOpCode.POP;
             elif mnemonic =~ "dup" then

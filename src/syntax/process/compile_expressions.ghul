@@ -591,7 +591,6 @@ namespace Syntax.Process is
         apply(root: Trees.Node) is
             assert _pragma_scope_stack.is_balanced;
 
-            IR.LABEL.reset_id();
             IR.LABEL.set_pass("E");
 
             // Phantom Variables for unbound owner type-args at constructor
