@@ -56,8 +56,8 @@ namespace IR.Emitter is
             _assembly_refs = Collections.MAP[string, AssemblyReferenceHandle]();
             _type_refs = Collections.MAP[Semantic.Symbols.Symbol, TypeReferenceHandle]();
             _named_type_refs = Collections.MAP[string, TypeReferenceHandle]();
-            _named_member_refs = Collections.MAP[string, MemberReferenceHandle]();
-            _method_specs = Collections.MAP[string, System.Reflection.Metadata.MethodSpecificationHandle]();
+            _named_member_refs = Collections.MAP[(owner: int, name: string, signature: string), MemberReferenceHandle]();
+            _method_specs = Collections.MAP[(method: int, signature: string), System.Reflection.Metadata.MethodSpecificationHandle]();
             _type_specs = Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle]();
             handles = SRM_HANDLES();
 
@@ -199,20 +199,26 @@ namespace IR.Emitter is
         si
 
         // A TypeSpec names a constructed generic where a table-level
-        // reference is needed. Cached per type spelling: two references
-        // to the same instantiation are the same row.
+        // reference is needed. Cached so two references to the same
+        // instantiation are the same row.
+        //
+        // Keyed on the encoded signature rather than on how the type
+        // spells itself: a class type parameter and a method type
+        // parameter of the same name render the same but encode
+        // differently (`!0` against `!!0`), so a spelling key gives
+        // whichever was seen first to both.
         _type_specs: Collections.MAP[string, System.Reflection.Metadata.TypeSpecificationHandle];
 
         add_type_specification(
             type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.TypeSpecificationHandle is
-            let key = "{type}";
+            let signature = SRM_SIGNATURE_ENCODER(self).type_specification_signature(type);
+
+            let key = System.Convert.to_base64_string(signature);
 
             if _type_specs.contains_key(key) then
                 return _type_specs[key];
             fi
-
-            let signature = SRM_SIGNATURE_ENCODER(self).type_specification_signature(type);
 
             let handle = _metadata.add_type_specification(_metadata.get_or_add_blob(signature));
 
@@ -228,17 +234,16 @@ namespace IR.Emitter is
         // open method plus the arguments it was instantiated with. The
         // open method keeps one reference row however many
         // instantiations there are.
-        _method_specs: Collections.MAP[string, System.Reflection.Metadata.MethodSpecificationHandle];
+        _method_specs: Collections.MAP[(method: int, signature: string), System.Reflection.Metadata.MethodSpecificationHandle];
 
+        // `key` is a human-readable description for diagnostics only;
+        // the cache is keyed on the open method plus the encoded
+        // arguments, for the same reason add_type_specification is.
         add_method_specification(
             method: EntityHandle,
             key: string,
             type_arguments: Collections.List[Semantic.Types.Type]
         ) -> System.Reflection.Metadata.MethodSpecificationHandle is
-            if _method_specs.contains_key(key) then
-                return _method_specs[key];
-            fi
-
             let builder = BlobBuilder(16);
 
             let encoder =
@@ -251,10 +256,20 @@ namespace IR.Emitter is
                 signatures.encode_type(encoder.add_argument(), argument);
             od
 
+            let identity =
+                (
+                    method = MetadataTokens.get_token(method),
+                    signature = System.Convert.to_base64_string(builder.to_array())
+                );
+
+            if _method_specs.contains_key(identity) then
+                return _method_specs[identity];
+            fi
+
             let handle =
                 _metadata.add_method_specification(method, _metadata.get_or_add_blob(builder.to_array()));
 
-            _method_specs[key] = handle;
+            _method_specs[identity] = handle;
 
             return handle;
         si
@@ -274,14 +289,31 @@ namespace IR.Emitter is
         // define, where the signature is built rather than read off a
         // symbol. The owner is a handle so that a constructed generic's
         // TypeSpec can own it.
+        //
+        // `key` is a human-readable description for diagnostics only.
+        // The cache is keyed on what actually identifies the row —
+        // owner, name and encoded signature — because a description
+        // can collide where those differ and differ where they match.
+        //
+        // Several callers have no symbol to key on: `Invoke` on a
+        // delegate type, `String::Concat`, a synthesised `.ctor`, a unit
+        // variant's interned instance. The row's own identity is what
+        // every caller does have, and it is what the CLR compares.
         add_named_member_reference(
             owner: EntityHandle,
             name: string,
             key: string,
             signature: ubyte[]
         ) -> MemberReferenceHandle is
-            if _named_member_refs.contains_key(key) then
-                return _named_member_refs[key];
+            let identity =
+                (
+                    owner = MetadataTokens.get_token(owner),
+                    name = name,
+                    signature = System.Convert.to_base64_string(signature)
+                );
+
+            if _named_member_refs.contains_key(identity) then
+                return _named_member_refs[identity];
             fi
 
             let handle = _metadata.add_member_reference(
@@ -289,12 +321,12 @@ namespace IR.Emitter is
                 _metadata.get_or_add_string(name),
                 _metadata.get_or_add_blob(signature));
 
-            _named_member_refs[key] = handle;
+            _named_member_refs[identity] = handle;
 
             return handle;
         si
 
-        _named_member_refs: Collections.MAP[string, MemberReferenceHandle];
+        _named_member_refs: Collections.MAP[(owner: int, name: string, signature: string), MemberReferenceHandle];
 
 
         // A method with locals needs a StandAloneSig naming their
