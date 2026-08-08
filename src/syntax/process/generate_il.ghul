@@ -534,6 +534,7 @@ namespace Syntax.Process is
         enter_class(symbol: Semantic.Symbols.Classy) is
             ADDRESS.reset_id();
             TEMP.reset_id();
+            LABEL.reset_id();
 
             // A body that fails to emit unwinds to `Classy.walk`, which
             // restores the symbol table and the diagnostics but knows

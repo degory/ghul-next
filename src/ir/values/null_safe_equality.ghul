@@ -1,0 +1,165 @@
+namespace IR.Values is
+    use Semantic.Types.Type;
+
+    // `a =~ b` where either operand is optional.
+    //
+    // The left operand is always tested when it is optional, because an
+    // absent one has no receiver to dispatch on: absent on the left
+    // answers whether the right is absent too, so two absent values are
+    // equal.
+    //
+    // The right operand is tested here only when the operator declares
+    // its parameter non-optional, which is `guards_argument`. An
+    // operator declaring `T?` is written to answer for an absent
+    // argument itself, so it is handed one and decides.
+    //
+    // Presence arrives as a bool-valued child rather than being tested
+    // here, so the three optional lowerings all reach the same shape: a
+    // reference optional compares itself against null, a `NULLABLE[T]`
+    // or `MAYBE[T]` reads its `has_value` member. A null child means the
+    // operand is not optional, and so is always present.
+    //
+    // `!~` wraps the whole thing in a NOT, so it negates these arms
+    // along with the body's answer.
+    //
+    //   <left presence>      // each presence child is read up to twice,
+    //   brtrue <present>     // so the caller hands over repeatable
+    //                        // loads rather than the expressions
+    //   <right presence>
+    //   ldc.i4.0
+    //   ceq                  // both absent
+    //   br <end>
+    //   <present>:
+    //   <right presence>     // only when guards_argument
+    //   brtrue <both>
+    //   ldc.i4.0             // left present, right absent
+    //   br <end>
+    //   <both>:
+    //   <equals call>
+    //   <end>:
+    //
+    // Built by COMPILE_OPERATORS. The branch offsets are written long
+    // rather than short: the call arm carries an arbitrary user body.
+    class NULL_SAFE_EQUALITY: Value is
+        left_presence: Value?;
+        right_presence: Value?;
+        equals_call: Value;
+        guards_argument: bool;
+        _result_type: Type;
+
+        type: Type => _result_type;
+        is_lightweight_pure: bool => false;
+
+        init(
+            left_presence: Value?,
+            right_presence: Value?,
+            equals_call: Value,
+            guards_argument: bool,
+            result_type: Type
+        ) is
+            super.init();
+
+            self.left_presence = left_presence;
+            self.right_presence = right_presence;
+            self.equals_call = equals_call;
+            self.guards_argument = guards_argument;
+            self._result_type = result_type;
+        si
+
+        gen(context: IR.CONTEXT) is
+            let left_present = IR.LABEL();
+            let both_present = IR.LABEL();
+            let end_label = IR.LABEL();
+
+            let body = context.current_srm_body_emitter;
+
+            if left_presence? then
+                gen(left_presence, context);
+                _branch(context, body, System.Reflection.Metadata.ILOpCode.BRTRUE, "brtrue", left_present);
+
+                if right_presence? then
+                    gen(right_presence, context);
+                    _load_false(context, body);
+                    _op(context, body, System.Reflection.Metadata.ILOpCode.CEQ, "ceq");
+                else
+                    // a right operand that can never be absent does not
+                    // match an absent left one
+                    _load_false(context, body);
+                fi
+
+                _branch(context, body, System.Reflection.Metadata.ILOpCode.BR, "br", end_label);
+                _mark(context, body, left_present);
+            fi
+
+            if guards_argument /\ right_presence? then
+                gen(right_presence, context);
+                _branch(context, body, System.Reflection.Metadata.ILOpCode.BRTRUE, "brtrue", both_present);
+                _load_false(context, body);
+                _branch(context, body, System.Reflection.Metadata.ILOpCode.BR, "br", end_label);
+                _mark(context, body, both_present);
+            fi
+
+            gen(equals_call, context);
+
+            _mark(context, body, end_label);
+        si
+
+        _branch(
+            context: IR.CONTEXT,
+            body: IR.Emitter.SRM_METHOD_BODY_EMITTER?,
+            op_code: System.Reflection.Metadata.ILOpCode,
+            mnemonic: string,
+            label: IR.LABEL
+        ) static is
+            if body? then
+                body.branch(op_code, label);
+
+                return;
+            fi
+
+            context.write_line("{mnemonic} {label}");
+        si
+
+        _mark(
+            context: IR.CONTEXT,
+            body: IR.Emitter.SRM_METHOD_BODY_EMITTER?,
+            label: IR.LABEL
+        ) static is
+            if body? then
+                body.mark_label(label);
+
+                return;
+            fi
+
+            context.write_line("{label}:");
+        si
+
+        _op(
+            context: IR.CONTEXT,
+            body: IR.Emitter.SRM_METHOD_BODY_EMITTER?,
+            op_code: System.Reflection.Metadata.ILOpCode,
+            mnemonic: string
+        ) static is
+            if body? then
+                body.op(op_code);
+
+                return;
+            fi
+
+            context.write_line(mnemonic);
+        si
+
+        _load_false(context: IR.CONTEXT, body: IR.Emitter.SRM_METHOD_BODY_EMITTER?) static is
+            if body? then
+                body.ldc_i4(0);
+
+                return;
+            fi
+
+            context.write_line("ldc.i4.0");
+        si
+
+        to_string() -> string =>
+            "null-safe-equality:[{type}]({left_presence},{right_presence},{equals_call},guards-argument={guards_argument})";
+    si
+si
