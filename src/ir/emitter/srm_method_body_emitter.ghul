@@ -180,6 +180,15 @@ namespace IR.Emitter is
         ldnull() is _encoder.op_code(ILOpCode.LDNULL); si
 
         call(target: EntityHandle) is _encoder.call(target); si
+
+        // Prefixes the following call with the type its receiver is
+        // reached through, which is how a call on a value whose type is
+        // a type parameter dispatches without the caller knowing whether
+        // that parameter will be a value or a reference type.
+        constrained(type: EntityHandle) is
+            _encoder.op_code(ILOpCode.CONSTRAINED);
+            _encoder.token(type);
+        si
         call_virtual(target: EntityHandle) is _encoder.op_code(ILOpCode.CALLVIRT); _encoder.token(target); si
         new_object(constructor: EntityHandle) is _encoder.op_code(ILOpCode.NEWOBJ); _encoder.token(constructor); si
 

@@ -33,8 +33,9 @@ namespace IR.Values.Call is
             od
 
             if let body = context.current_srm_body_emitter then
-                assert !constrained_receiver? else
-                    "constrained calls are not yet emitted";
+                if let receiver = constrained_receiver then
+                    body.constrained(context.resolve_type_token(receiver));
+                fi
 
                 body.call(context.resolve_call_target(function));
 
