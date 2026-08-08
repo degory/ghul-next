@@ -1,0 +1,19 @@
+namespace Test is
+    use IO.Std;
+
+    // Calling a generic function at an instantiation needs a
+    // MethodSpec naming the open definition plus the arguments. A
+    // definition row names the uninstantiated method, which the
+    // runtime refuses to call.
+    identity[T](value: T) -> T => value;
+
+    first[A, B](a: A, b: B) -> A => a;
+
+    class Main is
+        entry() static is
+            Std.write_line("{identity[int](7)}");
+            Std.write_line(identity[string]("text"));
+            Std.write_line("{first[int, string](1, "two")}");
+        si
+    si
+si

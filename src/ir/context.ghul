@@ -746,19 +746,41 @@ namespace IR is
             // MethodDef row. The row does not exist yet — the numbering
             // pass fixed which row it will be, and the token embedded
             // here resolves once the structure walk writes it.
+            //
+            // Two cases cannot use it. A member of a generic type needs
+            // a reference through the instantiation, because a
+            // definition row names the open type. A generic method
+            // called at an instantiation needs a MethodSpec over its
+            // open definition, because a definition row names the
+            // uninstantiated method and the runtime refuses to call one.
             if let definition = emitter.handles.method_definition(function) then
-                if !_owner_is_generic(function) then
+                if !_owner_is_generic(function) /\ function.generic_arguments.count == 0 then
                     return cast System.Reflection.Metadata.EntityHandle(definition);
                 fi
             fi
-
-            let owner_ref = _member_owner_handle(function);
 
             // An instantiation of a generic method is named by a
             // MethodSpec over the open method, not by a reference of its
             // own: the reference carries the method's own type
             // parameters as indexes, and the arguments live in the spec.
             let root = cast Semantic.Symbols.Function?(function.root_specialized_from) ?? function;
+
+            // The open method this assembly defines is already a row of
+            // its own, and a MethodSpec can name it directly. Building a
+            // reference to it instead would name the same method twice,
+            // once as a definition and once as a reference into this
+            // assembly, which is not a shape the format has.
+            if function.generic_arguments.count > 0 then
+                if let open_row = emitter.handles.method_definition(root) then
+                    return cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_method_specification(
+                            cast System.Reflection.Metadata.EntityHandle(open_row),
+                            "{function}",
+                            function.generic_arguments));
+                fi
+            fi
+
+            let owner_ref = _member_owner_handle(function);
 
             let signature = Emitter.SRM_SIGNATURE_ENCODER(emitter).method_signature(root);
 
