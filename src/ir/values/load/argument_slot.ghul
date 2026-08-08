@@ -1,0 +1,37 @@
+namespace IR.Values.Load is
+    // An argument of the method being emitted, named by the slot it
+    // occupies rather than by a symbol.
+    //
+    // The state-machine lowering forwards its enclosing method's own
+    // arguments into a frame constructor, where what is wanted is
+    // positional: the receiver when the method has one, then each
+    // declared argument in order. There is no symbol to resolve,
+    // because the argument being loaded belongs to the method the
+    // lowering is rewriting rather than to anything it declares.
+    class ARGUMENT_SLOT: Value is
+        _index: int;
+        _il_name: string;
+
+        // `il_name` is what the text back end writes — `ldarg.0` for
+        // the receiver, `ldarg '<name>'` for a declared argument —
+        // and is carried so both back ends emit the same argument.
+        init(index: int, il_name: string) is
+            super.init();
+
+            _index = index;
+            _il_name = il_name;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ldarg(_index);
+
+                return;
+            fi
+
+            context.write_line(_il_name);
+        si
+
+        to_string() -> string => "load-argument-slot:({_index})";
+    si
+si

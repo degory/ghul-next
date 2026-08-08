@@ -221,7 +221,7 @@ namespace Syntax.Process is
             let spill = _spill_field;
 
             if spill? then
-                _gen.add(IR.RAW("ldarg.0"));
+                _gen.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 _gen.add(value);
                 _gen.add("stfld {spill.get_il_reference()}");
             else
@@ -1824,11 +1824,18 @@ namespace Syntax.Process is
             // `ldarg '<name>'`. Build them as a sequence Value so
             // ASYNC_METHOD_LAUNCH composes them in the right order.
             let ctor_args_block = Values.BLOCK();
+
+            // The enclosing method's own arguments, forwarded
+            // positionally: an instance method's receiver occupies slot
+            // 0, so its declared arguments start at 1.
+            let slot mut = if symbol.is_emitted_with_receiver then 1 else 0 fi;
+
             if frame.outer_self_field? then
-                ctor_args_block.add(IR.RAW("ldarg.0"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             fi
             for arg_name in symbol.argument_names do
-                ctor_args_block.add(IR.RAW("ldarg '{arg_name}'"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(slot, "ldarg '{arg_name}'"));
+                slot = slot + 1;
             od
             ctor_args_block.close();
 
@@ -3247,11 +3254,17 @@ namespace Syntax.Process is
             // closure-frame instance, which holds captures), then
             // each user-declared lambda parameter via ldarg '<name>'.
             let ctor_args_block = Values.BLOCK();
+
+            // As above: the closure's receiver, when it has one, takes
+            // slot 0 and its declared parameters follow.
+            let slot mut = if closure.is_emitted_with_receiver then 1 else 0 fi;
+
             if frame.outer_self_field? then
-                ctor_args_block.add(IR.RAW("ldarg.0"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             fi
             for arg_name in closure.argument_names do
-                ctor_args_block.add(IR.RAW("ldarg '{arg_name}'"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(slot, "ldarg '{arg_name}'"));
+                slot = slot + 1;
             od
             ctor_args_block.close();
 
@@ -3504,7 +3517,7 @@ namespace Syntax.Process is
             if !suspend_type.is_void then
                 let result_temp = TEMP(current_block, "await_bridge", suspend);
                 let result_field = frame.declare_spill_field(result_type);
-                add(IR.RAW("ldarg.0"));
+                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 add(result_temp.load());
                 add("stfld {result_field.get_il_reference()}");
                 await_wrapper.value =
@@ -3553,7 +3566,7 @@ namespace Syntax.Process is
 
             let spill_field = frame.declare_spill_field(spill_type);
 
-            add(IR.RAW("ldarg.0"));
+            add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             add(operand_value);
             add("stfld {spill_field.get_il_reference()}");
 
@@ -4233,7 +4246,7 @@ namespace Syntax.Process is
                 // and `br` are both valid; use `leave` only when
                 // crossing an inner try (where `br` would be
                 // invalid IL).
-                add(IR.RAW("ldarg.0"));
+                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 if let v = value then
                     add(v);
                 fi
