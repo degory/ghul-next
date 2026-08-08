@@ -570,7 +570,9 @@ namespace IR is
             let emitter = srm_assembly_emitter!;
 
             if let definition = emitter.handles.field_definition(`field) then
-                return cast System.Reflection.Metadata.EntityHandle(definition);
+                if !_owner_is_generic(`field) then
+                    return cast System.Reflection.Metadata.EntityHandle(definition);
+                fi
             fi
 
             let root = cast Semantic.Symbols.Field?(`field.root_specialized_from) ?? `field;
@@ -593,6 +595,45 @@ namespace IR is
                     Emitter.SRM_SIGNATURE_ENCODER(emitter).field_signature(root)));
         si
 
+        // A generic type applied to its own type parameters, which is
+        // what its members' receiver is from inside its own methods.
+        //
+        // The parameters are declared into the type's own scope under
+        // the names it wrote, so they are looked up by name rather than
+        // read off the symbol: `Classy` keeps only their names.
+        _own_instantiation(owner: Semantic.Symbols.Classy) -> Semantic.Types.Type is
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            for name in owner.argument_names do
+                let parameter = owner.find_direct(name);
+
+                assert parameter? else
+                    "generic type '{owner.name}' has no type parameter named '{name}'";
+
+                arguments.add(parameter.type!);
+            od
+
+            return Semantic.Types.GENERIC(Source.LOCATION.internal, owner, arguments);
+        si
+
+        // Whether a member is declared by a generic type.
+        //
+        // A member of one cannot be named by its own definition row even
+        // when this assembly declares it: within the type's own methods
+        // the receiver is the type applied to its own parameters, and a
+        // definition row names the open type, which no instantiation is.
+        _owner_is_generic(member: Semantic.Symbols.Symbol) -> bool is
+            if isa Semantic.Symbols.GENERIC(member.owner) then
+                return true;
+            fi
+
+            if let owner: Semantic.Symbols.Classy = member.owner then
+                return owner.is_generic;
+            fi
+
+            return false;
+        si
+
         // The reference row for the type an imported member hangs off.
         // A global function or variable hangs off its namespace's
         // globals carrier, which is a naming convention rather than a
@@ -609,6 +650,21 @@ namespace IR is
             // through it fails to load.
             if let constructed: Semantic.Symbols.GENERIC = member.owner then
                 return resolve_type_token(constructed.type);
+            fi
+
+            // A member reached from inside its own generic type: the
+            // receiver is that type applied to its own parameters, so
+            // the reference hangs off a specification for exactly that,
+            // rendered `Type<!0, !1, ...>`.
+            //
+            // `Classy.type` is the *open* type (`Types.NAMED(self)`), so
+            // the instantiation has to be built here from the type
+            // parameters the class declared into its own scope.
+            if let owner: Semantic.Symbols.Classy = member.owner then
+                if owner.is_generic then
+                    return cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_type_specification(_own_instantiation(owner)));
+                fi
             fi
 
             let globals_assembly_name =
@@ -691,7 +747,9 @@ namespace IR is
             // pass fixed which row it will be, and the token embedded
             // here resolves once the structure walk writes it.
             if let definition = emitter.handles.method_definition(function) then
-                return cast System.Reflection.Metadata.EntityHandle(definition);
+                if !_owner_is_generic(function) then
+                    return cast System.Reflection.Metadata.EntityHandle(definition);
+                fi
             fi
 
             let owner_ref = _member_owner_handle(function);
