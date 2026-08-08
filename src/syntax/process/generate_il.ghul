@@ -3397,7 +3397,7 @@ namespace Syntax.Process is
                     fi
 
                     if !is_void then
-                        add("pop");
+                        add(Values.INSTRUCTION("pop"));
                     fi
                 fi
             catch e: System.Exception
@@ -4737,7 +4737,7 @@ namespace Syntax.Process is
                             expected_type.is_void /\
                             !value.type!.is_void
                         then
-                            add("pop");
+                            add(Values.INSTRUCTION("pop"));
                         fi
                     fi
                 fi
@@ -4899,7 +4899,7 @@ namespace Syntax.Process is
                             expected_type.is_void /\
                             !value.type!.is_void
                         then
-                            add("pop");
+                            add(Values.INSTRUCTION("pop"));
                         fi
                     fi
                 fi
