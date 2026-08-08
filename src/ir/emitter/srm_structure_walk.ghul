@@ -7,6 +7,11 @@ namespace IR.Emitter is
     use Semantic.Symbols.Function;
     use Semantic.Symbols.Field;
 
+    // A method this assembly defines together with the interface member
+    // it explicitly implements, held until the owning type has a handle
+    // for the MethodImpl row to name.
+    class SRM_BOUND_METHOD(body: EntityHandle, declaration: EntityHandle);
+
     // Derives the emitted assembly's structure from the symbol table, in
     // two passes over the same sequence.
     //
@@ -74,7 +79,33 @@ namespace IR.Emitter is
 
                     next_method = next_method + 1;
                 fi
+
+                next_method = next_method + _boilerplate_count(type);
             od
+        si
+
+        // An iterable or iterator type satisfies the two non-generic
+        // framework interfaces its generic ones derive from with a
+        // member apiece. Neither is a declaration the symbol table
+        // holds, so both passes count them here, last in the method run.
+        _boilerplate_count(type: SRM_EMITTED_TYPE) -> int is
+            let declared = type.declared;
+
+            if !declared? then
+                return 0;
+            fi
+
+            let count mut = 0;
+
+            if declared.is_derived_from_iterable_trait then
+                count = count + 1;
+            fi
+
+            if declared.is_derived_from_iterator_trait then
+                count = count + 1;
+            fi
+
+            return count;
         si
 
         // A unit variant's interned instance and the static constructor
@@ -112,6 +143,8 @@ namespace IR.Emitter is
                     _write_unit_variant_initializer(type.declared!);
                 fi
 
+                let boilerplate = _write_boilerplate(type);
+
                 let handle =
                     _assembly.add_type_definition(
                         _type_attributes(type),
@@ -133,6 +166,10 @@ namespace IR.Emitter is
                         _assembly.add_interface_implementation(handle, `interface);
                     od
                 fi
+
+                for bound in boilerplate do
+                    _assembly.add_method_implementation(handle, bound.body, bound.declaration);
+                od
             od
         si
 
@@ -344,6 +381,103 @@ namespace IR.Emitter is
 
             return cast EntityHandle(
                 _assembly.add_type_reference_by_name("System.Runtime", "System", "Object"));
+        si
+
+        // `System.Collections.IEnumerable` and `System.Collections.
+        // IEnumerator` are the non-generic interfaces the generic ones
+        // derive from, and a type implementing the generic form has to
+        // satisfy them too. ghūl has no declaration for either member,
+        // so each is emitted here: an explicit implementation, named for
+        // the interface, returning the untyped form and answering null.
+        //
+        // The body is never called — every consumer reaches the generic
+        // member — so answering null costs nothing and saves the walk
+        // from having to reach the type's own iterator.
+        _write_boilerplate(type: SRM_EMITTED_TYPE) -> Collections.List[SRM_BOUND_METHOD] is
+            let result = Collections.LIST[SRM_BOUND_METHOD]();
+
+            let declared = type.declared;
+
+            if !declared? then
+                return result;
+            fi
+
+            if declared.is_derived_from_iterable_trait then
+                let `interface =
+                    _assembly.add_type_reference_by_name(
+                        "System.Runtime", "System.Collections", "IEnumerator");
+
+                let signature =
+                    _signatures.nullary_instance_signature(cast EntityHandle(`interface));
+
+                result.add(
+                    _write_explicit_implementation(
+                        "System.Collections.IEnumerable.GetEnumerator",
+                        signature,
+                        false,
+                        "System.Collections",
+                        "IEnumerable",
+                        "GetEnumerator",
+                        signature));
+            fi
+
+            if declared.is_derived_from_iterator_trait then
+                let signature = _signatures.nullary_instance_signature_returning_object();
+
+                result.add(
+                    _write_explicit_implementation(
+                        "System.Collections.IEnumerator.get_Current",
+                        signature,
+                        true,
+                        "System.Collections",
+                        "IEnumerator",
+                        "get_Current",
+                        signature));
+            fi
+
+            return result;
+        si
+
+        // One explicit-implementation member: the row, its `ldnull; ret`
+        // body, and the interface member it answers for, which the
+        // MethodImpl row binds it to once the type has a handle.
+        _write_explicit_implementation(
+            name: string,
+            signature: ubyte[],
+            is_special_name: bool,
+            interface_namespace: string,
+            interface_name: string,
+            member_name: string,
+            member_signature: ubyte[]
+        ) -> SRM_BOUND_METHOD is
+            let body = SRM_METHOD_BODY_EMITTER();
+
+            body.ldnull();
+            body.ret();
+
+            let definition =
+                _assembly.add_method_definition(
+                    SRM_FLAGS.explicit_implementation_attributes(is_special_name),
+                    cast System.Reflection.MethodImplAttributes(0),   // IL, managed
+                    _assembly.get_or_add_string(name),
+                    _assembly.get_or_add_blob(signature),
+                    body.flush(_assembly),
+                    MetadataTokens.parameter_handle(_assembly.next_parameter_row));
+
+            let `interface =
+                _assembly.add_type_reference_by_name(
+                    "System.Runtime", interface_namespace, interface_name);
+
+            let declaration =
+                _assembly.add_named_member_reference(
+                    cast EntityHandle(`interface),
+                    member_name,
+                    "{interface_namespace}.{interface_name}::{member_name}",
+                    member_signature);
+
+            return SRM_BOUND_METHOD(
+                cast EntityHandle(definition),
+                cast EntityHandle(declaration));
         si
 
         // The traits a type declares, in declaration order, each named

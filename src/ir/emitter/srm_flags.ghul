@@ -53,8 +53,10 @@ namespace IR.Emitter is
         _ASSEMBLY_METHOD: int static => 3;
         _PUBLIC_METHOD: int static => 6;
         _STATIC: int static => 16;
+        _FINAL: int static => 32;
         _VIRTUAL: int static => 64;
         _HIDE_BY_SIG: int static => 128;
+        _NEW_SLOT: int static => 256;
         _ABSTRACT_METHOD: int static => 1024;
         _SPECIAL_NAME: int static => 2048;
         _RT_SPECIAL_NAME: int static => 4096;
@@ -87,6 +89,22 @@ namespace IR.Emitter is
             // abstract method — has no body for the row to point at.
             if method.is_abstract then
                 flags = flags | _ABSTRACT_METHOD | _VIRTUAL;
+            fi
+
+            return cast MethodAttributes(flags);
+        si
+
+        // An explicit interface implementation: private, because it is
+        // reached only through the interface, and newslot because it
+        // takes a slot of its own rather than overriding anything the
+        // base declares. Final, since a name carrying dots cannot be
+        // overridden by a subclass member anyway.
+        explicit_implementation_attributes(is_special_name: bool) -> MethodAttributes static is
+            let flags mut =
+                _PRIVATE_METHOD | _FINAL | _VIRTUAL | _HIDE_BY_SIG | _NEW_SLOT;
+
+            if is_special_name then
+                flags = flags | _SPECIAL_NAME;
             fi
 
             return cast MethodAttributes(flags);

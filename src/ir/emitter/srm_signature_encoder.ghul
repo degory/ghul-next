@@ -52,6 +52,42 @@ namespace IR.Emitter is
             return builder.to_array();
         si
 
+        // An instance method taking nothing and returning the given
+        // reference type, named by handle rather than by symbol: the
+        // members that need this satisfy a framework interface no ghūl
+        // declaration mentions.
+        nullary_instance_signature(return_type: EntityHandle) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_encoder: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(0, return_encoder ref, parameters ref);
+
+            return_encoder.`type(false).`type(return_type, false);
+
+            return builder.to_array();
+        si
+
+        // The same, returning `object`, which has its own element-type
+        // code rather than a reference.
+        nullary_instance_signature_returning_object() -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_encoder: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, true)
+                .parameters(0, return_encoder ref, parameters ref);
+
+            return_encoder.`type(false).object();
+
+            return builder.to_array();
+        si
+
         // A constructor's signature: an instance method returning void,
         // taking the given argument types. Built from types rather than
         // from a Function because the constructors that need this are
