@@ -416,6 +416,18 @@ namespace IR.Emitter is
             _metadata.add_interface_implementation(type, `interface);
         si
 
+        // Binds a method this type defines to the interface slot it
+        // implements, for a member whose name cannot match the slot on
+        // its own — an explicit implementation, named for the interface
+        // it satisfies.
+        add_method_implementation(
+            type: System.Reflection.Metadata.TypeDefinitionHandle,
+            body: EntityHandle,
+            declaration: EntityHandle
+        ) is
+            _metadata.add_method_implementation(type, body, declaration);
+        si
+
         set_entry_point(method: MethodDefinitionHandle) is
             _entry_point = method;
         si
