@@ -1,9 +1,2 @@
-01-present: alpha
-01-absent: <null>
-02-property: hello+world
-02-absent: <null>
-03-outer: first
-03-empty: <null>
-03-absent: <null>
-04-widened: widen
-05-keeps-optional: absent
+present: 42
+absent
