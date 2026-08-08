@@ -770,7 +770,12 @@ namespace IR is
             // reference to it instead would name the same method twice,
             // once as a definition and once as a reference into this
             // assembly, which is not a shape the format has.
-            if function.generic_arguments.count > 0 then
+            //
+            // Only when the owner is non-generic. A generic method on a
+            // generic type needs both instantiations — the owner's, in a
+            // reference through its TypeSpec, and the method's own — and
+            // a definition row carries neither.
+            if !_owner_is_generic(function) /\ function.generic_arguments.count > 0 then
                 if let open_row = emitter.handles.method_definition(root) then
                     return cast System.Reflection.Metadata.EntityHandle(
                         emitter.add_method_specification(
