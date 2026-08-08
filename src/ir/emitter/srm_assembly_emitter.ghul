@@ -365,6 +365,15 @@ namespace IR.Emitter is
         ) -> System.Reflection.Metadata.FieldDefinitionHandle =>
             _metadata.add_field_definition(flags, name, signature);
 
+        // The compile-time value of a literal field. The Constant table
+        // is one of the sorted side tables, so SRM orders the rows and
+        // they can be added as each field is written.
+        add_constant(
+            parent: EntityHandle,
+            value: object
+        ) -> System.Reflection.Metadata.ConstantHandle =>
+            _metadata.add_constant(parent, value);
+
         add_type_definition(
             flags: System.Reflection.TypeAttributes,
             namespace_name: StringHandle,

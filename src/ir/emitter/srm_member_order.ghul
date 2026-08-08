@@ -286,6 +286,15 @@ namespace IR.Emitter is
         methods(type: SRM_EMITTED_TYPE) -> Collections.List[Function] static is
             let result = Collections.LIST[Function]();
 
+            // An enum emits no methods. Its ordering operator is innate,
+            // compiled at each call site against the underlying value,
+            // and its symbol carries no body — emitting a row for it
+            // yields a method with no code, which makes the whole type
+            // fail to load.
+            if isa Semantic.Symbols.ENUM_STRUCT(type.declared) then
+                return result;
+            fi
+
             // A frame's closure method belongs to the frame in the
             // emitted assembly but is declared elsewhere, so the walk
             // over the frame's own symbols does not reach it.

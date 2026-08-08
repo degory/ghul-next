@@ -57,6 +57,11 @@ namespace IR.Emitter is
                     next_field = next_field + 1;
                 fi
 
+                // An enum's storage field and its members are fields of
+                // the emitted type but not of the symbol table's, so
+                // they are counted here rather than by the member order.
+                next_field = next_field + _enum_field_count(type);
+
                 for method in SRM_MEMBER_ORDER.methods(type) do
                     _handles.set_method_definition(method, MetadataTokens.method_definition_handle(next_method));
 
@@ -97,6 +102,8 @@ namespace IR.Emitter is
                     _write_unit_variant_instance(type.declared!);
                 fi
 
+                _write_enum_fields(type);
+
                 for method in SRM_MEMBER_ORDER.methods(type) do
                     _write_method(method);
                 od
@@ -130,6 +137,66 @@ namespace IR.Emitter is
                 SRM_FLAGS.field_attributes(`field),
                 _assembly.get_or_add_string(`field.name),
                 _assembly.get_or_add_blob(_signatures.field_signature(`field)));
+        si
+
+        // An enum is a value type whose members are compile-time
+        // constants, so the symbol table holds them as members of the
+        // enum rather than as fields of anything. The emitted shape is
+        // fixed by ECMA-335: one instance field named `value__` holding
+        // the value, and one static literal per member.
+        _enum_members(type: SRM_EMITTED_TYPE) -> Collections.List[Semantic.Symbols.ENUM_STRUCT_MEMBER] is
+            let result = Collections.LIST[Semantic.Symbols.ENUM_STRUCT_MEMBER]();
+
+            if !isa Semantic.Symbols.ENUM_STRUCT(type.declared) then
+                return result;
+            fi
+
+            for symbol in type.scope.symbols do
+                if let member: Semantic.Symbols.ENUM_STRUCT_MEMBER = symbol then
+                    result.add(member);
+                fi
+            od
+
+            return result;
+        si
+
+        // The `value__` field plus one per member, or none at all when
+        // the type is not an enum.
+        _enum_field_count(type: SRM_EMITTED_TYPE) -> int is
+            if !isa Semantic.Symbols.ENUM_STRUCT(type.declared) then
+                return 0;
+            fi
+
+            return _enum_members(type).count + 1;
+        si
+
+        _write_enum_fields(type: SRM_EMITTED_TYPE) is
+            if !isa Semantic.Symbols.ENUM_STRUCT(type.declared) then
+                return;
+            fi
+
+            let enum_type = type.declared!.type!;
+
+            _assembly.add_field_definition(
+                SRM_FLAGS.enum_value_attributes(),
+                _assembly.get_or_add_string("value__"),
+                _assembly.get_or_add_blob(
+                    _signatures.field_signature(
+                        IoC.CONTAINER.instance.innate_symbol_lookup.get_int_type())));
+
+            for member in _enum_members(type) do
+                let handle =
+                    _assembly.add_field_definition(
+                        SRM_FLAGS.enum_member_attributes(),
+                        _assembly.get_or_add_string(member.name),
+                        _assembly.get_or_add_blob(_signatures.field_signature(enum_type)));
+
+                // The value is stored as the enum's underlying type, not
+                // as the enum: a Constant row holds a primitive.
+                _assembly.add_constant(
+                    cast EntityHandle(handle),
+                    cast object(member.numeric_value));
+            od
         si
 
         _write_unit_variant_instance(variant: Classy) is
@@ -245,6 +312,15 @@ namespace IR.Emitter is
 
             if type.is_trait then
                 return _[EntityHandle];
+            fi
+
+            // An enum is a struct in the symbol table, but the runtime
+            // only treats it as an enum — reading its value through
+            // `value__`, converting, comparing — when it descends from
+            // System.Enum rather than from System.ValueType directly.
+            if isa Semantic.Symbols.ENUM_STRUCT(type) then
+                return cast EntityHandle(
+                    _assembly.add_type_reference_by_name("System.Runtime", "System", "Enum"));
             fi
 
             for ancestor in type.ancestors do
