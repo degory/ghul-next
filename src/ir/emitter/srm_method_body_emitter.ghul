@@ -27,12 +27,21 @@ namespace IR.Emitter is
         _local_slots: Collections.MAP[string, int];
         _local_types: Collections.LIST[Type];
 
-        // IR label id to the encoder's own label. A branch can name a
+        // IR label to the encoder's own label. A branch can name a
         // label the walk has not reached yet - every forward jump does,
         // and a loop's exit is always one - so the handle is defined on
         // first mention from either side and the encoder patches the
         // offsets in when the body is serialized.
         _labels: Collections.MAP[int, LabelHandle];
+
+        // Protected-region boundaries. The text back end delimits a
+        // region by nesting braces, so its start and end are wherever
+        // the writer happens to be; SRM instead takes four labels per
+        // region, so each boundary has to be marked as the walk passes
+        // it and held until both ends are known. These labels have no
+        // IR.LABEL behind them - nothing branches to them - so they
+        // are numbered here rather than sharing `_labels`.
+        _region_labels: Collections.LIST[LabelHandle];
 
         init() is
             _encoder = InstructionEncoder(BlobBuilder(32), ControlFlowBuilder());
@@ -40,6 +49,55 @@ namespace IR.Emitter is
             _local_slots = Collections.MAP[string, int]();
             _local_types = Collections.LIST[Type]();
             _labels = Collections.MAP[int, LabelHandle]();
+            _region_labels = Collections.LIST[LabelHandle]();
+        si
+
+        // Marks the current position and returns a handle on it that
+        // `add_catch_region` / `add_finally_region` take. An int rather
+        // than the SRM label so the walk that decides where regions
+        // begin and end needs no metadata types of its own.
+        mark_region_boundary() -> int is
+            let handle = _encoder.define_label();
+
+            _encoder.mark_label(handle);
+
+            _region_labels.add(handle);
+
+            return _region_labels.count - 1;
+        si
+
+        // Regions must be added innermost first: ECMA-335 requires the
+        // ordering and the runtime relies on it, but nothing validates
+        // it, so getting it wrong yields an assembly that loads and
+        // then runs the wrong handler. Each `try` adds its own region
+        // as it closes, which puts an inner one ahead of the outer one
+        // that contains it.
+        add_catch_region(
+            try_start: int,
+            try_end: int,
+            handler_start: int,
+            handler_end: int,
+            catch_type: EntityHandle
+        ) is
+            _encoder.control_flow_builder.add_catch_region(
+                _region_labels[try_start],
+                _region_labels[try_end],
+                _region_labels[handler_start],
+                _region_labels[handler_end],
+                catch_type);
+        si
+
+        add_finally_region(
+            try_start: int,
+            try_end: int,
+            handler_start: int,
+            handler_end: int
+        ) is
+            _encoder.control_flow_builder.add_finally_region(
+                _region_labels[try_start],
+                _region_labels[try_end],
+                _region_labels[handler_start],
+                _region_labels[handler_end]);
         si
 
         _label(label: IR.LABEL) -> LabelHandle is

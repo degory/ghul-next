@@ -21,9 +21,13 @@ namespace IR is
             _current_pass = p;
         si
 
-        reset_id() static is
-            _next_id = 0;
-        si
+        // The counter deliberately runs for the whole compilation
+        // rather than restarting per pass or per class, so an id
+        // identifies a label on its own. The binary back end keys a
+        // branch's target on it; with the counter restarted, two
+        // unrelated labels share an id and a branch lands wherever the
+        // other one was marked. Restarting only ever bought smaller
+        // numbers in the emitted text.
         
         to_string() -> string => "L{pass}{id}";
     si

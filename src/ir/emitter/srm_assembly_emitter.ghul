@@ -310,7 +310,18 @@ namespace IR.Emitter is
             // The text path declares `.maxstack 64` on every body it
             // emits rather than computing a bound, so the binary path
             // reserves the same depth.
-            return _body_stream.add_method_body(encoder, 64, locals, _);
+            //
+            // `.locals init` likewise: the text path emits it on every
+            // declaration, and a method that both has locals and
+            // contains a protected region is rejected outright by the
+            // runtime without it — an InvalidProgramException naming
+            // the method, with nothing in the body to point at.
+            return
+                _body_stream.add_method_body(
+                    encoder,
+                    64,
+                    locals,
+                    System.Reflection.Metadata.Ecma335.MethodBodyAttributes.INIT_LOCALS);
         si
 
         add_local_variable_signature(
