@@ -31,7 +31,13 @@ namespace IR.Emitter is
                 return cast TypeAttributes(flags | _INTERFACE | _ABSTRACT_TYPE);
             fi
 
-            if type.is_value_type then
+            // An enum is sealed like any other value type, but takes
+            // auto layout: the runtime treats it as its underlying
+            // scalar, and a sequential-layout enum is rejected as
+            // malformed rather than merely laid out differently.
+            if isa Semantic.Symbols.ENUM_STRUCT(type) then
+                flags = flags | _SEALED;
+            elif type.is_value_type then
                 flags = flags | _SEALED | _SEQUENTIAL_LAYOUT;
             elif type.is_abstract then
                 flags = flags | _ABSTRACT_TYPE;
@@ -103,8 +109,30 @@ namespace IR.Emitter is
         _PUBLIC_FIELD: int static => 6;
         _STATIC_FIELD: int static => 16;
 
+        _LITERAL_FIELD: int static => 64;
+        _HAS_DEFAULT_FIELD: int static => 32768;
+
+        // FieldAttributes numbers these differently from
+        // MethodAttributes, which uses 0x0800 / 0x1000 for the same two
+        // marks.
+        _SPECIAL_NAME_FIELD: int static => 512;
+        _RT_SPECIAL_NAME_FIELD: int static => 1024;
+
         unit_variant_instance_attributes() -> FieldAttributes static =>
             cast FieldAttributes(_PUBLIC_FIELD | _STATIC_FIELD);
+
+        // An enum's members are compile-time constants: each is a static
+        // literal of the enum's own type, whose value lives in a Constant
+        // row rather than in any initializer.
+        enum_member_attributes() -> FieldAttributes static =>
+            cast FieldAttributes(
+                _PUBLIC_FIELD | _STATIC_FIELD | _LITERAL_FIELD | _HAS_DEFAULT_FIELD);
+
+        // The instance field an enum's value is actually stored in. Its
+        // name is fixed by ECMA-335 and the runtime finds it by the
+        // rtspecialname mark rather than by position.
+        enum_value_attributes() -> FieldAttributes static =>
+            cast FieldAttributes(_PUBLIC_FIELD | _SPECIAL_NAME_FIELD | _RT_SPECIAL_NAME_FIELD);
 
         field_attributes(`field: Field) -> FieldAttributes static is
             let flags mut =
