@@ -178,7 +178,7 @@ namespace IR.Emitter is
                 .method_signature(
                     SignatureCallingConvention.DEFAULT,
                     function.generic_arguments.count,
-                    function.is_instance)
+                    function.is_emitted_with_receiver)
                 .parameters(arguments.count, return_type ref, parameters ref);
 
             encode_return(return_type, function.return_type);
