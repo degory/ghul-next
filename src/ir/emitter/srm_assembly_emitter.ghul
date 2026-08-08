@@ -402,6 +402,20 @@ namespace IR.Emitter is
                 index);
         si
 
+        // One row per interface a type declares. Without it the type
+        // still loads and its own methods still run, but nothing binds
+        // the interface's slots, so a call through the interface fails
+        // at dispatch rather than at load.
+        //
+        // InterfaceImpl is a sorted table, and SRM orders it on
+        // serialization, so rows go in as the walk reaches them.
+        add_interface_implementation(
+            type: System.Reflection.Metadata.TypeDefinitionHandle,
+            `interface: EntityHandle
+        ) is
+            _metadata.add_interface_implementation(type, `interface);
+        si
+
         set_entry_point(method: MethodDefinitionHandle) is
             _entry_point = method;
         si

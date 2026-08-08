@@ -128,6 +128,10 @@ namespace IR.Emitter is
                         _assembly.add_generic_parameter(
                             cast EntityHandle(handle), i, names[i]);
                     od
+
+                    for `interface in _interfaces(declared) do
+                        _assembly.add_interface_implementation(handle, `interface);
+                    od
                 fi
             od
         si
@@ -340,6 +344,50 @@ namespace IR.Emitter is
 
             return cast EntityHandle(
                 _assembly.add_type_reference_by_name("System.Runtime", "System", "Object"));
+        si
+
+        // The traits a type declares, in declaration order, each named
+        // by a handle the InterfaceImpl row can carry.
+        //
+        // `ancestors` mixes the superclass in with the traits, so it is
+        // filtered the same way the text back end's `implements` clause
+        // filters it.
+        _interfaces(type: Classy) -> Collections.List[EntityHandle] is
+            let result = Collections.LIST[EntityHandle]();
+
+            for ancestor in type.ancestors do
+                if !ancestor.is_trait then
+                    continue;
+                fi
+
+                result.add(_type_token(ancestor));
+            od
+
+            return result;
+        si
+
+        // A type named in a row rather than in a signature. A
+        // constructed generic has no row of its own and is named by a
+        // specification carrying its shape; anything else resolves to
+        // its own TypeDef row, or to an imported reference.
+        //
+        // The same choice as IR.CONTEXT.resolve_type_token, which the
+        // structure walk cannot reach: it runs without an IR context.
+        _type_token(type: Semantic.Types.Type) -> EntityHandle is
+            if type.arguments.count > 0 then
+                return cast EntityHandle(_assembly.add_type_specification(type));
+            fi
+
+            let symbol =
+                if let generic: Semantic.Symbols.GENERIC = type.symbol then
+                    generic.symbol
+                else
+                    cast Classy?(type.symbol)
+                fi;
+
+            assert symbol? else "cannot name the type '{type}' in a metadata row";
+
+            return _type_handle(symbol);
         si
 
         // A same-assembly ancestor resolves to its own TypeDef row;
