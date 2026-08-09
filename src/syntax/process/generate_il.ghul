@@ -1555,12 +1555,12 @@ namespace Syntax.Process is
             // machines` writes it out inside the class definition
             // once the enclosing user class has closed.
             //
-            // For a generic generator, install gen_type_override on
-            // function-T symbols so any IR.Values inside MoveNext
-            // that baked in function-T (callvirt owner types on the
-            // for-each dispatch, locals init for the iterator
-            // current, etc.) emit `!N` (class-level — MoveNext has
-            // no own type params) rather than `!!N`.
+            // For a generic generator, move each function-T symbol to
+            // a class-level position on the frame, so any IR.Values
+            // inside MoveNext that baked in function-T (callvirt owner
+            // types on the for-each dispatch, locals init for the
+            // iterator current, etc.) reach `!N` — MoveNext has no
+            // type parameters of its own — rather than `!!N`.
             state_machine.install_body_emission_overrides();
 
             enter_scope(function);

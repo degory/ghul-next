@@ -259,7 +259,17 @@ namespace IR.Emitter is
             let symbol = type.symbol;
 
             if let generic_argument: Semantic.Symbols.GenericArgument = symbol then
-                if isa Semantic.Symbols.FUNCTION_GENERIC_ARGUMENT(generic_argument) then
+                // A body emitted somewhere other than where its type
+                // parameters were declared — a state machine's MoveNext,
+                // a closure's frame — reaches them at a position the
+                // lowering assigns, rather than at their own index.
+                if let position = generic_argument.emitted_position then
+                    if position.is_class_level then
+                        encoder.generic_type_parameter(position.index);
+                    else
+                        encoder.generic_method_type_parameter(position.index);
+                    fi
+                elif isa Semantic.Symbols.FUNCTION_GENERIC_ARGUMENT(generic_argument) then
                     encoder.generic_method_type_parameter(generic_argument.index);
                 else
                     encoder.generic_type_parameter(generic_argument.index);

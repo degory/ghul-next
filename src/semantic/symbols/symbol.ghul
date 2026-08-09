@@ -674,8 +674,9 @@ namespace Semantic.Symbols is
         gen_type_prefix(buffer: StringBuilder) => throw System.NotImplementedException("not implemented by {get_type()}");
         gen_reference(buffer: StringBuilder) => throw System.NotImplementedException("not implemented by {get_type()}");
         gen_type(buffer: StringBuilder) => throw System.NotImplementedException("not implemented by {get_type()}");
-        gen_type_override(override: (Symbol, StringBuilder) -> void) => throw System.NotImplementedException("not implemented by {get_type()}");
-        current_gen_type_override: ((Symbol, StringBuilder) -> void)? => null;
+        set_emitted_position(position: (() -> TYPE_PARAMETER_POSITION)?) => throw System.NotImplementedException("not implemented by {get_type()}");
+        current_emitted_position: (() -> TYPE_PARAMETER_POSITION)? => null;
+        emitted_position: TYPE_PARAMETER_POSITION? => null;
         
         gen_class_name(buffer: StringBuilder) => throw System.NotImplementedException("not implemented by {get_type()}");
         to_string() -> string => short_description;
