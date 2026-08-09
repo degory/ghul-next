@@ -100,6 +100,15 @@ namespace IR.Emitter is
                     next_method = next_method + 1;
                 fi
 
+                if let frame: Semantic.Symbols.STATE_MACHINE_FRAME = type.declared then
+                    for member in FRAME_MEMBERS do
+                        _handles.set_frame_member(
+                            frame, member, MetadataTokens.method_definition_handle(next_method));
+
+                        next_method = next_method + 1;
+                    od
+                fi
+
                 next_method = next_method + _boilerplate_count(type);
             od
         si
@@ -126,6 +135,119 @@ namespace IR.Emitter is
             fi
 
             return count;
+        si
+
+        // The members a state-machine frame carries that no symbol
+        // declares: MoveNext and the iterator surface every consumer
+        // reaches it through.
+        //
+        // The frame's *constructor* is not among them — `declare()`
+        // declares it into the frame's own scope, so the member order
+        // already yields it and it already has a row.
+        //
+        // One list, read by both passes, in one order. A frame's rows
+        // are numbered from this and written from this, and nothing
+        // checks that the two agree — a member run written in a
+        // different order than it was numbered reparents members onto
+        // the wrong type and still loads.
+        FRAME_MEMBERS: Collections.List[FrameMember] static =>
+            [
+                FrameMember.MOVE_NEXT,
+                FrameMember.GET_CURRENT,
+                FrameMember.GET_ENUMERATOR,
+                FrameMember.DISPOSE,
+                FrameMember.RESET,
+                FrameMember.TO_STRING
+            ];
+
+        _frame_member_count(type: SRM_EMITTED_TYPE) -> int =>
+            if isa Semantic.Symbols.STATE_MACHINE_FRAME(type.declared) then
+                FRAME_MEMBERS.count;
+            else
+                0;
+            fi;
+
+        // The rows for a frame's synthesised members, in the order
+        // FRAME_MEMBERS gives and the numbering pass assumed. Each body
+        // was deposited by the tree walk against the same key.
+        _write_frame_members(type: SRM_EMITTED_TYPE) is
+            let frame = cast Semantic.Symbols.STATE_MACHINE_FRAME?(type.declared);
+
+            if !frame? then
+                return;
+            fi
+
+            let element = frame.class_element_type;
+
+            // The frame already carries its own `Iterator[T]` as an
+            // ancestor, constructed over the same element type, so
+            // GetEnumerator's return type is read off it rather than
+            // rebuilt from the innate lookup.
+            let iterator = _iterator_ancestor(frame);
+
+            for member in FRAME_MEMBERS do
+                _assembly.add_method_definition(
+                    SRM_FLAGS.frame_member_attributes(member),
+                    cast System.Reflection.MethodImplAttributes(0),   // IL, managed
+                    _assembly.get_or_add_string(_frame_member_name(member)),
+                    _assembly.get_or_add_blob(
+                        _frame_member_signature(member, element, iterator)),
+                    _handles.frame_member_body(frame, member) ?? -1,
+                    MetadataTokens.parameter_handle(_assembly.next_parameter_row));
+            od
+        si
+
+        _iterator_ancestor(frame: Classy) -> Semantic.Types.Type is
+            let unspecialized =
+                IoC.CONTAINER.instance.innate_symbol_lookup.get_unspecialized_iterator_type();
+
+            if let found = frame.find_ancestor(unspecialized) then
+                return found;
+            fi
+
+            assert false else
+                "state-machine frame '{frame.name}' does not implement Iterator[T]";
+
+            return unspecialized;
+        si
+
+        // The CLR names these members, not ghūl: each satisfies an
+        // interface the frame implements.
+        _frame_member_name(member: FrameMember) -> string static is
+            if member == FrameMember.MOVE_NEXT then
+                return "MoveNext";
+            elif member == FrameMember.GET_CURRENT then
+                return "get_Current";
+            elif member == FrameMember.GET_ENUMERATOR then
+                return "GetEnumerator";
+            elif member == FrameMember.DISPOSE then
+                return "Dispose";
+            elif member == FrameMember.RESET then
+                return "Reset";
+            fi
+
+            return "ToString";
+        si
+
+        _frame_member_signature(
+            member: FrameMember,
+            element: Semantic.Types.Type,
+            iterator: Semantic.Types.Type
+        ) -> ubyte[] is
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let none = Collections.LIST[Semantic.Types.Type]();
+
+            if member == FrameMember.MOVE_NEXT then
+                return _signatures.call_signature(lookup.get_bool_type(), none, true);
+            elif member == FrameMember.GET_CURRENT then
+                return _signatures.call_signature(element, none, true);
+            elif member == FrameMember.GET_ENUMERATOR then
+                return _signatures.call_signature(iterator, none, true);
+            elif member == FrameMember.DISPOSE \/ member == FrameMember.RESET then
+                return _signatures.call_signature(lookup.get_void_type(), none, true);
+            fi
+
+            return _signatures.call_signature(lookup.get_string_type(), none, true);
         si
 
         // A unit variant's interned instance and the static constructor
@@ -162,6 +284,8 @@ namespace IR.Emitter is
                 if _is_unit_variant(type) then
                     _write_unit_variant_initializer(type.declared!);
                 fi
+
+                _write_frame_members(type);
 
                 let boilerplate = _write_boilerplate(type);
 
