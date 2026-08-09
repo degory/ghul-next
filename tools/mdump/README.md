@@ -45,6 +45,26 @@ Signatures are printed by table and row rather than by name for the
 same reason: a name would answer whether the emitter meant the right
 thing, and the row answers whether it wrote the right thing.
 
+## Verifying
+
+`mdump --verify <assembly>` reports only violations, and exits non-zero
+if it found any. It checks one thing: a method row that carries no body
+and has no business carrying none — not abstract, not P/Invoke, not
+runtime-implemented, not an interface declaration.
+
+That sounds too small to be worth a mode, and is not. ILVerify decodes
+every body and resolves every token, which is far more thorough about
+the IL a method *contains* than reading tables would be — so run it
+first, and reach for this for what it cannot see. ILVerify says nothing
+about a method containing no IL at all: an assembly whose every method
+row points at nothing verifies clean, because there is nothing in any
+of them to disagree with.
+
+`tasks/verify-emitted.sh` runs both over every assembly the integration
+suite emitted. A passing test deletes what it built, so the suite has
+to be run with `GHUL_TEST_KEEP_ARTIFACTS=1` first or the sweep sees
+only the failures.
+
 ## Not in CI
 
 A development tool, like `analysis-profiler`. Nothing builds it as part
