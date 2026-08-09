@@ -221,7 +221,7 @@ namespace Syntax.Process is
             let spill = _spill_field;
 
             if spill? then
-                _gen.add(IR.RAW("ldarg.0"));
+                _gen.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 _gen.add(value);
                 _gen.add("stfld {spill.get_il_reference()}");
             else
@@ -1396,6 +1396,19 @@ namespace Syntax.Process is
             if _context.srm_assembly_emitter? then
                 let symbol_function = cast Semantic.Symbols.Function?(symbol)!;
 
+                // A generator or async function has no body of its own
+                // to encode here: `pre` emitted the outer method and
+                // captured the state machine's, which the pending list
+                // writes out once the enclosing class has closed.
+                if
+                    Semantic.Symbols.state_machine_for(symbol_function)? \/
+                    Semantic.Symbols.async_state_machine_for(symbol_function)?
+                then
+                    leave_scope(function);
+
+                    return;
+                fi
+
                 if !symbol_function.is_abstract then
                     _visit_function_srm(function, symbol_function);
                 fi
@@ -1488,49 +1501,56 @@ namespace Syntax.Process is
             fi
 
             // --- Outer user-facing method ---
-            println_comment("define {symbol.description}");
+            //
+            // The body is the same on both paths: forward this method's
+            // own arguments, construct the frame, return it.
+            if _context.srm_assembly_emitter? then
+                _emit_generator_outer_method_srm(symbol, frame, state_machine);
+            else
+                println_comment("define {symbol.description}");
 
-            let outer_buffer = StringBuilder();
-            symbol.gen_definition_header(outer_buffer);
-            println(outer_buffer);
+                let outer_buffer = StringBuilder();
+                symbol.gen_definition_header(outer_buffer);
+                println(outer_buffer);
 
-            println("{{");
-            _context.indent();
+                println("{{");
+                _context.indent();
 
-            gen_function_attributes(symbol);
+                gen_function_attributes(symbol);
 
-            symbol.gen_body_header(_context);
+                symbol.gen_body_header(_context);
 
-            _context.write_line(".maxstack 64");
+                _context.write_line(".maxstack 64");
 
-            // Instance generators pass `this` as the first ctor
-            // argument; the .ctor stores it into _outer_self so the
-            // body's `self`/instance-member access can read through
-            // the frame.
-            if frame.outer_self_field? then
-                _context.write_line("ldarg.0");
+                // Instance generators pass `this` as the first ctor
+                // argument; the .ctor stores it into _outer_self so the
+                // body's `self`/instance-member access can read through
+                // the frame.
+                if frame.outer_self_field? then
+                    _context.write_line("ldarg.0");
+                fi
+
+                // Load each user-declared parameter and pass it through
+                // to the state-machine .ctor. The frame's declare() ran
+                // above so the ctor's signature already matches.
+                for arg_name in symbol.argument_names do
+                    _context.write_line("ldarg '{arg_name}'");
+                od
+
+                let ctor_reference = _build_specialized_ctor_reference(
+                    frame,
+                    frame.constructor,
+                    state_machine.get_construction_type_arguments(),
+                    symbol.location,
+                    "while building ctor reference for generator outer method"
+                );
+
+                _context.write_line("newobj {ctor_reference}");
+                _context.write_line("ret");
+
+                _context.outdent();
+                println("}}");
             fi
-
-            // Load each user-declared parameter and pass it through
-            // to the state-machine .ctor. The frame's declare() ran
-            // above so the ctor's signature already matches.
-            for arg_name in symbol.argument_names do
-                _context.write_line("ldarg '{arg_name}'");
-            od
-
-            let ctor_reference = _build_specialized_ctor_reference(
-                frame,
-                frame.constructor,
-                state_machine.get_construction_type_arguments(),
-                symbol.location,
-                "while building ctor reference for generator outer method"
-            );
-
-            _context.write_line("newobj {ctor_reference}");
-            _context.write_line("ret");
-
-            _context.outdent();
-            println("}}");
 
             if owner_is_global then
                 gen_globals_class_close();
@@ -1640,6 +1660,64 @@ namespace Syntax.Process is
         // class-T's appear in the signature; for a non-generic frame,
         // just the default ctor's IL reference. Exceptions in lookup
         // are logged and a sentinel returned.
+        // A generator's outer method, encoded rather than written. Its
+        // whole body is: forward this method's own arguments, construct
+        // the frame, return it.
+        //
+        // The row is the function's own, so this deposits its offset the
+        // same way an ordinary method body does.
+        _emit_generator_outer_method_srm(
+            symbol: Semantic.Symbols.Function,
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME,
+            state_machine: Semantic.Symbols.STATE_MACHINE
+        ) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            // An instance generator hands `this` to the frame's
+            // constructor, which stores it into _outer_self so the
+            // body's `self` access can read back through the frame.
+            let slot mut = if symbol.is_emitted_with_receiver then 1 else 0 fi;
+
+            if frame.outer_self_field? then
+                body.ldarg(0);
+            fi
+
+            for i in 0..symbol.argument_names.count do
+                body.ldarg(slot);
+
+                slot = slot + 1;
+            od
+
+            body.new_object(
+                _context.resolve_call_target(
+                    _specialized_frame_constructor(frame, state_machine, symbol.location)));
+
+            body.ret();
+
+            assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+        si
+
+        // The frame constructor as it must be named from outside: on the
+        // frame's own instantiation when the frame is generic, and on
+        // the frame itself otherwise.
+        _specialized_frame_constructor(
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME,
+            state_machine: Semantic.Symbols.STATE_MACHINE,
+            location: Source.LOCATION
+        ) -> Semantic.Symbols.Function is
+            if let specialized =
+                _specialized_frame_type(
+                    frame, state_machine.get_construction_type_arguments(), location)
+            then
+                if let function: Semantic.Symbols.Function = specialized.find_member("init") then
+                    return function;
+                fi
+            fi
+
+            return frame.constructor;
+        si
+
         _build_specialized_ctor_reference(
             frame: Semantic.Symbols.Classy,
             default_ctor: Semantic.Symbols.Method,
@@ -1746,11 +1824,18 @@ namespace Syntax.Process is
             // `ldarg '<name>'`. Build them as a sequence Value so
             // ASYNC_METHOD_LAUNCH composes them in the right order.
             let ctor_args_block = Values.BLOCK();
+
+            // The enclosing method's own arguments, forwarded
+            // positionally: an instance method's receiver occupies slot
+            // 0, so its declared arguments start at 1.
+            let slot mut = if symbol.is_emitted_with_receiver then 1 else 0 fi;
+
             if frame.outer_self_field? then
-                ctor_args_block.add(IR.RAW("ldarg.0"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             fi
             for arg_name in symbol.argument_names do
-                ctor_args_block.add(IR.RAW("ldarg '{arg_name}'"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(slot, "ldarg '{arg_name}'"));
+                slot = slot + 1;
             od
             ctor_args_block.close();
 
@@ -2407,13 +2492,18 @@ namespace Syntax.Process is
             _gen_state_machine_ctor(frame);
 
             // MoveNext — populated during the body walk.
-            println(".method public final hidebysig newslot virtual instance default bool 'MoveNext'() cil managed");
-            println("{{");
-            _context.indent();
-            _context.reset_line_tracking();
-            move_next_block.gen(_context);
-            _context.outdent();
-            println("}}");
+            if _context.srm_assembly_emitter? then
+                _emit_frame_member_body_srm(
+                    frame, IR.Emitter.FrameMember.MOVE_NEXT, move_next_block);
+            else
+                println(".method public final hidebysig newslot virtual instance default bool 'MoveNext'() cil managed");
+                println("{{");
+                _context.indent();
+                _context.reset_line_tracking();
+                move_next_block.gen(_context);
+                _context.outdent();
+                println("}}");
+            fi
 
             // Other Iterator[T] / IDisposable members.
             _gen_state_machine_accessors(frame);
@@ -2427,7 +2517,77 @@ namespace Syntax.Process is
             state_machine.uninstall_body_emission_overrides();
         si
 
+        // A frame member the lowering synthesises, encoded into a body
+        // of its own and deposited against the (frame, member) key the
+        // structure walk reads when it writes the row. There is no
+        // symbol to key on: the member exists only in the emitted
+        // assembly.
+        _emit_frame_member_body_srm(
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME,
+            member: IR.Emitter.FrameMember,
+            block: Values.BLOCK
+        ) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let previous = _context.current_srm_body_emitter;
+
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            _context.current_srm_body_emitter = body;
+
+            block.gen(_context);
+
+            _context.current_srm_body_emitter = previous;
+
+            assembly_emitter.handles.set_frame_member_body(
+                frame, member, body.flush(assembly_emitter));
+        si
+
+        // The frame's constructor: chain to Object, then copy each
+        // constructor argument into the field the lowering declared for
+        // it. It is a declared symbol with a row of its own, so its body
+        // is deposited the same way any other method's is.
+        _gen_state_machine_ctor_srm(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            body.ldarg(0);
+            body.call(_context.resolve_object_constructor());
+
+            // Argument layout mirrors what STATE_MACHINE_FRAME.declare
+            // set up: [$outer_self,] arg0, arg1, ... The constructor is
+            // an instance method, so its declared arguments start at
+            // slot 1.
+            let slot mut = 1;
+
+            if let outer_self_field = frame.outer_self_field then
+                body.ldarg(0);
+                body.ldarg(slot);
+                body.stfld(_context.resolve_field_target(outer_self_field));
+
+                slot = slot + 1;
+            fi
+
+            for arg_field in frame.argument_fields do
+                body.ldarg(0);
+                body.ldarg(slot);
+                body.stfld(_context.resolve_field_target(arg_field));
+
+                slot = slot + 1;
+            od
+
+            body.ret();
+
+            assembly_emitter.handles.set_body_offset(
+                frame.constructor, body.flush(assembly_emitter));
+        si
+
         _gen_state_machine_ctor(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
+            if _context.srm_assembly_emitter? then
+                _gen_state_machine_ctor_srm(frame);
+
+                return;
+            fi
+
             let ctor_buf = StringBuilder();
             frame.constructor.gen_definition_header(ctor_buf);
             println(ctor_buf);
@@ -2471,7 +2631,73 @@ namespace Syntax.Process is
             println("}}");
         si
 
+        // The iterator surface every consumer reaches a frame through.
+        // Each body is fixed and small, so they are built here rather
+        // than walked: get_Current reads the current field,
+        // GetEnumerator returns self, Dispose does nothing, Reset zeroes
+        // the state, and ToString joins the pipe.
+        _gen_state_machine_accessors_srm(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let handles = assembly_emitter.handles;
+
+            // get_Current — read the current field.
+            let get_current = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            get_current.ldarg(0);
+            get_current.ldfld(_context.resolve_field_target(frame.current_field));
+            get_current.ret();
+            handles.set_frame_member_body(
+                frame,
+                IR.Emitter.FrameMember.GET_CURRENT,
+                get_current.flush(assembly_emitter));
+
+            // GetEnumerator — the frame implements Iterator[T] itself,
+            // so it is its own enumerator.
+            let get_enumerator = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            get_enumerator.ldarg(0);
+            get_enumerator.ret();
+            handles.set_frame_member_body(
+                frame,
+                IR.Emitter.FrameMember.GET_ENUMERATOR,
+                get_enumerator.flush(assembly_emitter));
+
+            // Dispose — a no-op. A generator abandoned mid-flight does
+            // not run the user's finally bodies; the text path has the
+            // same gap and it is recorded there.
+            let dispose = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            dispose.ret();
+            handles.set_frame_member_body(
+                frame, IR.Emitter.FrameMember.DISPOSE, dispose.flush(assembly_emitter));
+
+            // Reset — rewind to the initial state, so the next MoveNext
+            // re-enters at state 0 and re-runs the body from the top.
+            let reset = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            reset.ldarg(0);
+            reset.ldc_i4(0);
+            reset.stfld(_context.resolve_field_target(frame.state_field));
+            reset.ret();
+            handles.set_frame_member_body(
+                frame, IR.Emitter.FrameMember.RESET, reset.flush(assembly_emitter));
+
+            // ToString — a generator is a Pipe[T], so stringify it the
+            // way every other Pipe does. The trait's default is a
+            // default interface method and does not override
+            // Object.ToString, so each implementing class needs its own.
+            let to_string = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            to_string.ldarg(0);
+            to_string.ldstr(assembly_emitter, ", ");
+            to_string.call_virtual(_context.resolve_pipe_join(frame.class_element_type));
+            to_string.ret();
+            handles.set_frame_member_body(
+                frame, IR.Emitter.FrameMember.TO_STRING, to_string.flush(assembly_emitter));
+        si
+
         _gen_state_machine_accessors(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
+            if _context.srm_assembly_emitter? then
+                _gen_state_machine_accessors_srm(frame);
+
+                return;
+            fi
+
             let element_il = StringBuilder();
             frame.class_element_type.gen_type(element_il);
             let element_il_text = element_il.to_string();
@@ -3028,11 +3254,17 @@ namespace Syntax.Process is
             // closure-frame instance, which holds captures), then
             // each user-declared lambda parameter via ldarg '<name>'.
             let ctor_args_block = Values.BLOCK();
+
+            // As above: the closure's receiver, when it has one, takes
+            // slot 0 and its declared parameters follow.
+            let slot mut = if closure.is_emitted_with_receiver then 1 else 0 fi;
+
             if frame.outer_self_field? then
-                ctor_args_block.add(IR.RAW("ldarg.0"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             fi
             for arg_name in closure.argument_names do
-                ctor_args_block.add(IR.RAW("ldarg '{arg_name}'"));
+                ctor_args_block.add(Values.Load.ARGUMENT_SLOT(slot, "ldarg '{arg_name}'"));
+                slot = slot + 1;
             od
             ctor_args_block.close();
 
@@ -3285,7 +3517,7 @@ namespace Syntax.Process is
             if !suspend_type.is_void then
                 let result_temp = TEMP(current_block, "await_bridge", suspend);
                 let result_field = frame.declare_spill_field(result_type);
-                add(IR.RAW("ldarg.0"));
+                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 add(result_temp.load());
                 add("stfld {result_field.get_il_reference()}");
                 await_wrapper.value =
@@ -3334,7 +3566,7 @@ namespace Syntax.Process is
 
             let spill_field = frame.declare_spill_field(spill_type);
 
-            add(IR.RAW("ldarg.0"));
+            add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
             add(operand_value);
             add("stfld {spill_field.get_il_reference()}");
 
@@ -4014,7 +4246,7 @@ namespace Syntax.Process is
                 // and `br` are both valid; use `leave` only when
                 // crossing an inner try (where `br` would be
                 // invalid IL).
-                add(IR.RAW("ldarg.0"));
+                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
                 if let v = value then
                     add(v);
                 fi

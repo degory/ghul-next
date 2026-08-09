@@ -117,6 +117,16 @@ namespace IR.Emitter is
         static_signature(
             return_type_of: Semantic.Types.Type,
             argument_types: Collections.List[Semantic.Types.Type]
+        ) -> ubyte[] =>
+            call_signature(return_type_of, argument_types, false);
+
+        // The same, for a method reached through a receiver. Built from
+        // types rather than from a Function because the members that
+        // need it are ones no symbol in the compilation declares.
+        call_signature(
+            return_type_of: Semantic.Types.Type,
+            argument_types: Collections.List[Semantic.Types.Type],
+            is_instance: bool
         ) -> ubyte[] is
             let builder = BlobBuilder(16);
 
@@ -124,7 +134,7 @@ namespace IR.Emitter is
             let parameters: ParametersEncoder mut;
 
             BlobEncoder(builder)
-                .method_signature(SignatureCallingConvention.DEFAULT, 0, false)
+                .method_signature(SignatureCallingConvention.DEFAULT, 0, is_instance)
                 .parameters(argument_types.count, return_type ref, parameters ref);
 
             encode_return(return_type, return_type_of);

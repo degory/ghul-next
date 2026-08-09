@@ -94,6 +94,24 @@ namespace IR.Emitter is
             return cast MethodAttributes(flags);
         si
 
+        // A state-machine frame's synthesised members. Each satisfies an
+        // interface the frame implements, so each is a newslot virtual;
+        // ToString overrides Object's and takes the slot it already has.
+        frame_member_attributes(member: FrameMember) -> MethodAttributes static is
+            if member == FrameMember.TO_STRING then
+                return cast MethodAttributes(_PUBLIC_METHOD | _VIRTUAL | _HIDE_BY_SIG);
+            fi
+
+            let flags mut =
+                _PUBLIC_METHOD | _FINAL | _VIRTUAL | _HIDE_BY_SIG | _NEW_SLOT;
+
+            if member == FrameMember.GET_CURRENT \/ member == FrameMember.GET_ENUMERATOR then
+                flags = flags | _SPECIAL_NAME;
+            fi
+
+            return cast MethodAttributes(flags);
+        si
+
         // An explicit interface implementation: private, because it is
         // reached only through the interface, and newslot because it
         // takes a slot of its own rather than overriding anything the

@@ -521,6 +521,55 @@ namespace IR is
                     arguments));
         si
 
+        // `Pipe[T].join(string)`, which a state-machine frame's
+        // ToString calls to stringify itself the way every other pipe
+        // does. Named from the element type because the frame reaches it
+        // through the trait rather than declaring it.
+        resolve_pipe_join(
+            element_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(lookup.get_string_type());
+
+            let unspecialized = lookup.get_unspecialized_pipe_type();
+
+            assert unspecialized? else "Pipe[T] is not available";
+
+            let pipe_symbol = cast Semantic.Symbols.Classy?(unspecialized.symbol);
+
+            assert pipe_symbol? else "Pipe[T] does not name a type";
+
+            let pipe_type =
+                Semantic.Types.GENERIC(
+                    Source.LOCATION.internal, pipe_symbol, [element_type]);
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(pipe_type),
+                    "join",
+                    "Pipe::join(string)",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .call_signature(lookup.get_string_type(), arguments, true)));
+        si
+
+        // `System.Object`'s constructor, which every constructor that
+        // does not chain to a declared superclass calls first. Named
+        // here because no symbol in the compilation declares it.
+        resolve_object_constructor() -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_constructor_reference(
+                    cast System.Reflection.Metadata.EntityHandle(
+                        emitter.add_type_reference_by_name("System.Runtime", "System", "Object")),
+                    "Object::.ctor()",
+                    Collections.LIST[Semantic.Types.Type]()));
+        si
+
         // A range struct is constructed from its two integer bounds.
         resolve_range_constructor(
             range_type: Semantic.Types.Type
