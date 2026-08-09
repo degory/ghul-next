@@ -271,7 +271,6 @@ namespace Syntax.Process is
     class GENERATE_IL: ScopedVisitor is
         _logger: Logger;
         _symbol_table: Semantic.SYMBOL_TABLE;
-        _int_type: Semantic.Types.NAMED;
         _symbol_loader: Semantic.SYMBOL_LOADER;
         _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup;
         _function_caller: Semantic.FUNCTION_CALLER;
@@ -1168,10 +1167,6 @@ namespace Syntax.Process is
         pre(function: Definitions.FUNCTION) -> bool is
             let symbol = function_for(function)!;
 
-            if _context.srm_assembly_emitter? then
-                return _pre_function_srm(function, cast Semantic.Symbols.Function?(symbol)!);
-            fi
-
             // Generator branch: a `*_GENERATOR_*` function expands
             // into TWO IL methods (the outer stub returning a fresh
             // state-machine instance + the state machine class with
@@ -1179,6 +1174,12 @@ namespace Syntax.Process is
             // Reset implementations). The split is handled by the
             // gen-generator-function path so the rest of generate_il
             // doesn't need to know.
+            //
+            // Both branches come before the binary back end's own,
+            // because a state machine is a shape rather than a body:
+            // the same expansion has to happen whichever back end
+            // then emits the pieces, and each piece chooses its own
+            // path further down.
             let state_machine = Semantic.Symbols.state_machine_for(cast Semantic.Symbols.Function?(symbol)!);
 
             if state_machine? then
@@ -1190,6 +1191,10 @@ namespace Syntax.Process is
 
             if async_sm? then
                 return _pre_async_function(function, cast Semantic.Symbols.Function?(symbol)!, async_sm);
+            fi
+
+            if _context.srm_assembly_emitter? then
+                return _pre_function_srm(function, cast Semantic.Symbols.Function?(symbol)!);
             fi
 
             if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = symbol then
@@ -1393,29 +1398,6 @@ namespace Syntax.Process is
         visit(function: Definitions.FUNCTION) is
             let symbol = symbol_for(function);
 
-            if _context.srm_assembly_emitter? then
-                let symbol_function = cast Semantic.Symbols.Function?(symbol)!;
-
-                // A generator or async function has no body of its own
-                // to encode here: `pre` emitted the outer method and
-                // captured the state machine's, which the pending list
-                // writes out once the enclosing class has closed.
-                if
-                    Semantic.Symbols.state_machine_for(symbol_function)? \/
-                    Semantic.Symbols.async_state_machine_for(symbol_function)?
-                then
-                    leave_scope(function);
-
-                    return;
-                fi
-
-                if !symbol_function.is_abstract then
-                    _visit_function_srm(function, symbol_function);
-                fi
-
-                return;
-            fi
-
             let state_machine = Semantic.Symbols.state_machine_for(cast Semantic.Symbols.Function?(symbol)!);
 
             if state_machine? then
@@ -1431,6 +1413,16 @@ namespace Syntax.Process is
                 // method and stashed the move_next block onto
                 // _pending_async_state_machines. Nothing else to
                 // do at AST visit time.
+                return;
+            fi
+
+            if _context.srm_assembly_emitter? then
+                let symbol_function = cast Semantic.Symbols.Function?(symbol)!;
+
+                if !symbol_function.is_abstract then
+                    _visit_function_srm(function, symbol_function);
+                fi
+
                 return;
             fi
 
@@ -1581,7 +1573,7 @@ namespace Syntax.Process is
             // method body. Add it before the dispatch placeholder
             // so the populated dispatch IL lands after the
             // directive at the start of MoveNext.
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             // Cache the state field to a CLR local at MoveNext
             // entry. Every yield keeps it in sync via `dup; stloc;
@@ -1591,8 +1583,8 @@ namespace Syntax.Process is
             // without branching into a protected region from
             // outside (ECMA-335 forbids that, and the previous
             // centralized-dispatch shape had exactly that bug).
-            let state_field_ref = frame.state_field.get_il_reference();
-            let outer_dispatch_holder = _open_state_machine_entry(state_field_ref, "'.gen_state'");
+            let outer_dispatch_holder =
+                _open_state_machine_entry(frame, frame.state_field, "'.gen_state'");
 
             // Stash the previous generator-yield-return label so
             // nested generator functions (rare) don't trip over
@@ -1612,19 +1604,18 @@ namespace Syntax.Process is
             // Fell-off-end trailer: mark done, return false. Plain
             // `ret` since we're at the MoveNext outer scope (no
             // open `.try`).
-            add("ldarg.0");
-            add("ldc.i4.m1");
-            add("stfld {state_field_ref}");
-            add("ldc.i4.0");
+            add(_build_frame_field_store(
+                frame, frame.state_field, Values.INSTRUCTION("ldc.i4.m1")));
+            add(Values.INSTRUCTION("ldc.i4.0"));
             add(Values.RET());
 
             // If any yield inside an inner `.try` used the
             // leave-return-true label, emit it now (outside any try)
             // followed by `ldc.i4.1; ret`. Reached only via `leave
             // L:` from inside a protected region.
-            if _current_generator_yield_return_label? then
-                add("{_current_generator_yield_return_label}:");
-                add("ldc.i4.1");
+            if let yield_return_label = _current_generator_yield_return_label then
+                add(Values.MARK_LABEL(yield_return_label));
+                add(Values.INSTRUCTION("ldc.i4.1"));
                 add(Values.RET());
             fi
 
@@ -1885,7 +1876,7 @@ namespace Syntax.Process is
 
             enter_block(move_next_block);
 
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             // Cache the state field to a CLR local at MoveNext entry.
             // Every AWAIT_SUSPEND keeps this local in sync via
@@ -1898,8 +1889,8 @@ namespace Syntax.Process is
             // `leave` from the AwaitUnsafeOnCompleted path fires the
             // finally before exiting), and side effects must be
             // skipped.
-            let state_field_ref = frame.state_field.get_il_reference();
-            let outer_dispatch_holder = _open_state_machine_entry(state_field_ref, "'.async_state'");
+            let outer_dispatch_holder =
+                _open_state_machine_entry(frame, frame.state_field, "'.async_state'");
 
             // Labels used by the trailer: success fall-through and
             // the end of the wrapping try/catch. The entire MoveNext
@@ -1982,13 +1973,13 @@ namespace Syntax.Process is
         // generators — and travels with the holder so inner
         // dispatch sites pick it up.
         _open_state_machine_entry(
-            state_field_ref: string,
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE,
+            state_field: Semantic.Symbols.Field,
             state_local_il: string
         ) -> ASYNC_DISPATCH_HOLDER is
-            add(".locals init (int32 {state_local_il})");
-            add("ldarg.0");
-            add("ldfld {state_field_ref}");
-            add("stloc {state_local_il}");
+            add(Values.DECLARE_LOCAL(state_local_il, _innate_symbol_lookup.get_int_type()));
+            add(_build_frame_field_load(frame, state_field));
+            add(Values.STORE_TEMP(state_local_il, _innate_symbol_lookup.get_int_type()));
 
             let block = Values.BLOCK();
             add(block);
@@ -2059,6 +2050,20 @@ namespace Syntax.Process is
             IR.Values.Load.INSTANCE_FIELD(
                 IR.Values.Load.REFERENCE_SELF(frame, frame.type),
                 spill_field
+            );
+
+        // The counterpart store: `value` is emitted between the frame
+        // reference and the `stfld`, so anything that leaves one item
+        // on the stack can stand in for it.
+        _build_frame_field_store(
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE,
+            `field: Semantic.Symbols.Field,
+            value: IR.Values.Value
+        ) -> IR.Values.Value =>
+            IR.Values.Store.INSTANCE_FIELD(
+                IR.Values.Load.REFERENCE_SELF(frame, frame.type),
+                `field,
+                value
             );
 
         // BLOCK-with-suspend spill path for `Statements.LIST` in
@@ -2204,9 +2209,12 @@ namespace Syntax.Process is
         // region's body, before any user code.
         _populate_async_dispatch(holder: ASYNC_DISPATCH_HOLDER) is
             for entry in holder.entries do
-                holder.block.add("ldloc {holder.state_local_il}");
-                holder.block.add("ldc.i4 {entry.state}");
-                holder.block.add("beq {entry.cold_resume_label}");
+                holder.block.add(
+                    Values.Load.TEMP(holder.state_local_il, _innate_symbol_lookup.get_int_type()));
+                holder.block.add(
+                    Values.Literal.NUMBER("{entry.state}", _innate_symbol_lookup.get_int_type(), "i4"));
+                holder.block.add(
+                    Values.BRANCH_TO("beq", entry.cold_resume_label));
             od
         si
 
@@ -2685,10 +2693,30 @@ namespace Syntax.Process is
             let to_string = IR.Emitter.SRM_METHOD_BODY_EMITTER();
             to_string.ldarg(0);
             to_string.ldstr(assembly_emitter, ", ");
-            to_string.call_virtual(_context.resolve_pipe_join(frame.class_element_type));
+            to_string.call_virtual(_context.resolve_pipe_join(_pipe_ancestor(frame)));
             to_string.ret();
             handles.set_frame_member_body(
                 frame, IR.Emitter.FrameMember.TO_STRING, to_string.flush(assembly_emitter));
+        si
+
+        // The frame's own `Pipe[T]`, constructed over the element type
+        // it yields. Read off the frame's ancestors rather than rebuilt,
+        // for the reason `resolve_pipe_join` records.
+        _pipe_ancestor(frame: Semantic.Symbols.STATE_MACHINE_FRAME) -> Semantic.Types.Type is
+            let looked_up = _innate_symbol_lookup.get_unspecialized_pipe_type();
+
+            assert looked_up? else "Pipe[T] is not available";
+
+            let unspecialized: Semantic.Types.Type = looked_up;
+
+            if let found = frame.find_ancestor(unspecialized) then
+                return found;
+            fi
+
+            assert false else
+                "state-machine frame '{frame.name}' does not implement Pipe[T]";
+
+            return unspecialized;
         si
 
         _gen_state_machine_accessors(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
@@ -2780,13 +2808,13 @@ namespace Syntax.Process is
         si
 
         pre(body: Bodies.BLOCK) -> bool is
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             return super.pre(body);
         si
         
         pre(expression_body: Bodies.EXPRESSION) -> bool is
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             return super.pre(expression_body);            
         si
@@ -3199,14 +3227,14 @@ namespace Syntax.Process is
 
             enter_block(move_next_block);
 
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             // Same V_state caching + per-region dispatch pattern as
             // `_pre_async_function` (see its commentary). Awaits in
             // the closure body register with the outer holder unless
             // an inner `.try` pushes its own.
-            let state_field_ref = frame.state_field.get_il_reference();
-            let outer_dispatch_holder = _open_state_machine_entry(state_field_ref, "'.async_state'");
+            let outer_dispatch_holder =
+                _open_state_machine_entry(frame, frame.state_field, "'.async_state'");
 
             let success_label = IR.LABEL();
             let end_label = IR.LABEL();
@@ -3235,7 +3263,7 @@ namespace Syntax.Process is
 
             // --- Build launch IL into closure.il_body ---
             enter_block();
-            add(".maxstack 64");
+            add(Values.MAX_STACK(64));
 
             let construction_type_args = async_state_machine.get_construction_type_arguments();
 
@@ -3566,9 +3594,7 @@ namespace Syntax.Process is
 
             let spill_field = frame.declare_spill_field(spill_type);
 
-            add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
-            add(operand_value);
-            add("stfld {spill_field.get_il_reference()}");
+            add(_build_frame_field_store(frame, spill_field, operand_value));
 
             spill_wrapper.value =
                 IR.Values.Load.INSTANCE_FIELD(
@@ -4246,11 +4272,15 @@ namespace Syntax.Process is
                 // and `br` are both valid; use `leave` only when
                 // crossing an inner try (where `br` would be
                 // invalid IL).
-                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
+                let stored = Values.BLOCK();
+
                 if let v = value then
-                    add(v);
+                    stored.add(v);
                 fi
-                add("stfld {spill_field.get_il_reference()}");
+
+                add(
+                    _build_frame_field_store(
+                        _current_state_machine_frame()!, spill_field, stored));
 
                 if crosses_try then
                     get_brancher_for_block().leave(frame.end_label);
@@ -4325,29 +4355,29 @@ namespace Syntax.Process is
 
             _register_resume_with_dispatch(state, resume);
 
-            let current_field_ref = frame.current_field.get_il_reference();
-            let state_field_ref = frame.state_field.get_il_reference();
-
             // Store yielded value into _current.
-            add("ldarg.0");
+            let current = Values.BLOCK();
 
             if `yield.expression.value? then
-                let value =
+                current.add(
                     _boxer.box_if_needed(
                         `yield.expression.value,
                         frame.element_type
-                    );
-
-                add(value);
+                    )
+                );
             fi
 
-            add("stfld {current_field_ref}");
+            add(_build_frame_field_store(frame, frame.current_field, current));
 
             // Stamp the resumption state — keep the CLR local
             // `'.gen_state'` in sync so state-guarded finally
             // bodies see the suspending value when our `leave`
             // (below) fires them.
-            _emit_state_stamp("ldc.i4 {state}", "'.gen_state'", state_field_ref);
+            _emit_state_stamp(
+                frame,
+                frame.state_field,
+                Values.Literal.NUMBER("{state}", _innate_symbol_lookup.get_int_type(), "i4"),
+                "'.gen_state'");
 
             // Suspend. From INSIDE an inner `.try`, `ret` is
             // invalid IL; emit `leave` to a shared return-true label
@@ -4357,13 +4387,13 @@ namespace Syntax.Process is
                 if !_current_generator_yield_return_label? then
                     _current_generator_yield_return_label = LABEL();
                 fi
-                add("leave {_current_generator_yield_return_label}");
+                add(Values.BRANCH_TO("leave", _current_generator_yield_return_label!));
             else
-                add("ldc.i4.1");
+                add(Values.INSTRUCTION("ldc.i4.1"));
                 add(Values.RET());
             fi
 
-            add("{resume}:");
+            add(Values.MARK_LABEL(resume));
 
             // Cold-resume cleanup: clear state to -1 (and the local)
             // so a subsequent `leave` (next yield's suspend, or the
@@ -4371,22 +4401,31 @@ namespace Syntax.Process is
             // suspending" sentinel. Without this, the finally body's
             // state guard would still see the previous yield's state
             // and skip cleanup forever.
-            _emit_state_stamp("ldc.i4.m1", "'.gen_state'", state_field_ref);
+            _emit_state_stamp(
+                frame,
+                frame.state_field,
+                Values.INSTRUCTION("ldc.i4.m1"),
+                "'.gen_state'");
         si
 
-        // Emit `ldarg.0; <value_load_il>; dup; stloc <state_local_il>;
-        // stfld <state_field_ref>` — write a state value to BOTH the
-        // CLR local cached at MoveNext entry AND the state-machine
-        // frame's state field, so later `leave`s out of `.try` blocks
-        // fire finally bodies that see the correct sentinel via the
-        // local. `value_load_il` is "ldc.i4 N" for a suspend or
-        // "ldc.i4.m1" for the not-suspending sentinel.
-        _emit_state_stamp(value_load_il: string, state_local_il: string, state_field_ref: string) is
-            add("ldarg.0");
-            add(value_load_il);
-            add("dup");
-            add("stloc {state_local_il}");
-            add("stfld {state_field_ref}");
+        // Write a state value to BOTH the CLR local cached at MoveNext
+        // entry AND the state-machine frame's state field, so later
+        // `leave`s out of `.try` blocks fire finally bodies that see
+        // the correct sentinel via the local. `value` loads the state
+        // number for a suspend, or -1 for the not-suspending sentinel.
+        _emit_state_stamp(
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE,
+            state_field: Semantic.Symbols.Field,
+            value: Values.Value,
+            state_local_il: string
+        ) is
+            let stamped = Values.BLOCK();
+
+            stamped.add(value);
+            stamped.add(Values.INSTRUCTION("dup"));
+            stamped.add(Values.STORE_TEMP(state_local_il, _innate_symbol_lookup.get_int_type()));
+
+            add(_build_frame_field_store(frame, state_field, stamped));
         si
 
         visit(`throw: Statements.THROW) is
@@ -5544,7 +5583,7 @@ namespace Syntax.Process is
             fi
 
             let iterator_field: Semantic.Symbols.Field? mut = null;
-            let iterator_frame: Semantic.Symbols.Classy? mut = null;
+            let iterator_frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE? mut = null;
 
             if sm_for_function? /\ sm_for_function.frame? /\ iterator.type? then
                 let frame = sm_for_function.frame!;
@@ -5557,9 +5596,7 @@ namespace Syntax.Process is
             fi
 
             if iterator_field? then
-                add("ldarg.0");
-                add(iterator);
-                add("stfld {iterator_field.get_il_reference()}");
+                add(_build_frame_field_store(iterator_frame!, iterator_field, iterator));
             fi
 
             let temp: TEMP? mut = null;

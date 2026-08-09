@@ -523,10 +523,13 @@ namespace IR is
 
         // `Pipe[T].join(string)`, which a state-machine frame's
         // ToString calls to stringify itself the way every other pipe
-        // does. Named from the element type because the frame reaches it
-        // through the trait rather than declaring it.
+        // does. The frame reaches it through the trait rather than
+        // declaring it, so the caller passes the frame's own already-
+        // constructed `Pipe[T]` ancestor: rebuilding it from the
+        // element type means naming the open symbol, and a reflected
+        // generic answers `symbol` with something that is not a type.
         resolve_pipe_join(
-            element_type: Semantic.Types.Type
+            pipe_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
@@ -534,18 +537,6 @@ namespace IR is
             let arguments = Collections.LIST[Semantic.Types.Type]();
 
             arguments.add(lookup.get_string_type());
-
-            let unspecialized = lookup.get_unspecialized_pipe_type();
-
-            assert unspecialized? else "Pipe[T] is not available";
-
-            let pipe_symbol = cast Semantic.Symbols.Classy?(unspecialized.symbol);
-
-            assert pipe_symbol? else "Pipe[T] does not name a type";
-
-            let pipe_type =
-                Semantic.Types.GENERIC(
-                    Source.LOCATION.internal, pipe_symbol, [element_type]);
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(

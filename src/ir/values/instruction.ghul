@@ -169,6 +169,34 @@ namespace IR.Values is
         to_string() -> string => "new-range:[{type}]()";
     si
 
+    // The stack-depth bound a method body reserves.
+    //
+    // ilasm needs the directive written; metadata carries the bound in
+    // the body header instead, and the emitter reserves the same depth
+    // for every body it writes. So this is a directive on one path and
+    // nothing at all on the other — which is still a value rather than
+    // planted text, because a state-machine body is built once and
+    // emitted by whichever back end is running.
+    class MAX_STACK: Value is
+        depth: int;
+
+        init(depth: int) is
+            super.init();
+
+            self.depth = depth;
+        si
+
+        gen(context: IR.CONTEXT) is
+            if context.current_srm_body_emitter? then
+                return;
+            fi
+
+            context.write_line(".maxstack {depth}");
+        si
+
+        to_string() -> string => ".maxstack {depth}";
+    si
+
     // Marks the position a branch names.
     class MARK_LABEL: Value is
         label: IR.LABEL;
