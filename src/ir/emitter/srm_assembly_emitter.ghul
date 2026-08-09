@@ -368,7 +368,10 @@ namespace IR.Emitter is
             let signatures = SRM_SIGNATURE_ENCODER(self);
 
             for type in types do
-                signatures.encode_type(variables.add_variable().`type(false, false), type);
+                let referenced = SRM_SIGNATURE_ENCODER.pointee(type);
+
+                signatures.encode_type(
+                    variables.add_variable().`type(referenced?, false), referenced ?? type);
             od
 
             return _metadata.add_standalone_signature(_metadata.get_or_add_blob(builder.to_array()));
