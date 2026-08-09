@@ -1,0 +1,21 @@
+namespace Driver is
+    use IO.Std.write_line;
+
+    class Main is
+        entry(arguments: string[]) -> int static is
+            if arguments.count < 1 then
+                write_line("usage: mdump <assembly> [<assembly> ...]");
+
+                return 1;
+            fi
+
+            for path in arguments do
+                write_line("=== {path} ===");
+
+                MetadataDump.DUMP(path).write();
+            od
+
+            return 0;
+        si
+    si
+si
