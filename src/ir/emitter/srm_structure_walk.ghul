@@ -160,12 +160,6 @@ namespace IR.Emitter is
                 FrameMember.TO_STRING
             ];
 
-        _frame_member_count(type: SRM_EMITTED_TYPE) -> int =>
-            if isa Semantic.Symbols.STATE_MACHINE_FRAME(type.declared) then
-                FRAME_MEMBERS.count;
-            else
-                0;
-            fi;
 
         // The rows for a frame's synthesised members, in the order
         // FRAME_MEMBERS gives and the numbering pass assumed. Each body
