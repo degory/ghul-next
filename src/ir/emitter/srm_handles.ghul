@@ -21,6 +21,7 @@ namespace IR.Emitter is
         DISPOSE,
         RESET,
         TO_STRING,
+        SET_STATE_MACHINE,
     si
 
     // Every metadata identity the emitter has assigned to a symbol, one

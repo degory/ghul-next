@@ -1696,17 +1696,64 @@ namespace Syntax.Process is
             frame: Semantic.Symbols.STATE_MACHINE_FRAME,
             state_machine: Semantic.Symbols.STATE_MACHINE,
             location: Source.LOCATION
+        ) -> Semantic.Symbols.Function =>
+            _specialized_constructor(
+                frame,
+                frame.constructor,
+                state_machine.get_construction_type_arguments(),
+                location);
+
+        // The same, for any frame: a constructed generic's constructor
+        // is a different symbol from the open type's, and only the
+        // constructed one names a type that exists at run time.
+        _specialized_constructor(
+            frame: Semantic.Symbols.Classy,
+            default_constructor: Semantic.Symbols.Function,
+            construction_type_args: Collections.List[Semantic.Types.Type]?,
+            location: Source.LOCATION
         ) -> Semantic.Symbols.Function is
+            // With no type arguments there is nothing to specialize
+            // over, and the constructed form would be a second symbol
+            // for the same constructor — one the numbering pass never
+            // saw, so it has no row and gets named as if it were
+            // imported.
+            if !construction_type_args? \/ construction_type_args.count == 0 then
+                return default_constructor;
+            fi
+
             if let specialized =
-                _specialized_frame_type(
-                    frame, state_machine.get_construction_type_arguments(), location)
+                _specialized_frame_type(frame, construction_type_args, location)
             then
                 if let function: Semantic.Symbols.Function = specialized.find_member("init") then
                     return function;
                 fi
             fi
 
-            return frame.constructor;
+            return default_constructor;
+        si
+
+        // The outer method of an async function: everything
+        // ASYNC_METHOD_LAUNCH emits, plus the return that hands back the
+        // builder's task.
+        _emit_async_outer_method_srm(
+            symbol: Semantic.Symbols.Function,
+            launch: IR.Values.ASYNC_METHOD_LAUNCH
+        ) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let enclosing = _context.current_srm_body_emitter;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            _context.current_srm_body_emitter = body;
+
+            try
+                launch.gen(_context);
+
+                body.ret();
+
+                assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+            finally
+                _context.current_srm_body_emitter = enclosing;
+            yrt
         si
 
         _build_specialized_ctor_reference(
@@ -1773,35 +1820,35 @@ namespace Syntax.Process is
 
             let owner_is_global = isa Semantic.Symbols.GLOBAL_FUNCTION(symbol);
 
-            if owner_is_global then
-                gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(symbol.owner)!);
+            let emit_outer_binary = _context.srm_assembly_emitter?;
+
+            if !emit_outer_binary then
+                if owner_is_global then
+                    gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(symbol.owner)!);
+                fi
+
+                // --- Outer method ---
+                println_comment("define {symbol.description}");
+
+                let outer_buffer = StringBuilder();
+                symbol.gen_definition_header(outer_buffer);
+                println(outer_buffer);
+
+                println("{{");
+                _context.indent();
+
+                gen_function_attributes(symbol);
+
+                symbol.gen_body_header(_context);
+
+                _context.write_line(".maxstack 64");
             fi
-
-            // --- Outer method ---
-            println_comment("define {symbol.description}");
-
-            let outer_buffer = StringBuilder();
-            symbol.gen_definition_header(outer_buffer);
-            println(outer_buffer);
-
-            println("{{");
-            _context.indent();
-
-            gen_function_attributes(symbol);
-
-            symbol.gen_body_header(_context);
-
-            _context.write_line(".maxstack 64");
 
             let construction_type_args = async_state_machine.get_construction_type_arguments();
 
-            let ctor_reference = _build_specialized_ctor_reference(
-                frame,
-                frame.constructor,
-                construction_type_args,
-                symbol.location,
-                "while building ctor reference for async outer method"
-            );
+            let constructor =
+                _specialized_constructor(
+                    frame, frame.constructor, construction_type_args, symbol.location);
 
             // The local holding the state machine, and the type argument
             // to builder.Start, both name the frame type. A frame in a
@@ -1848,7 +1895,7 @@ namespace Syntax.Process is
             let launch = IR.Values.ASYNC_METHOD_LAUNCH(
                 task_type,
                 state_machine_type,
-                ctor_reference,
+                constructor,
                 ctor_args_block,
                 frame.state_field,
                 frame.builder_field!,
@@ -1857,14 +1904,18 @@ namespace Syntax.Process is
                 "'.sm'"
             );
 
-            launch.gen(_context);
-            _context.write_line("ret");
+            if emit_outer_binary then
+                _emit_async_outer_method_srm(symbol, launch);
+            else
+                launch.gen(_context);
+                _context.write_line("ret");
 
-            _context.outdent();
-            println("}}");
+                _context.outdent();
+                println("}}");
 
-            if owner_is_global then
-                gen_globals_class_close();
+                if owner_is_global then
+                    gen_globals_class_close();
+                fi
             fi
 
             // --- Walk the body into MoveNext's block ---
@@ -1922,7 +1973,7 @@ namespace Syntax.Process is
 
             // Body fell off the end: leave success_label so the
             // trailer fires.
-            add("leave {success_label}");
+            add(Values.BRANCH_TO("leave", success_label));
 
             _current_async_state_machine = prev_async_sm;
             _current_async_success_label = prev_success;
@@ -2265,6 +2316,29 @@ namespace Syntax.Process is
 
             async_state_machine.install_body_emission_overrides();
 
+            if _context.srm_assembly_emitter? then
+                try
+                    _gen_async_state_machine_ctor_srm(frame);
+
+                    _emit_async_frame_member_body_srm(
+                        frame,
+                        IR.Emitter.FrameMember.MOVE_NEXT,
+                        () is
+                            _gen_async_move_next_srm(
+                                frame, move_next_block, success_label, end_label);
+                        si);
+
+                    _emit_async_frame_member_body_srm(
+                        frame,
+                        IR.Emitter.FrameMember.SET_STATE_MACHINE,
+                        () is si);
+                finally
+                    async_state_machine.uninstall_body_emission_overrides();
+                yrt
+
+                return;
+            fi
+
             println_comment("define async state-machine class for {async_state_machine.function.description}");
 
             let class_buffer = StringBuilder();
@@ -2336,6 +2410,143 @@ namespace Syntax.Process is
             println("}}");
 
             async_state_machine.uninstall_body_emission_overrides();
+        si
+
+        // A synthesised async frame member, encoded into a body of its
+        // own and deposited against the key the structure walk reads.
+        // `emit` writes the body; SetStateMachine's writes nothing,
+        // because the whole of it is the `ret` added here.
+        _emit_async_frame_member_body_srm(
+            frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME,
+            member: IR.Emitter.FrameMember,
+            emit: () -> void
+        ) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let enclosing = _context.current_srm_body_emitter;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            _context.current_srm_body_emitter = body;
+
+            try
+                emit();
+
+                body.ret();
+
+                assembly_emitter.handles.set_frame_member_body(
+                    frame, member, body.flush(assembly_emitter));
+            finally
+                _context.current_srm_body_emitter = enclosing;
+            yrt
+        si
+
+        // MoveNext, wrapped in the try/catch that routes an escaping
+        // exception through the builder. The success path falls out of
+        // the region to `success_label`, completes the task, and both
+        // paths meet at `end_label`.
+        _gen_async_move_next_srm(
+            frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME,
+            move_next_block: Values.BLOCK,
+            success_label: IR.LABEL,
+            end_label: IR.LABEL
+        ) is
+            let body = _context.current_srm_body_emitter!;
+
+            let builder_field = frame.builder_field!;
+            let builder_type = builder_field.type!;
+            let exception_type = _innate_symbol_lookup.get_exception_type();
+
+            let state_field = _context.resolve_field_target(frame.state_field);
+            let builder_reference = _context.resolve_field_target(builder_field);
+
+            let try_start = body.mark_region_boundary();
+
+            move_next_block.gen(_context);
+
+            let try_end = body.mark_region_boundary();
+            let handler_start = try_end;
+
+            body.declare_local(_EXCEPTION_LOCAL, exception_type);
+            body.stloc(_EXCEPTION_LOCAL);
+            body.ldarg(0);
+            body.ldc_i4(-1);
+            body.stfld(state_field);
+            body.ldarg(0);
+            body.ldflda(builder_reference);
+            body.ldloc(_EXCEPTION_LOCAL);
+            body.call(
+                _context.resolve_async_builder_set_exception(builder_type, exception_type));
+            body.branch(System.Reflection.Metadata.ILOpCode.LEAVE, end_label);
+
+            let handler_end = body.mark_region_boundary();
+
+            body.add_catch_region(
+                try_start,
+                try_end,
+                handler_start,
+                handler_end,
+                _context.resolve_type_token(exception_type));
+
+            body.mark_label(success_label);
+            body.ldarg(0);
+            body.ldc_i4(-1);
+            body.stfld(state_field);
+            body.ldarg(0);
+            body.ldflda(builder_reference);
+
+            let result_field = frame.result_field;
+
+            if result_field? then
+                body.ldarg(0);
+                body.ldfld(_context.resolve_field_target(result_field));
+            fi
+
+            body.call(_context.resolve_async_builder_set_result(builder_type, result_field?));
+
+            body.mark_label(end_label);
+        si
+
+        _EXCEPTION_LOCAL: string static => ".exception";
+
+        // The frame's constructor: chain to Object, then copy each
+        // constructor argument into the field the lowering declared for
+        // it. The builder is not among them — the outer method creates
+        // it and stores it after the newobj.
+        _gen_async_state_machine_ctor_srm(frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let enclosing = _context.current_srm_body_emitter;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            _context.current_srm_body_emitter = body;
+
+            try
+                body.ldarg(0);
+                body.call(_context.resolve_object_constructor());
+
+                let slot mut = 1;
+
+                if let outer_self_field = frame.outer_self_field then
+                    body.ldarg(0);
+                    body.ldarg(slot);
+                    body.stfld(_context.resolve_field_target(outer_self_field));
+
+                    slot = slot + 1;
+                fi
+
+                for arg_field in frame.argument_fields do
+                    body.ldarg(0);
+                    body.ldarg(slot);
+                    body.stfld(_context.resolve_field_target(arg_field));
+
+                    slot = slot + 1;
+                od
+
+                body.ret();
+
+                assembly_emitter.handles.set_body_offset(
+                    frame.constructor, body.flush(assembly_emitter));
+            finally
+                _context.current_srm_body_emitter = enclosing;
+            yrt
         si
 
         _gen_async_state_machine_ctor(frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME) is
@@ -3248,7 +3459,7 @@ namespace Syntax.Process is
 
             function.body.walk(self);
 
-            add("leave {success_label}");
+            add(Values.BRANCH_TO("leave", success_label));
 
             _current_async_state_machine = prev_async_sm;
             _current_async_success_label = prev_success;
@@ -3267,13 +3478,9 @@ namespace Syntax.Process is
 
             let construction_type_args = async_state_machine.get_construction_type_arguments();
 
-            let ctor_reference = _build_specialized_ctor_reference(
-                frame,
-                frame.constructor,
-                construction_type_args,
-                function.location,
-                "while building ctor reference for async closure"
-            );
+            let constructor =
+                _specialized_constructor(
+                    frame, frame.constructor, construction_type_args, function.location);
 
             let state_machine_type =
                 _specialized_frame_type(frame, construction_type_args, function.location) ?? frame.type!;
@@ -3308,7 +3515,7 @@ namespace Syntax.Process is
             let launch = IR.Values.ASYNC_METHOD_LAUNCH(
                 task_type,
                 state_machine_type,
-                ctor_reference,
+                constructor,
                 ctor_args_block,
                 frame.state_field,
                 frame.builder_field!,
@@ -3526,7 +3733,7 @@ namespace Syntax.Process is
             if !operand_type? then return; fi
 
             let suspend =
-                _build_await_suspend(operand_value, operand_type);
+                _build_await_suspend(operand_value, operand_type, `await.awaiter_field);
 
             if !suspend? then
                 return;
@@ -3536,18 +3743,17 @@ namespace Syntax.Process is
 
             assert frame? else "async state machine has no frame at await emission";
 
-            let result_type = await_wrapper.type;
-
-            assert result_type? else "await wrapper has no result type at IL generation";
-
             let suspend_type = suspend.type;
 
             if !suspend_type.is_void then
+                let result_field = `await.result_field;
+
+                assert result_field? else "await has no result field at IL generation";
+
                 let result_temp = TEMP(current_block, "await_bridge", suspend);
-                let result_field = frame.declare_spill_field(result_type);
-                add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
-                add(result_temp.load());
-                add("stfld {result_field.get_il_reference()}");
+
+                add(_build_frame_field_store(frame, result_field, result_temp.load()));
+
                 await_wrapper.value =
                     IR.Values.Load.INSTANCE_FIELD(
                         IR.Values.Load.REFERENCE_SELF(frame, frame.type),
@@ -3585,14 +3791,14 @@ namespace Syntax.Process is
 
             let operand_value = spill.operand.value;
             if !operand_value? then return; fi
-            let spill_type = operand_value.type;
-            if !spill_type? then return; fi
 
             let frame = casm.frame;
 
             assert frame? else "async state machine has no frame at spill emission";
 
-            let spill_field = frame.declare_spill_field(spill_type);
+            let spill_field = spill.spill_field;
+
+            assert spill_field? else "spill has no frame field at IL generation";
 
             add(_build_frame_field_store(frame, spill_field, operand_value));
 
@@ -4127,13 +4333,11 @@ namespace Syntax.Process is
                                 expr_value,
                                 class_result_type
                             );
-                        add("ldarg.0");
-                        add(boxed_value);
-                        add("stfld {result_field.get_il_reference()}");
+                        add(_build_frame_field_store(frame, result_field, boxed_value));
                     fi
                 fi
 
-                add("leave {success_label}");
+                add(Values.BRANCH_TO("leave", success_label));
                 return;
             fi
 
@@ -4445,7 +4649,11 @@ namespace Syntax.Process is
         // field, and records the (state, awaiter, label) triple
         // for entry-dispatch population. Returns null when the
         // awaiter type cannot be resolved.
-        _build_await_suspend(awaited: Value, awaited_type: Semantic.Types.Type) -> IR.Values.AWAIT_SUSPEND? is
+        _build_await_suspend(
+            awaited: Value,
+            awaited_type: Semantic.Types.Type,
+            declared_awaiter_field: Semantic.Symbols.Field?
+        ) -> IR.Values.AWAIT_SUSPEND? is
             let async_sm = _current_async_state_machine!;
             let frame = async_sm.frame;
 
@@ -4476,7 +4684,8 @@ namespace Syntax.Process is
             let state = async_sm.allocate_state();
             let cold_resume = IR.LABEL();
             let hot_resume = IR.LABEL();
-            let awaiter_field = frame.declare_awaiter_field(awaiter_type);
+            let awaiter_field =
+                declared_awaiter_field ?? frame.declare_awaiter_field(awaiter_type);
 
             async_sm.record_label(state, awaiter_field, cold_resume);
 
@@ -5288,12 +5497,10 @@ namespace Syntax.Process is
                 let result_field = frame.result_field;
 
                 if return_value? /\ result_field? then
-                    add("ldarg.0");
-                    add(return_value.load());
-                    add("stfld {result_field.get_il_reference()}");
+                    add(_build_frame_field_store(frame, result_field, return_value.load()));
                 fi
 
-                add("leave {_current_async_success_label!}");
+                add(Values.BRANCH_TO("leave", _current_async_success_label!));
             else
                 if return_value? then
                     add(return_value.load());
@@ -5437,13 +5644,17 @@ namespace Syntax.Process is
             // skipped the `.locals init` directive. Route through
             // the frame field via a temp instead.
             if let v: Semantic.Symbols.Variable = symbol, sm_field = v.state_machine_field then
-                let field_ref = sm_field.get_il_reference();
-                let exception_il = variable.type_expression.type!.get_il_type();
-                add(".locals init ({exception_il} '.catch_exc')");
-                add("stloc '.catch_exc'");
-                add("ldarg.0");
-                add("ldloc '.catch_exc'");
-                add("stfld {field_ref}");
+                let exception_type = variable.type_expression.type!;
+                let caught = "'.catch_exc'";
+
+                add(Values.DECLARE_LOCAL(caught, exception_type));
+                add(Values.STORE_TEMP(caught, exception_type));
+
+                add(
+                    _build_frame_field_store(
+                        cast Semantic.Symbols.STATE_MACHINE_FRAME_BASE(sm_field.owner!),
+                        sm_field,
+                        Values.Load.TEMP(caught, exception_type)));
             else
                 add(
                     Values.STORE_TEMP(

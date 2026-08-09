@@ -2524,12 +2524,11 @@ namespace Syntax.Process is
             fi
         si
 
-        // SPILL is synthesised by the SPILL_AWAITS pass *after*
-        // compile-expressions for the spiller's runtime path, so it
-        // generally won't be seen here. The implementation is included
-        // for completeness — types as a transparent wrapper over the
-        // operand. Generate-IL handles the actual eager-emission +
-        // frame-field-store at visit time.
+        // SPILL is synthesised by the SPILL_AWAITS pass, in the
+        // rewrite-syntax-trees phase, so one is already in the tree by
+        // the time this runs. It types as a transparent wrapper over
+        // its operand; generate-il emits the operand eagerly and stores
+        // the result in the frame field allocated here.
         visit(spill: Trees.Expressions.SPILL) is
             spill.compile_expressions_state.value = null;
 
@@ -2539,6 +2538,8 @@ namespace Syntax.Process is
                 spill.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), spill.location);
                 return;
             fi
+
+            _declare_spill_field(spill, operand_value.type!);
 
             spill.compile_expressions_state.value = IR.Values.WRAPPER(DUMMY(operand_value.type!, spill.location));
         si
@@ -2573,6 +2574,12 @@ namespace Syntax.Process is
                     return;
                 fi
             fi
+
+            if !element_type.is_void then
+                _declare_await_result_field(`await, element_type);
+            fi
+
+            _declare_awaiter_field(`await, element_type);
 
             // Generate-il fills the wrapper with IR.Values.AWAIT_SUSPEND
             // when emitting the SM body. The wrapper carries the result
@@ -3324,6 +3331,73 @@ namespace Syntax.Process is
             fi
 
             `for.iterator_field = frame.declare_anonymous_field("for_iterator", iterator_type);
+        si
+
+        // Frame fields for the two values an await has to carry across
+        // a suspend: whatever was already on the stack to its left, and
+        // its own result. Allocated here for the same reason the loop
+        // iterator above is — a field first declared while the body is
+        // emitted is numbered by nothing.
+        //
+        // Declared once. A body re-walk sees the field already there
+        // and leaves it alone, rather than allocating a second and
+        // leaving the first as a member nothing reads.
+        //
+        // No-op outside a state machine.
+        _declare_spill_field(spill: Trees.Expressions.SPILL, type: Type) is
+            if spill.spill_field? then
+                return;
+            fi
+
+            if let frame = _enclosing_state_machine_frame() then
+                spill.spill_field = frame.declare_spill_field(type);
+            fi
+        si
+
+        _declare_await_result_field(`await: Trees.Expressions.AWAIT, type: Type) is
+            if `await.result_field? then
+                return;
+            fi
+
+            if let frame = _enclosing_state_machine_frame() then
+                `await.result_field = frame.declare_spill_field(type);
+            fi
+        si
+
+        // The awaiter an `await` holds while suspended. Its type is
+        // settled by the awaited task's element type, which is worked
+        // out here, so the field is allocated here too.
+        _declare_awaiter_field(`await: Trees.Expressions.AWAIT, element_type: Type) is
+            if `await.awaiter_field? then
+                return;
+            fi
+
+            let awaiter_type =
+                if element_type.is_void then
+                    _innate_symbol_lookup.get_task_awaiter_void_type()
+                else
+                    _innate_symbol_lookup.get_task_awaiter_type(element_type)
+                fi;
+
+            if !awaiter_type? then
+                return;
+            fi
+
+            if let frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME =
+                _enclosing_state_machine_frame()
+            then
+                `await.awaiter_field = frame.declare_awaiter_field(awaiter_type);
+            fi
+        si
+
+        _enclosing_state_machine_frame() -> Semantic.Symbols.STATE_MACHINE_FRAME_BASE? is
+            let function = current_function;
+
+            if !function? then
+                return null;
+            fi
+
+            return _state_machine_frame_for(function);
         si
 
         // The frame of whichever kind of state machine encloses

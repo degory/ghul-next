@@ -547,6 +547,225 @@ namespace IR is
                         .call_signature(lookup.get_string_type(), arguments, true)));
         si
 
+        // The three members of the async method builder an async
+        // function's outer method calls. None is declared by any symbol
+        // in the compilation, so each is built from its known shape.
+        //
+        // The builder is a value type, and for a value-returning async
+        // function a constructed generic one, so the reference hangs off
+        // its instantiation while the signature is written in the
+        // builder's own terms — `Create` returns `Builder<!0>` rather
+        // than the constructed form. For a void-returning one the
+        // builder is not generic and the two coincide, which is what the
+        // caller passes when it has no open form to give.
+        resolve_async_builder_create(
+            builder_type: Semantic.Types.Type,
+            open_builder_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "Create",
+                    "{builder_type}::Create()",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .static_signature(
+                            open_builder_type, Collections.LIST[Semantic.Types.Type]())));
+        si
+
+        resolve_async_builder_get_task(
+            builder_type: Semantic.Types.Type,
+            open_task_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "get_Task",
+                    "{builder_type}::get_Task()",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .call_signature(
+                            open_task_type, Collections.LIST[Semantic.Types.Type](), true)));
+        si
+
+        // `Start` is generic in the state machine it drives, so the
+        // reference names the open method and a specification supplies
+        // the frame type.
+        resolve_async_builder_start(
+            builder_type: Semantic.Types.Type,
+            state_machine_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let reference =
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "Start",
+                    "{builder_type}::Start<>(!!0&)",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter).async_builder_start_signature());
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(state_machine_type);
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_method_specification(
+                    cast System.Reflection.Metadata.EntityHandle(reference),
+                    "{builder_type}::Start<{state_machine_type}>",
+                    arguments));
+        si
+
+        // The members one `await` reaches: the awaited task's
+        // `GetAwaiter`, the awaiter's `get_IsCompleted` and `GetResult`,
+        // and the builder's `AwaitUnsafeOnCompleted`.
+        //
+        // Each hangs off the constructed type while its signature is
+        // written in that type's own terms — an awaiter's `GetResult`
+        // returns `!0`, not the `T` this instantiation supplied.
+        resolve_await_get_awaiter(
+            awaited_type: Semantic.Types.Type,
+            open_awaiter_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(awaited_type),
+                    "GetAwaiter",
+                    "{awaited_type}::GetAwaiter()",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .call_signature(
+                            open_awaiter_type,
+                            Collections.LIST[Semantic.Types.Type](),
+                            true)));
+        si
+
+        resolve_awaiter_is_completed(
+            awaiter_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(awaiter_type),
+                    "get_IsCompleted",
+                    "{awaiter_type}::get_IsCompleted()",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .call_signature(
+                            IoC.CONTAINER.instance.innate_symbol_lookup.get_bool_type(),
+                            Collections.LIST[Semantic.Types.Type](),
+                            true)));
+        si
+
+        resolve_awaiter_get_result(
+            awaiter_type: Semantic.Types.Type,
+            has_result: bool
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let signatures = Emitter.SRM_SIGNATURE_ENCODER(emitter);
+
+            let signature =
+                if has_result then
+                    signatures.open_result_signature()
+                else
+                    signatures.call_signature(
+                        IoC.CONTAINER.instance.innate_symbol_lookup.get_void_type(),
+                        Collections.LIST[Semantic.Types.Type](),
+                        true)
+                fi;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(awaiter_type),
+                    "GetResult",
+                    "{awaiter_type}::GetResult/{has_result}",
+                    signature));
+        si
+
+        resolve_await_unsafe_on_completed(
+            builder_type: Semantic.Types.Type,
+            awaiter_type: Semantic.Types.Type,
+            state_machine_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let reference =
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "AwaitUnsafeOnCompleted",
+                    "{builder_type}::AwaitUnsafeOnCompleted<,>(!!0&, !!1&)",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .async_await_on_completed_signature());
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(awaiter_type);
+            arguments.add(state_machine_type);
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_method_specification(
+                    cast System.Reflection.Metadata.EntityHandle(reference),
+                    "{builder_type}::AwaitUnsafeOnCompleted<{awaiter_type}, {state_machine_type}>",
+                    arguments));
+        si
+
+        // The two members MoveNext's trailer completes the task
+        // through. `SetResult` takes the builder's own class-T for a
+        // value-returning async function and nothing for a void one, so
+        // the parameterless case is spelled separately rather than as a
+        // zero-length list of class-T.
+        resolve_async_builder_set_result(
+            builder_type: Semantic.Types.Type,
+            has_result: bool
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+            let signatures = Emitter.SRM_SIGNATURE_ENCODER(emitter);
+
+            // `generic_constructor_signature(1)` is instance-void of one
+            // parameter written as the owner's own `!0`, which is
+            // exactly this signature.
+            let signature =
+                if has_result then
+                    signatures.generic_constructor_signature(1)
+                else
+                    signatures.call_signature(
+                        IoC.CONTAINER.instance.innate_symbol_lookup.get_void_type(),
+                        Collections.LIST[Semantic.Types.Type](),
+                        true)
+                fi;
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "SetResult",
+                    "{builder_type}::SetResult/{has_result}",
+                    signature));
+        si
+
+        resolve_async_builder_set_exception(
+            builder_type: Semantic.Types.Type,
+            exception_type: Semantic.Types.Type
+        ) -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let arguments = Collections.LIST[Semantic.Types.Type]();
+
+            arguments.add(exception_type);
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(builder_type),
+                    "SetException",
+                    "{builder_type}::SetException(Exception)",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                        .call_signature(
+                            IoC.CONTAINER.instance.innate_symbol_lookup.get_void_type(),
+                            arguments,
+                            true)));
+        si
+
         // `System.Object`'s constructor, which every constructor that
         // does not chain to a declared superclass calls first. Named
         // here because no symbol in the compilation declares it.

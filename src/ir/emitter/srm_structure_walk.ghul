@@ -108,14 +108,14 @@ namespace IR.Emitter is
                     next_method = next_method + 1;
                 fi
 
-                if let frame: Semantic.Symbols.STATE_MACHINE_FRAME = type.declared then
-                    for member in FRAME_MEMBERS do
-                        _handles.set_frame_member(
-                            frame, member, MetadataTokens.method_definition_handle(next_method));
+                for member in _synthesised_frame_members(type) do
+                    _handles.set_frame_member(
+                        cast Semantic.Symbols.STATE_MACHINE_FRAME_BASE(type.declared!),
+                        member,
+                        MetadataTokens.method_definition_handle(next_method));
 
-                        next_method = next_method + 1;
-                    od
-                fi
+                    next_method = next_method + 1;
+                od
 
                 next_method = next_method + _boilerplate_count(type);
             od
@@ -168,6 +168,62 @@ namespace IR.Emitter is
                 FrameMember.TO_STRING
             ];
 
+
+        // The members a state machine's frame carries that no symbol
+        // declares, for whichever kind of state machine this type is.
+        // Empty for everything else.
+        //
+        // One list per kind, read by both passes, in one order — a
+        // member run written in a different order than it was numbered
+        // reparents members onto the wrong type and still loads.
+        _synthesised_frame_members(type: SRM_EMITTED_TYPE) -> Collections.List[FrameMember] static is
+            if isa Semantic.Symbols.STATE_MACHINE_FRAME(type.declared) then
+                return FRAME_MEMBERS;
+            fi
+
+            if isa Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME(type.declared) then
+                return ASYNC_FRAME_MEMBERS;
+            fi
+
+            return Collections.LIST[FrameMember]();
+        si
+
+        // An async frame satisfies `IAsyncStateMachine`, whose two
+        // members it has no symbol for. Its MoveNext returns void,
+        // unlike a generator's.
+        ASYNC_FRAME_MEMBERS: Collections.List[FrameMember] static =>
+            [
+                FrameMember.MOVE_NEXT,
+                FrameMember.SET_STATE_MACHINE
+            ];
+
+        _write_async_frame_members(type: SRM_EMITTED_TYPE) is
+            let frame = cast Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME?(type.declared);
+
+            if !frame? then
+                return;
+            fi
+
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let void = lookup.get_void_type();
+
+            for member in ASYNC_FRAME_MEMBERS do
+                let arguments = Collections.LIST[Semantic.Types.Type]();
+
+                if member == FrameMember.SET_STATE_MACHINE then
+                    arguments.add(lookup.get_async_state_machine_interface_type()!);
+                fi
+
+                _assembly.add_method_definition(
+                    SRM_FLAGS.frame_member_attributes(member),
+                    cast System.Reflection.MethodImplAttributes(0),   // IL, managed
+                    _assembly.get_or_add_string(_frame_member_name(member)),
+                    _assembly.get_or_add_blob(
+                        _signatures.call_signature(void, arguments, true)),
+                    _handles.frame_member_body(frame, member) ?? -1,
+                    MetadataTokens.parameter_handle(_assembly.next_parameter_row));
+            od
+        si
 
         // The rows for a frame's synthesised members, in the order
         // FRAME_MEMBERS gives and the numbering pass assumed. Each body
@@ -226,6 +282,8 @@ namespace IR.Emitter is
                 return "Dispose";
             elif member == FrameMember.RESET then
                 return "Reset";
+            elif member == FrameMember.SET_STATE_MACHINE then
+                return "SetStateMachine";
             fi
 
             return "ToString";
@@ -290,6 +348,7 @@ namespace IR.Emitter is
                 fi
 
                 _write_frame_members(type);
+                _write_async_frame_members(type);
 
                 let boilerplate = _write_boilerplate(type);
 
