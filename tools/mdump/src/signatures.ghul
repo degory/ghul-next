@@ -28,31 +28,41 @@ namespace MetadataDump is
 
         // ECMA-335 II.23.2: one, two or four bytes, selected by the top
         // bits of the first.
-        compressed() -> int is
-            let first = byte();
+        compressed() -> int => _compressed().value;
 
-            if (first & 128) == 0 then
-                return first;
-            fi
-
-            if (first & 64) == 0 then
-                return ((first & 63) << 8) | byte();
-            fi
-
-            return ((first & 31) << 24) | (byte() << 16) | (byte() << 8) | byte();
-        si
-
-        // Signed form: the compressed value rotated right by one, with
-        // the low bit carrying the sign.
+        // Signed form: the value rotated right by one, with the low bit
+        // carrying the sign — and sign-extended over the width of the
+        // encoding that was used, not over a fixed one. A negative
+        // number written in the two-byte form is offset by 1 << 13, not
+        // by the 1 << 6 the one-byte form takes, so the width has to
+        // come back from the decode rather than be assumed.
         compressed_signed() -> int is
-            let value = compressed();
+            let (value, bits) = _compressed();
+
             let magnitude = value >> 1;
 
             if (value & 1) == 0 then
                 return magnitude;
             fi
 
-            return magnitude - 64;
+            return magnitude - (1 << (bits - 1));
+        si
+
+        // The value and the number of bits it was encoded in.
+        _compressed() -> (value: int, bits: int) is
+            let first = byte();
+
+            if (first & 128) == 0 then
+                return (value = first, bits = 7);
+            fi
+
+            if (first & 64) == 0 then
+                return (value = ((first & 63) << 8) | byte(), bits = 14);
+            fi
+
+            return (
+                value = ((first & 31) << 24) | (byte() << 16) | (byte() << 8) | byte(),
+                bits = 29);
         si
     si
 
