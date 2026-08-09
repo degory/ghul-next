@@ -1488,49 +1488,56 @@ namespace Syntax.Process is
             fi
 
             // --- Outer user-facing method ---
-            println_comment("define {symbol.description}");
+            //
+            // The body is the same on both paths: forward this method's
+            // own arguments, construct the frame, return it.
+            if _context.srm_assembly_emitter? then
+                _emit_generator_outer_method_srm(symbol, frame, state_machine);
+            else
+                println_comment("define {symbol.description}");
 
-            let outer_buffer = StringBuilder();
-            symbol.gen_definition_header(outer_buffer);
-            println(outer_buffer);
+                let outer_buffer = StringBuilder();
+                symbol.gen_definition_header(outer_buffer);
+                println(outer_buffer);
 
-            println("{{");
-            _context.indent();
+                println("{{");
+                _context.indent();
 
-            gen_function_attributes(symbol);
+                gen_function_attributes(symbol);
 
-            symbol.gen_body_header(_context);
+                symbol.gen_body_header(_context);
 
-            _context.write_line(".maxstack 64");
+                _context.write_line(".maxstack 64");
 
-            // Instance generators pass `this` as the first ctor
-            // argument; the .ctor stores it into _outer_self so the
-            // body's `self`/instance-member access can read through
-            // the frame.
-            if frame.outer_self_field? then
-                _context.write_line("ldarg.0");
+                // Instance generators pass `this` as the first ctor
+                // argument; the .ctor stores it into _outer_self so the
+                // body's `self`/instance-member access can read through
+                // the frame.
+                if frame.outer_self_field? then
+                    _context.write_line("ldarg.0");
+                fi
+
+                // Load each user-declared parameter and pass it through
+                // to the state-machine .ctor. The frame's declare() ran
+                // above so the ctor's signature already matches.
+                for arg_name in symbol.argument_names do
+                    _context.write_line("ldarg '{arg_name}'");
+                od
+
+                let ctor_reference = _build_specialized_ctor_reference(
+                    frame,
+                    frame.constructor,
+                    state_machine.get_construction_type_arguments(),
+                    symbol.location,
+                    "while building ctor reference for generator outer method"
+                );
+
+                _context.write_line("newobj {ctor_reference}");
+                _context.write_line("ret");
+
+                _context.outdent();
+                println("}}");
             fi
-
-            // Load each user-declared parameter and pass it through
-            // to the state-machine .ctor. The frame's declare() ran
-            // above so the ctor's signature already matches.
-            for arg_name in symbol.argument_names do
-                _context.write_line("ldarg '{arg_name}'");
-            od
-
-            let ctor_reference = _build_specialized_ctor_reference(
-                frame,
-                frame.constructor,
-                state_machine.get_construction_type_arguments(),
-                symbol.location,
-                "while building ctor reference for generator outer method"
-            );
-
-            _context.write_line("newobj {ctor_reference}");
-            _context.write_line("ret");
-
-            _context.outdent();
-            println("}}");
 
             if owner_is_global then
                 gen_globals_class_close();
@@ -1640,6 +1647,64 @@ namespace Syntax.Process is
         // class-T's appear in the signature; for a non-generic frame,
         // just the default ctor's IL reference. Exceptions in lookup
         // are logged and a sentinel returned.
+        // A generator's outer method, encoded rather than written. Its
+        // whole body is: forward this method's own arguments, construct
+        // the frame, return it.
+        //
+        // The row is the function's own, so this deposits its offset the
+        // same way an ordinary method body does.
+        _emit_generator_outer_method_srm(
+            symbol: Semantic.Symbols.Function,
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME,
+            state_machine: Semantic.Symbols.STATE_MACHINE
+        ) is
+            let assembly_emitter = _context.srm_assembly_emitter!;
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            // An instance generator hands `this` to the frame's
+            // constructor, which stores it into _outer_self so the
+            // body's `self` access can read back through the frame.
+            let slot mut = if symbol.is_emitted_with_receiver then 1 else 0 fi;
+
+            if frame.outer_self_field? then
+                body.ldarg(0);
+            fi
+
+            for i in 0..symbol.argument_names.count do
+                body.ldarg(slot);
+
+                slot = slot + 1;
+            od
+
+            body.new_object(
+                _context.resolve_call_target(
+                    _specialized_frame_constructor(frame, state_machine, symbol.location)));
+
+            body.ret();
+
+            assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+        si
+
+        // The frame constructor as it must be named from outside: on the
+        // frame's own instantiation when the frame is generic, and on
+        // the frame itself otherwise.
+        _specialized_frame_constructor(
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME,
+            state_machine: Semantic.Symbols.STATE_MACHINE,
+            location: Source.LOCATION
+        ) -> Semantic.Symbols.Function is
+            if let specialized =
+                _specialized_frame_type(
+                    frame, state_machine.get_construction_type_arguments(), location)
+            then
+                if let function: Semantic.Symbols.Function = specialized.find_member("init") then
+                    return function;
+                fi
+            fi
+
+            return frame.constructor;
+        si
+
         _build_specialized_ctor_reference(
             frame: Semantic.Symbols.Classy,
             default_ctor: Semantic.Symbols.Method,
