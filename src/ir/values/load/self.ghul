@@ -80,11 +80,21 @@ namespace IR.Values.Load is
         si
 
         gen(context: IR.CONTEXT) is
-            context.write_line("ldarg.0");
-            context.write_line("ldfld {outer_self_field.get_il_reference()}");
+            _load(context);
         si
 
         gen_address(context: IR.CONTEXT) is
+            _load(context);
+        si
+
+        _load(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ldarg(0);
+                body.ldfld(context.resolve_field_target(outer_self_field));
+
+                return;
+            fi
+
             context.write_line("ldarg.0");
             context.write_line("ldfld {outer_self_field.get_il_reference()}");
         si

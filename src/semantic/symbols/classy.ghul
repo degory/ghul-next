@@ -445,6 +445,22 @@ namespace Semantic.Symbols is
             return GENERIC(location, self, actual_type_arguments);
         si
 
+        // The symbol standing for the type parameter at `index`, or null
+        // when there is none to be had.
+        //
+        // A type that writes its parameters declares them into its own
+        // scope, so the name it wrote finds them. A closure frame is the
+        // exception: its parameters are the enclosing function's,
+        // reached at a position the lowering installs rather than
+        // redeclared, so it answers with those symbols instead.
+        type_parameter_at(index: int) -> Symbol? is
+            if index < 0 \/ index >= argument_names.count then
+                return null;
+            fi
+
+            return find_direct(argument_names[index]);
+        si
+
         // The kind constraint of the type parameter at `index`. Imported
         // generics carry it in the `argument_constraint_kinds` list (the
         // type-parameter symbols are not declared in scope); ghūl-declared
@@ -455,7 +471,7 @@ namespace Semantic.Symbols is
             fi
 
             if index >= 0 /\ index < argument_names.count then
-                let argument = find_direct(argument_names[index]);
+                let argument = type_parameter_at(index);
 
                 if argument? then
                     return argument.constraint_kind;
@@ -477,7 +493,7 @@ namespace Semantic.Symbols is
             fi
 
             if index >= 0 /\ index < argument_names.count then
-                let argument = find_direct(argument_names[index]);
+                let argument = type_parameter_at(index);
 
                 if argument? then
                     return argument.has_constructor_constraint;
@@ -497,7 +513,7 @@ namespace Semantic.Symbols is
             fi
 
             if index >= 0 /\ index < argument_names.count then
-                let argument = find_direct(argument_names[index]);
+                let argument = type_parameter_at(index);
 
                 if argument? /\ argument.is_type_variable then
                     let ancestors = argument.ancestors;
@@ -1920,9 +1936,27 @@ namespace Semantic.Symbols is
             fi
         si
 
+        // The enclosing function's type-parameter symbols, in the order
+        // this frame's own parameters mirror them. A frame does not
+        // redeclare them: the closure installs an emitted position on
+        // each for as long as its body is being emitted, which is what
+        // makes them render at the frame's index rather than at their
+        // own.
+        _type_parameters: Collections.List[Symbol]?;
+
+        type_parameter_at(index: int) -> Symbol? is
+            if let self._type_parameters? /\ index >= 0 /\ index < _type_parameters.count then
+                return _type_parameters[index];
+            fi
+
+            return super.type_parameter_at(index);
+        si
+
         set_type_arguments(arguments: Collections.Iterable[Symbol]) is
-            // self.arguments = arguments |> map(a => a.type) |> collect();
-            self.argument_names = arguments |> map(a => a.name) |> collect();
+            let symbols = arguments |> collect_list();
+
+            _type_parameters = symbols;
+            self.argument_names = symbols |> map(a => a.name) |> collect();
         si
 
         gen_all(context: IR.CONTEXT, symbol_loader: SYMBOL_LOADER) is

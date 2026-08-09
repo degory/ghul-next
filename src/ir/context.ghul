@@ -638,17 +638,14 @@ namespace IR is
         // A generic type applied to its own type parameters, which is
         // what its members' receiver is from inside its own methods.
         //
-        // The parameters are declared into the type's own scope under
-        // the names it wrote, so they are looked up by name rather than
-        // read off the symbol: `Classy` keeps only their names.
         _own_instantiation(owner: Semantic.Symbols.Classy) -> Semantic.Types.Type is
             let arguments = Collections.LIST[Semantic.Types.Type]();
 
-            for name in owner.argument_names do
-                let parameter = owner.find_direct(name);
+            for index in 0..owner.argument_names.count do
+                let parameter = owner.type_parameter_at(index);
 
                 assert parameter? else
-                    "generic type '{owner.name}' has no type parameter named '{name}'";
+                    "generic type '{owner.name}' has no type parameter '{owner.argument_names[index]}'";
 
                 arguments.add(parameter.type!);
             od
