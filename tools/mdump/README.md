@@ -7,6 +7,24 @@ dotnet build tools/mdump/mdump.ghulproj
 dotnet tools/mdump/bin/Debug/net10.0/mdump.dll <assembly> [<assembly> ...]
 ```
 
+## What this is not for
+
+Checking whether the IL is *verifiable*. It mostly is not, and neither
+is the published compiler's: a path narrow re-reads the path and calls
+the narrowed member without a `castclass`, which ILVerify rejects and
+the runtime accepts. The published compiler passes the whole suite and
+self-hosts, so what it emits is known-good by the only standard that
+applies, and emitting something else to satisfy a verifier would be
+changing working output to meet a rule nothing enforces.
+
+That makes the published compiler the oracle. When this compiler's
+output is wrong, the way to see it is to build the same source with
+both and compare — which is how a `T ref` parameter was found going out
+as `read(valuetype REFERENCE<int32>)` where the published compiler
+emits `read(int32&)`. Reading one assembly on its own, as below, is for
+answering a specific question about it, not for deciding whether it is
+correct.
+
 ## What it is for
 
 `ilspycmd -il` already renders IL, and renders it the way a reader
@@ -52,18 +70,16 @@ if it found any. It checks one thing: a method row that carries no body
 and has no business carrying none — not abstract, not P/Invoke, not
 runtime-implemented, not an interface declaration.
 
-That sounds too small to be worth a mode, and is not. ILVerify decodes
-every body and resolves every token, which is far more thorough about
-the IL a method *contains* than reading tables would be — so run it
-first, and reach for this for what it cannot see. ILVerify says nothing
-about a method containing no IL at all: an assembly whose every method
-row points at nothing verifies clean, because there is nothing in any
-of them to disagree with.
+That sounds too small to be worth a mode, and is not. A method row
+pointing at nothing is invisible to everything else: the assembly loads,
+and a disassembler renders an empty method body without comment. It is
+also exactly what a back end that emits rows before it can emit bodies
+produces, so the whole of one can be missing while every other check
+reports nothing wrong.
 
-`tasks/verify-emitted.sh` runs both over every assembly the integration
-suite emitted. A passing test deletes what it built, so the suite has
-to be run with `GHUL_TEST_KEEP_ARTIFACTS=1` first or the sweep sees
-only the failures.
+To read every assembly the suite emitted rather than one, run it with
+`GHUL_TEST_KEEP_ARTIFACTS=1` first — a passing test deletes what it
+built, so otherwise only the failures are left behind.
 
 ## Not in CI
 
