@@ -42,9 +42,12 @@ namespace IR.Emitter is
     //
     // A row number is only a prediction until `write_rows` makes it
     // true, and nothing checks: a member run written in a different
-    // order than it was numbered reparents members onto the wrong type
-    // and still loads. Both passes therefore drive off SRM_MEMBER_ORDER
-    // rather than iterating anything themselves.
+    // order — or at a different length — than it was numbered reparents
+    // members onto the wrong type and still loads. `number` therefore
+    // records the sequence it used and `write_rows` replays it, rather
+    // than each deriving one from a symbol table that changes between
+    // them: compiling a state machine's body declares the frame fields
+    // that body needs, long after numbering has run.
     class SRM_STRUCTURE_WALK(_assembly: SRM_ASSEMBLY_EMITTER) is
         _handles: SRM_HANDLES => _assembly.handles;
         _signatures: SRM_SIGNATURE_ENCODER;
@@ -63,13 +66,18 @@ namespace IR.Emitter is
             let next_field mut = _assembly.next_field_row;
 
             for type in SRM_MEMBER_ORDER.types(root) do
+                let fields = SRM_MEMBER_ORDER.fields(type);
+                let methods = SRM_MEMBER_ORDER.methods(type);
+
+                _handles.emission_plan.add(type, fields, methods);
+
                 if let declared = type.declared then
                     _handles.set_type_definition(declared, MetadataTokens.type_definition_handle(next_type));
                 fi
 
                 next_type = next_type + 1;
 
-                for `field in SRM_MEMBER_ORDER.fields(type) do
+                for `field in fields do
                     _handles.set_field_definition(`field, MetadataTokens.field_definition_handle(next_field));
 
                     next_field = next_field + 1;
@@ -87,7 +95,7 @@ namespace IR.Emitter is
                 // they are counted here rather than by the member order.
                 next_field = next_field + _enum_field_count(type);
 
-                for method in SRM_MEMBER_ORDER.methods(type) do
+                for method in methods do
                     _handles.set_method_definition(method, MetadataTokens.method_definition_handle(next_method));
 
                     next_method = next_method + 1;
@@ -256,12 +264,14 @@ namespace IR.Emitter is
             return false;
         si
 
-        write_rows(root: Scope) is
-            for type in SRM_MEMBER_ORDER.types(root) do
+        write_rows() is
+            for planned in _handles.emission_plan.types do
+                let type = planned.type;
+
                 let first_field = MetadataTokens.field_definition_handle(_assembly.next_field_row);
                 let first_method = MetadataTokens.method_definition_handle(_assembly.next_method_row);
 
-                for `field in SRM_MEMBER_ORDER.fields(type) do
+                for `field in planned.fields do
                     _write_field(`field);
                 od
 
@@ -271,7 +281,7 @@ namespace IR.Emitter is
 
                 _write_enum_fields(type);
 
-                for method in SRM_MEMBER_ORDER.methods(type) do
+                for method in planned.methods do
                     _write_method(method);
                 od
 

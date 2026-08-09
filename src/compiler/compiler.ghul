@@ -136,9 +136,11 @@ namespace Compiler is
 
                     // Write the rows the numbering pass promised, now
                     // that every body has been encoded and deposited.
+                    // Driven by the sequence that pass recorded, not by
+                    // the symbol table, which has moved on since.
                     if srm_emitter? /\ !container.logger.any_errors then
                         IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
-                            .write_rows(container.symbol_table.global_scope);
+                            .write_rows();
                     fi
 
                     // An executable build with no `.entrypoint` emitted would

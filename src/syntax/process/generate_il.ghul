@@ -5571,32 +5571,16 @@ namespace Syntax.Process is
 
             variable.walk(self);
 
-            // Generator / async FOR: the iterator value has to
-            // survive every yield / await in the body. Allocate a
-            // frame field and route both load and store through it;
-            // the regular CLR-local TEMP path would reset on every
+            // Generator / async FOR: the iterator value has to survive
+            // every yield / await in the body, so it is read and written
+            // through the frame field compile-expressions allocated for
+            // it. The regular CLR-local TEMP path would reset on every
             // MoveNext re-entry.
-            let sm_for_function = Semantic.Symbols.state_machine_for(current_function);
-            let async_sm_for_function: Semantic.Symbols.ASYNC_STATE_MACHINE? mut = null;
-            if !sm_for_function? then
-                async_sm_for_function = Semantic.Symbols.async_state_machine_for(current_function);
-            fi
+            let iterator_field = `for.iterator_field;
+            let iterator_frame = _current_state_machine_frame();
 
-            let iterator_field: Semantic.Symbols.Field? mut = null;
-            let iterator_frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE? mut = null;
-
-            if sm_for_function? /\ sm_for_function.frame? /\ iterator.type? then
-                let frame = sm_for_function.frame!;
-                iterator_field = frame.declare_anonymous_field("for_iterator", iterator.type!);
-                iterator_frame = frame;
-            elif async_sm_for_function? /\ async_sm_for_function.frame? /\ iterator.type? then
-                let frame = async_sm_for_function.frame!;
-                iterator_field = frame.declare_anonymous_field("for_iterator", iterator.type!);
-                iterator_frame = frame;
-            fi
-
-            if iterator_field? then
-                add(_build_frame_field_store(iterator_frame!, iterator_field, iterator));
+            if iterator_field? /\ iterator_frame? then
+                add(_build_frame_field_store(iterator_frame, iterator_field, iterator));
             fi
 
             let temp: TEMP? mut = null;
