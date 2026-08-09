@@ -340,12 +340,13 @@ namespace IR.Emitter is
             return result;
         si
 
-        // A function literal that captures nothing is emitted as a
-        // static method on the type that encloses it, but it is
-        // declared into the function it was written in - `owner` points
-        // at the emitted home without the symbol store there holding
-        // it - so the walk over that home's own symbols does not reach
-        // one. Same shape as a closure frame, and as the cache field a
+        // A function literal with no frame is emitted onto the type that
+        // encloses it - as a static method when it captures nothing, as
+        // an instance one when all it captures is `self` - but it is
+        // declared into the function it was written in. `owner` points
+        // at the emitted home without the symbol store there holding it,
+        // so the walk over that home's own symbols does not reach one.
+        // Same shape as a closure frame, and as the cache field a
         // memoized one stores itself in.
         _collect_anonymous_functions(
             type: SRM_EMITTED_TYPE,
@@ -356,7 +357,7 @@ namespace IR.Emitter is
             _collect_closures(type.owning_namespace ?? type.scope, closures, Collections.SET[Scope]());
 
             for closure in closures do
-                if closure.is_anon_func /\ _is_owned_by(closure, type) then
+                if !closure.frame? /\ _is_owned_by(closure, type) then
                     into.add(closure);
                 fi
             od

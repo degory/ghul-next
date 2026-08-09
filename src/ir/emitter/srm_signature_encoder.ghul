@@ -18,12 +18,57 @@ namespace IR.Emitter is
     // a methodref whose signature disagrees with the target's own
     // declaration resolves to nothing at run time.
     class SRM_SIGNATURE_ENCODER(_assembly: SRM_ASSEMBLY_EMITTER) is
+        // The closure to install a mapping from while a member of its
+        // frame is encoded, or null for a member that needs none.
+        //
+        // A member's signature is written in its owner's terms, and for
+        // a closure frame that does not happen on its own: the frame's
+        // type parameters are the enclosing function's symbols, which
+        // carry their own method-level position until the closure
+        // installs the frame's class-level one. A body is emitted inside
+        // that window, so its local signature comes out right unaided.
+        // These blobs are not: the structure walk builds them long after
+        // the window has closed, and a call site builds them from
+        // wherever it happens to be. Without reopening it, a field of
+        // `T` encodes as `!!0` on a type whose one parameter is `!0`.
+        //
+        // The reference the member hangs off is deliberately outside
+        // this: it names the frame at the arguments the *caller* passes,
+        // which are the caller's own parameters and are spelled where
+        // the caller stands.
+        _frame_mapping(member: Semantic.Symbols.Symbol) -> Semantic.Symbols.Closure? static is
+            // The closure's own method is emitted as a member of its
+            // frame, but it is declared into the function the literal
+            // was written in, so its owner does not name the frame.
+            if let closure: Semantic.Symbols.Closure = member /\ closure.frame? then
+                return closure;
+            fi
+
+            if let frame: Semantic.Symbols.FRAME = member.owner then
+                return frame.closure;
+            fi
+
+            return null;
+        si
+
         field_signature(`field: Semantic.Symbols.Field) -> ubyte[] is
-            let builder = BlobBuilder(16);
+            let closure = _frame_mapping(`field);
 
-            encode_type(BlobEncoder(builder).field_signature(), `field.type!);
+            if closure? then
+                closure.map_type_arguments();
+            fi
 
-            return builder.to_array();
+            try
+                let builder = BlobBuilder(16);
+
+                encode_type(BlobEncoder(builder).field_signature(), `field.type!);
+
+                return builder.to_array();
+            finally
+                if closure? then
+                    closure.unmap_type_arguments();
+                fi
+            yrt
         si
 
         // The same, for a field the back end synthesises and so has no
@@ -214,6 +259,22 @@ namespace IR.Emitter is
         si
 
         method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
+            let closure = _frame_mapping(function);
+
+            if closure? then
+                closure.map_type_arguments();
+            fi
+
+            try
+                return _method_signature(function);
+            finally
+                if closure? then
+                    closure.unmap_type_arguments();
+                fi
+            yrt
+        si
+
+        _method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
             let builder = BlobBuilder(32);
 
             let arguments = function.arguments;
