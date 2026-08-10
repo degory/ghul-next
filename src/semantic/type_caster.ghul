@@ -263,22 +263,23 @@ namespace Semantic is
 
             let done = IR.LABEL();
 
-            block.add(".try {{");
+            let extent = IR.Values.TRY_EXTENT();
+
+            block.add(IR.Values.TRY_START(extent));
             result.store(_value_boxer.box_if_needed(call, target_type));
             brancher.leave(done);
-            block.add("}}");
+            block.add(IR.Values.TRY_END(extent));
 
-            block.add("catch class ['System.Runtime']System.InvalidCastException {{");
-            block.add("pop");
-            result.store(IR.Values.DEFAULT(target_type));
-            brancher.leave(done);
-            block.add("}}");
+            for name in ["InvalidCastException", "OverflowException"] do
+                let region =
+                    IR.Values.PROTECTED_REGION(extent, "System.Runtime", "System", name);
 
-            block.add("catch class ['System.Runtime']System.OverflowException {{");
-            block.add("pop");
-            result.store(IR.Values.DEFAULT(target_type));
-            brancher.leave(done);
-            block.add("}}");
+                block.add(IR.Values.HANDLER_START(region));
+                block.add(IR.Values.INSTRUCTION("pop"));
+                result.store(IR.Values.DEFAULT(target_type));
+                brancher.leave(done);
+                block.add(IR.Values.HANDLER_END(region));
+            od
 
             brancher.label(done);
             block.add(result.load());
