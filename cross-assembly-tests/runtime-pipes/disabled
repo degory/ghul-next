@@ -1,0 +1,2 @@
+A fused pipe chain still emits its loop as text, which the binary back end
+rejects. Re-enable when IR.Values.FUSED_CONSUMER is ported.

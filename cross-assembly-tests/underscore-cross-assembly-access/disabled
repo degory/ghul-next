@@ -1,0 +1,2 @@
+Member visibility flags are not emitted, so an underscore member escapes its
+assembly and the expected access errors are not reported.

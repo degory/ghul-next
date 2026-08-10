@@ -1,0 +1,3 @@
+The memberref for an inherited member of a constructed generic base names a
+substituted type where the signature needs an indexed one, so the runtime
+cannot find the method.
