@@ -377,9 +377,73 @@ namespace IR.Emitter is
                 for bound in boilerplate do
                     _assembly.add_method_implementation(handle, bound.body, bound.declaration);
                 od
+
+                _write_marker_attributes(cast EntityHandle(handle), type);
             od
 
             _write_type_parameters();
+        si
+
+        // The attributes that carry to another assembly what the source
+        // said but the metadata cannot otherwise express: that a type is
+        // a union, a variant, the default variant, closed to extension,
+        // or a namespace's globals carrier.
+        //
+        // Without them an importing compiler reads a union as an
+        // ordinary class and its variants as unrelated types that happen
+        // to share a name prefix — which is why a consumer sees the
+        // union's own name as a namespace rather than as a type.
+        _write_marker_attributes(handle: EntityHandle, type: SRM_EMITTED_TYPE) is
+            let declared = type.declared;
+
+            if !declared? then
+                // A globals carrier stands for a namespace rather than
+                // for a declared type, and is marked so that an importer
+                // reads the members inside it as globals rather than as
+                // static members of a class.
+                _mark(handle, Semantic.DotNet.GLOBALS_CARRIER.attribute_name);
+
+                return;
+            fi
+
+            if isa Semantic.Symbols.UNION(declared) then
+                _mark(handle, "UNION_ATTRIBUTE");
+            fi
+
+            if let variant: Semantic.Symbols.VARIANT = declared then
+                _mark(handle, "VARIANT_ATTRIBUTE");
+
+                if let owner: Semantic.Symbols.UNION = variant.owner then
+                    if owner.default_variant == variant then
+                        _mark(handle, "DEFAULT_VARIANT_ATTRIBUTE");
+                    fi
+                fi
+            fi
+
+            if let `class: Semantic.Symbols.CLASS = declared then
+                if !`class.is_open then
+                    _mark(handle, "CLOSED_ATTRIBUTE");
+                fi
+            fi
+        si
+
+        // A marker takes no arguments, so they all share one value blob
+        // and differ only in which constructor they name.
+        _mark(parent: EntityHandle, attribute_name: string) is
+            let attribute_type =
+                _assembly.add_type_reference_by_name(
+                    "ghul-runtime", "Ghul.Internal", attribute_name);
+
+            let constructor =
+                _assembly.add_constructor_reference(
+                    cast EntityHandle(attribute_type),
+                    "Ghul.Internal.{attribute_name}::.ctor()",
+                    Collections.LIST[Semantic.Types.Type]());
+
+            _assembly.add_custom_attribute(
+                parent,
+                cast EntityHandle(constructor),
+                SRM_ASSEMBLY_EMITTER.NO_ARGUMENT_ATTRIBUTE_VALUE);
         si
 
         _write_type_parameters() is
@@ -616,7 +680,16 @@ namespace IR.Emitter is
                 // union's variant extends the union constructed over
                 // the variant's own parameters, and the open type it
                 // was declared from is not a type anything can extend.
-                if isa Classy(ancestor.symbol) then
+                //
+                // A constructed ancestor's symbol is a `Symbols.GENERIC`
+                // wrapping the definition rather than being one, so a
+                // test for `Classy` alone answers false for exactly the
+                // ancestors that need constructing — and the walk falls
+                // through to Object, which loads and is wrong.
+                if
+                    isa Classy(ancestor.symbol) \/
+                    isa Semantic.Symbols.GENERIC(ancestor.symbol)
+                then
                     return _type_token(ancestor);
                 fi
             od

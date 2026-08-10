@@ -484,7 +484,21 @@ namespace Semantic.Symbols is
                 return null;
             fi
 
-            return find_direct(argument_names[index]);
+            if let declared = find_direct(argument_names[index]) then
+                return declared;
+            fi
+
+            // An imported generic carries its parameters positionally
+            // and does not declare them into its own scope, so there is
+            // no name to find and the position is the whole answer. A
+            // type declared in this compilation that cannot find one has
+            // something wrong with it, and says so rather than being
+            // given a parameter it never declared.
+            if is_reflected then
+                return CLASSY_GENERIC_ARGUMENT(location, self, argument_names[index], index);
+            fi
+
+            return null;
         si
 
         // The kind constraint of the type parameter at `index`. Imported
