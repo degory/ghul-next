@@ -407,37 +407,51 @@ namespace IR.Emitter is
             fi
 
             if isa Semantic.Symbols.UNION(declared) then
-                _mark(handle, "UNION_ATTRIBUTE");
+                _mark(handle, "Ghul.Internal.UNION_ATTRIBUTE");
             fi
 
             if let variant: Semantic.Symbols.VARIANT = declared then
-                _mark(handle, "VARIANT_ATTRIBUTE");
+                _mark(handle, "Ghul.Internal.VARIANT_ATTRIBUTE");
 
                 if let owner: Semantic.Symbols.UNION = variant.owner then
                     if owner.default_variant == variant then
-                        _mark(handle, "DEFAULT_VARIANT_ATTRIBUTE");
+                        _mark(handle, "Ghul.Internal.DEFAULT_VARIANT_ATTRIBUTE");
                     fi
                 fi
             fi
 
             if let `class: Semantic.Symbols.CLASS = declared then
                 if !`class.is_open then
-                    _mark(handle, "CLOSED_ATTRIBUTE");
+                    _mark(handle, "Ghul.Internal.CLOSED_ATTRIBUTE");
                 fi
             fi
         si
 
         // A marker takes no arguments, so they all share one value blob
         // and differ only in which constructor they name.
-        _mark(parent: EntityHandle, attribute_name: string) is
+        //
+        // The name is qualified, and split here rather than written as a
+        // namespace and a simple name at each call site: one of these is
+        // already a qualified constant, and a reference built from the
+        // two halves out of step names a type that does not exist while
+        // still emitting cleanly.
+        _mark(parent: EntityHandle, qualified_name: string) is
+            let dot = qualified_name.last_index_of('.');
+
+            let namespace_name =
+                if dot >= 0 then qualified_name.substring(0, dot) else "" fi;
+
+            let simple_name =
+                if dot >= 0 then qualified_name.substring(dot + 1) else qualified_name fi;
+
             let attribute_type =
                 _assembly.add_type_reference_by_name(
-                    "ghul-runtime", "Ghul.Internal", attribute_name);
+                    "ghul-runtime", namespace_name, simple_name);
 
             let constructor =
                 _assembly.add_constructor_reference(
                     cast EntityHandle(attribute_type),
-                    "Ghul.Internal.{attribute_name}::.ctor()",
+                    "{qualified_name}::.ctor()",
                     Collections.LIST[Semantic.Types.Type]());
 
             _assembly.add_custom_attribute(
