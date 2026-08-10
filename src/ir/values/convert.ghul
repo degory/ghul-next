@@ -21,6 +21,20 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             gen(value, context);
 
+            if let body = context.current_srm_body_emitter then
+                // `instruction` is a `conv.*` opcode for a scalar
+                // conversion and a whole call line for a decimal one,
+                // which is why this dispatches rather than mapping
+                // unconditionally: the call form needs a call value,
+                // not an opcode, and is left to fail loudly until it
+                // has one.
+                if instruction.starts_with("conv.") then
+                    body.op(INSTRUCTION.op_code_for(instruction));
+
+                    return;
+                fi
+            fi
+
             context.write_line(instruction, "convert to {type}");
         si
 
