@@ -415,11 +415,13 @@ namespace Driver is
 
                 let module_name = Path.get_file_name_without_extension(output_file_name_generator.result) ?? "module";
 
-                container.ir_context.srm_assembly_emitter = IR.Emitter.SRM_ASSEMBLY_EMITTER(
+                let emitter = IR.Emitter.SRM_ASSEMBLY_EMITTER(
                     "{module_name}.{if flags.want_library then "dll" else "exe" fi}",
                     module_name,
                     module_version,
                     flags.want_library);
+
+                container.ir_context.srm_assembly_emitter = emitter;
             fi
         si
 

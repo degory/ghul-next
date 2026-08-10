@@ -121,6 +121,13 @@ namespace Compiler is
                     if srm_emitter? then
                         container.referenced_assemblies.gen(srm_emitter);
 
+                        // Not at the point the emitter is constructed:
+                        // the constructor signature these reference is
+                        // built from the string type, which the symbol
+                        // table does not hold until the reflected
+                        // assemblies have been read.
+                        container.assembly_info.gen(srm_emitter);
+
                         // Assign every definition its metadata row before
                         // any body is encoded, so a body can name a target
                         // whose row is not written yet.
