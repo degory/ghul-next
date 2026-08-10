@@ -1,2 +1,0 @@
-GenericParam variance flags are not emitted, so a covariant type parameter
-reads as invariant when imported.
