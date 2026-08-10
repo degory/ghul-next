@@ -424,9 +424,19 @@ namespace IR.Emitter is
         // objects, so comparing owners directly answers false for a
         // member that does belong here. Both sides are resolved to the
         // namespace before comparing.
+        // An `impl` or `partial` block's scope stands for the type it
+        // injects into in the same way, so it is resolved here too: a
+        // closure written in an injected member is emitted onto the
+        // target, not onto the block.
         _is_owned_by(member: Symbol, type: SRM_EMITTED_TYPE) -> bool static =>
-            (_as_namespace(member.owner) ?? member.owner) ==
-            (_as_namespace(type.scope) ?? type.scope);
+            _emitted_home(member.owner) == _emitted_home(type.scope);
+
+        _emitted_home(scope: Scope?) -> Scope? static =>
+            if let injection: Semantic.INJECTION_SCOPE = scope then
+                injection.target;
+            else
+                _as_namespace(scope) ?? scope;
+            fi;
 
         _as_namespace(scope: Scope?) -> Scope? static =>
             if let declared: NAMESPACE = scope then
