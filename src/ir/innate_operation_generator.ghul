@@ -247,7 +247,6 @@ namespace IR is
         gen_arithmetic_decimal(value: INNATE, block: BLOCK) is
             gen_arguments(value, block);
 
-            let decimal_il = "valuetype ['System.Runtime']'System'.'Decimal'";
             let op = value.op_name;
 
             let method_name: string mut;
