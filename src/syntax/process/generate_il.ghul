@@ -3455,7 +3455,7 @@ namespace Syntax.Process is
                 for name in left.names! do
                     let leaf = closure.find_direct(name.name);
 
-                    if leaf? then
+                    if leaf? /\ !_declare_local(leaf) then
                         leaf.gen_definition_header(buffer);
                     fi
                 od
@@ -3956,6 +3956,28 @@ namespace Syntax.Process is
             yrt
         si
 
+        // Whether a local declared right now would be declared into a
+        // metadata body rather than rendered as a directive.
+        _is_declaring_binary_local: bool =>
+            _context.srm_assembly_emitter? /\ _block_context.is_in_block;
+
+        // A local's declaration is a `.locals init` directive to the
+        // text back end and a slot in the body's signature to the
+        // binary one, so the same symbol reaches them by different
+        // routes. Answers whether the binary route took it; a caller
+        // that gets false renders the directive itself.
+        _declare_local(symbol: Semantic.Symbols.Symbol?) -> bool is
+            if !_is_declaring_binary_local then
+                return false;
+            fi
+
+            if let local: Semantic.Symbols.LOCAL_VARIABLE = symbol /\ local.type? then
+                current_block.add(Values.DECLARE_LOCAL(local.il_name, local.storage_type!));
+            fi
+
+            return true;
+        si
+
         pre(variable: Variables.VARIABLE) -> bool is
             super.pre(variable);
 
@@ -3990,13 +4012,9 @@ namespace Syntax.Process is
             // binary path: metadata has no `.locals init` directive,
             // and the slot it allocates has to be in place before any
             // load of the same name is encoded.
-            if _context.srm_assembly_emitter? /\ _block_context.is_in_block then
+            if _is_declaring_binary_local then
                 for name in variable.names do
-                    let local = cast Semantic.Symbols.LOCAL_VARIABLE?(find(name));
-
-                    if local? /\ local.type? then
-                        current_block.add(Values.DECLARE_LOCAL(local.il_name, local.storage_type!));
-                    fi
+                    _declare_local(find(name));
                 od
 
                 return false;
@@ -4184,7 +4202,7 @@ namespace Syntax.Process is
                 for name in pattern.names! do
                     let symbol = find(name);
 
-                    if !symbol? then
+                    if !symbol? \/ _declare_local(symbol) then
                         continue;
                     fi
 
@@ -4949,19 +4967,27 @@ namespace Syntax.Process is
             // state machine.
             let dispatch_holder: ASYNC_DISPATCH_HOLDER? mut = null;
 
+            // The disposal region's own extent. A disposed local is
+            // declared outside it, so that `finally` can still reach
+            // the local after an exception has left the block.
+            let dispose_extent = Values.TRY_EXTENT();
+            let dispose_region = Values.PROTECTED_REGION(dispose_extent, null);
+
             if list.want_dispose then
                 (outer_try, return_needed, return_value) = get_exception_handler_temps();
 
                 for v in list.variables_to_dispose do
-                    let buffer = System.Text.StringBuilder();
-                    v.gen_definition_header(buffer);
+                    if !_declare_local(v) then
+                        let buffer = System.Text.StringBuilder();
+                        v.gen_definition_header(buffer);
 
-                    add(buffer.to_string());
+                        add(buffer.to_string());
+                    fi
                 od
 
                 label = _loops.enter_try(return_needed, return_value);
 
-                add(".try {{ // RAII ");
+                add(Values.TRY_START(dispose_extent));
 
                 dispatch_holder = _maybe_push_dispatch_holder();
             fi
@@ -4992,8 +5018,8 @@ namespace Syntax.Process is
 
                 brancher.leave(try_label.start);
 
-                add("}}");
-                add("finally {{");
+                add(Values.TRY_END(dispose_extent));
+                add(Values.HANDLER_START(dispose_region));
 
                 let skip_dispose_label = _open_finally_state_guard();
 
@@ -5028,8 +5054,8 @@ namespace Syntax.Process is
 
                 brancher.label(try_label.middle);
 
-                add("endfinally");
-                add("}}");
+                add(Values.INSTRUCTION("endfinally"));
+                add(Values.HANDLER_END(dispose_region));
 
                 _loops.leave_loop();
 
