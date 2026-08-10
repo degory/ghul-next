@@ -601,15 +601,56 @@ namespace IR.Emitter is
                     "a type defined in the assembly being built");
             fi
 
-            let clr_type_name = unquote(symbol.il_name_override ?? symbol.qualified_name);
-            let dot = clr_type_name.last_index_of('.');
-
-            let namespace_path = if dot >= 0 then clr_type_name.substring(0, dot) else "" fi;
-            let simple_name = if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi;
-
             _assembly.add_assembly_reference(assembly_name, "8:0:0:0");
 
-            return _assembly.add_type_reference(symbol, assembly_name, namespace_path, simple_name);
+            return reference_for_clr_name(
+                symbol,
+                assembly_name,
+                unquote(symbol.il_name_override ?? symbol.qualified_name));
+        si
+
+        // One CLR type name to one reference row, for both places that
+        // need it: a type named in a signature, and the owner a member
+        // reference hangs off. Each used to split the name itself, and
+        // only one of the two would ever have learned about nesting.
+        //
+        // A nested type is written `Outer/Inner`, and each step is a
+        // reference of its own scoped to the one before it, with only
+        // the outermost carrying a namespace. Flattened into a single
+        // row the name resolves to nothing, and the failure surfaces at
+        // load rather than at emission.
+        reference_for_clr_name(
+            symbol: Semantic.Symbols.Symbol,
+            assembly_name: string,
+            clr_type_name: string
+        ) -> System.Reflection.Metadata.TypeReferenceHandle is
+            let nested = clr_type_name.index_of('/');
+
+            if nested >= 0 then
+                let outer_name = clr_type_name.substring(0, nested);
+                let outer_dot = outer_name.last_index_of('.');
+
+                let enclosing mut =
+                    _assembly.add_type_reference_by_name(
+                        assembly_name,
+                        if outer_dot >= 0 then outer_name.substring(0, outer_dot) else "" fi,
+                        if outer_dot >= 0 then outer_name.substring(outer_dot + 1) else outer_name fi);
+
+                for step in clr_type_name.substring(nested + 1).split(['/']) do
+                    enclosing =
+                        _assembly.add_nested_type_reference(assembly_name, enclosing, step);
+                od
+
+                return enclosing;
+            fi
+
+            let dot = clr_type_name.last_index_of('.');
+
+            return _assembly.add_type_reference(
+                symbol,
+                assembly_name,
+                if dot >= 0 then clr_type_name.substring(0, dot) else "" fi,
+                if dot >= 0 then clr_type_name.substring(dot + 1) else clr_type_name fi);
         si
     si
 si

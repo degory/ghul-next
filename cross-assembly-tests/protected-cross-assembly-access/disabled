@@ -1,2 +1,0 @@
-A nested type is named by the wrong token, so the runtime cannot find a
-method returning one.
