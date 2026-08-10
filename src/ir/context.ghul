@@ -719,6 +719,73 @@ namespace IR is
                     arguments));
         si
 
+        // `System.Type.GetTypeFromHandle`, which turns the handle
+        // `ldtoken` pushes into the `System.Type` a `typeof` yields.
+        // Neither the method nor either of the types it mentions is
+        // declared by any symbol in the compilation.
+        resolve_get_type_from_handle() -> System.Reflection.Metadata.EntityHandle is
+            let emitter = srm_assembly_emitter!;
+
+            let system_type =
+                emitter.add_type_reference_by_name("System.Runtime", "System", "Type");
+
+            let handle_type =
+                emitter.add_type_reference_by_name(
+                    "System.Runtime", "System", "RuntimeTypeHandle");
+
+            let builder = System.Reflection.Metadata.BlobBuilder(16);
+
+            let return_type: System.Reflection.Metadata.Ecma335.ReturnTypeEncoder mut;
+            let parameters: System.Reflection.Metadata.Ecma335.ParametersEncoder mut;
+
+            System.Reflection.Metadata.Ecma335.BlobEncoder(builder)
+                .method_signature(
+                    System.Reflection.Metadata.SignatureCallingConvention.DEFAULT, 0, false)
+                .parameters(1, return_type ref, parameters ref);
+
+            return_type.`type(false).`type(
+                cast System.Reflection.Metadata.EntityHandle(system_type), false);
+
+            parameters.add_parameter().`type(false).`type(
+                cast System.Reflection.Metadata.EntityHandle(handle_type), true);
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    cast System.Reflection.Metadata.EntityHandle(system_type),
+                    "GetTypeFromHandle",
+                    "System.Type::GetTypeFromHandle(RuntimeTypeHandle)",
+                    builder.to_array()));
+        si
+
+        // A no-argument attribute on something this assembly defines.
+        //
+        // The value blob of an attribute applied with no arguments is
+        // the same four bytes whatever the attribute is, so all that
+        // varies is which constructor the row names.
+        attach_no_argument_attribute(
+            parent: System.Reflection.Metadata.EntityHandle,
+            assembly_name: string,
+            namespace_name: string,
+            simple_name: string
+        ) is
+            let emitter = srm_assembly_emitter!;
+
+            let attribute_type =
+                emitter.add_type_reference_by_name(
+                    assembly_name, namespace_name, simple_name);
+
+            let constructor =
+                emitter.add_constructor_reference(
+                    cast System.Reflection.Metadata.EntityHandle(attribute_type),
+                    "{namespace_name}.{simple_name}::.ctor()",
+                    Collections.LIST[Semantic.Types.Type]());
+
+            emitter.add_custom_attribute(
+                parent,
+                cast System.Reflection.Metadata.EntityHandle(constructor),
+                Emitter.SRM_ASSEMBLY_EMITTER.NO_ARGUMENT_ATTRIBUTE_VALUE);
+        si
+
         // The two members MoveNext's trailer completes the task
         // through. `SetResult` takes the builder's own class-T for a
         // value-returning async function and nothing for a void one, so
