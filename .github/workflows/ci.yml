@@ -516,29 +516,19 @@ jobs:
       run: dotnet test analysis-tests -p:SkipCompilerProjectRef=true
 
   # Real .ghulproj builds against a separate assembly, so they need the
-  # emission surface too. Reported but not gating, same as codegen_tests.
+  # emission surface too.
   cross_assembly_tests:
     needs: [version, build]
-    # Disabled until the binary back end can build a working compiler.
-    # A job that always fails costs runner minutes and makes every other
-    # result read as suspect. Delete the 'if: false' to re-enable.
+    # The first of the disabled jobs to come back. The tests the binary
+    # back end cannot yet pass carry a 'disabled' file naming what each
+    # is waiting for, so this job gates the rest rather than always
+    # failing - see cross-assembly-tests/README.md.
     #
-    # codegen_tests and cross_assembly_tests need only the back end to
-    # emit correctly, so they recover first. runtime_tests and
-    # examples_tests additionally need their consumer repositories to
-    # build against the result, so they recover last.
-    #
-    # analysis_tests is the exception and does not depend on the back
-    # end at all: it drives --analyse, which emits nothing, and fails
-    # only because analysis-tests.ghulproj rebuilds the protocol library
-    # from source. Referencing the published package instead would let
-    # it pass now.
-    #
-    # Self-hosting is checked by none of these - see the build job - so
-    # restoring it is separate work rather than the end of this list.
-    if: false
+    # Gating, unlike the jobs still recovering: this is the only suite
+    # covering how another compiler reads the metadata this one writes,
+    # and integration_tests runs only the parse and semantic groups,
+    # which never reach emission. Without this the back end is ungated.
     name: Run cross-assembly tests
-    continue-on-error: true
 
     # ghul-test harness runs each .ghulproj in parallel and each `dotnet
     # build` is itself multithreaded. In practice the suite is small enough
