@@ -459,6 +459,10 @@ namespace IR.Emitter is
                 // to its getter's return slot, so the attributes have to
                 // be here as well as on the accessor.
                 _write_slot(cast EntityHandle(handle), _slot_attributes(property.type));
+
+                if let attributes = property.custom_attributes then
+                    _write_attributes(cast EntityHandle(handle), attributes);
+                fi
             od
 
             _assembly.add_property_map(parent, first);
@@ -572,6 +576,10 @@ namespace IR.Emitter is
             // cannot say — a tuple's element names, a reference type's
             // nullability.
             _write_slot(cast EntityHandle(handle), _slot_attributes(`field.type));
+
+            if let attributes = `field.custom_attributes then
+                _write_attributes(cast EntityHandle(handle), attributes);
+            fi
         si
 
         // An enum is a value type whose members are compile-time
