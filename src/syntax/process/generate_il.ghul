@@ -221,9 +221,7 @@ namespace Syntax.Process is
             let spill = _spill_field;
 
             if spill? then
-                _gen.add(Values.Load.ARGUMENT_SLOT(0, "ldarg.0"));
-                _gen.add(value);
-                _gen.add("stfld {spill.get_il_reference()}");
+                _gen.add(_gen._build_frame_field_store(_frame!, spill, value));
             else
                 _gen.add(value);
             fi
@@ -2207,9 +2205,14 @@ namespace Syntax.Process is
             fi
 
             let skip = LABEL();
-            add("ldloc {state_local_il}");
-            add("ldc.i4.0");
-            add("bge {skip}");
+
+            let int_type = _innate_symbol_lookup.get_int_type();
+
+            get_brancher_for_block().branch(
+                BRANCH.GE,
+                Values.Load.TEMP(state_local_il, int_type),
+                Values.Literal.NUMBER(0, int_type, "i4"),
+                skip);
 
             return skip;
         si
