@@ -4,6 +4,17 @@ namespace IR is
     use Semantic.Types.Type;
     use NAMED_TYPE = Semantic.Types.NAMED;
 
+    // How a value becomes a decimal, or stops being one. `is_identity`
+    // is the decimal-to-decimal case, where nothing has to happen;
+    // otherwise the conversion is one static method on `System.Decimal`
+    // and these are the types it goes between.
+    class DECIMAL_CONVERSION(
+        is_identity: bool,
+        method_name: string,
+        parameter_type: Type,
+        return_type: Type
+    );
+
     class VALUE_CONVERTER(
         _logger: Logging.Logger,
         _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup
@@ -49,11 +60,10 @@ namespace IR is
             _decimal_neighbours = Collections.SET[string]();
             _decimal_implicit_sources = Collections.SET[string]();
 
-            // char is omitted intentionally — this table hard-codes a
-            // CIL primitive keyword per neighbour ("int8", "float32", …)
-            // for a direct `call ... op_Implicit(<keyword>)` /
-            // `op_Explicit() -> <keyword>`, and char has no such
-            // keyword. System.Decimal does declare op_Implicit(char) and
+            // char is omitted intentionally — Decimal's conversion
+            // overloads here are the ones taking or returning a CIL
+            // primitive, and char is not among them.
+            // System.Decimal does declare op_Implicit(char) and
             // an op_Explicit returning char - TYPE_CASTER.find_user_defined_conversion
             // reaches those through the general methodref machinery
             // instead, so `cast char(d)` and `cast decimal(c)` still
@@ -110,10 +120,7 @@ namespace IR is
         // described by the types it goes between rather than by the IL
         // line that calls it — the caller needs a token for it, and a
         // rendered call is not something a token can be read out of.
-        get_decimal_conversion(
-            source: Type?,
-            target: Type?
-        ) -> (is_identity: bool, method_name: string, parameter_type: Type, return_type: Type)? is
+        get_decimal_conversion(source: Type?, target: Type?) -> DECIMAL_CONVERSION? is
             complete_initialization();
 
             if !source? \/ !target? then
@@ -130,11 +137,7 @@ namespace IR is
             fi
 
             if source_is_decimal /\ target_is_decimal then
-                return (
-                    is_identity = true,
-                    method_name = "",
-                    parameter_type = decimal_type,
-                    return_type = decimal_type);
+                return DECIMAL_CONVERSION(true, "", decimal_type, decimal_type);
             fi
 
             if target_is_decimal then
@@ -142,27 +145,22 @@ namespace IR is
                     return null;
                 fi
 
-                return (
-                    is_identity = false,
-                    method_name =
-                        if _decimal_implicit_sources.contains(source.symbol.qualified_name) then
-                            "op_Implicit"
-                        else
-                            "op_Explicit"
-                        fi,
-                    parameter_type = source,
-                    return_type = decimal_type);
+                return DECIMAL_CONVERSION(
+                    false,
+                    if _decimal_implicit_sources.contains(source.symbol.qualified_name) then
+                        "op_Implicit"
+                    else
+                        "op_Explicit"
+                    fi,
+                    source,
+                    decimal_type);
             fi
 
             if !_decimal_neighbours.contains(target.symbol.qualified_name) then
                 return null;
             fi
 
-            return (
-                is_identity = false,
-                method_name = "op_Explicit",
-                parameter_type = decimal_type,
-                return_type = target);
+            return DECIMAL_CONVERSION(false, "op_Explicit", decimal_type, target);
         si
 
     si
