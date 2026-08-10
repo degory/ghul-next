@@ -37,7 +37,7 @@ namespace Semantic is
 
                 if source_type.matches(decimal_type) \/ target_type.matches(decimal_type) then
                     if
-                        !_value_converter.get_decimal_conversion_instruction(source_type, target_type)? /\
+                        !_value_converter.get_decimal_conversion(source_type, target_type)? /\
                         !_conversion_lookup.find(source_type, target_type)?
                     then
                         _logger.error(location, "cannot convert {source_type} to {target_type}");
@@ -124,9 +124,9 @@ namespace Semantic is
                 let decimal_type = _innate_symbol_lookup.get_decimal_type();
 
                 if value.type!.matches(decimal_type) \/ target_type.matches(decimal_type) then
-                    let decimal_instruction = _value_converter.get_decimal_conversion_instruction(value.type!, target_type);
+                    let decimal_conversion = _value_converter.get_decimal_conversion(value.type!, target_type);
 
-                    if !decimal_instruction? then
+                    if !decimal_conversion? then
                         let conversion_function = _conversion_lookup.find(value.type!, target_type);
 
                         if conversion_function? then
@@ -144,11 +144,19 @@ namespace Semantic is
                             );
                     fi
 
+                    // Decimal to decimal is not a conversion at all;
+                    // the value on the stack is already what it needs
+                    // to be.
+                    if decimal_conversion.is_identity then
+                        return value;
+                    fi
+
                     return
-                        CONVERT(
+                        IR.Values.DECIMAL_CONVERT(
                             target_type,
                             value,
-                            decimal_instruction
+                            decimal_conversion.method_name,
+                            decimal_conversion.parameter_type
                         );
                 fi
 
