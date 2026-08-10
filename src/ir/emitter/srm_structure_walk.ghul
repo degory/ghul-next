@@ -12,6 +12,15 @@ namespace IR.Emitter is
     // for the MethodImpl row to name.
     class SRM_BOUND_METHOD(body: EntityHandle, declaration: EntityHandle);
 
+    // One attribute the compiler applies to a return or parameter slot,
+    // held until the caller knows whether the slot has a Param row.
+    class SRM_SLOT_ATTRIBUTE(
+        assembly_name: string,
+        qualified_name: string,
+        argument_types: Collections.List[Semantic.Types.Type],
+        value: ubyte[]
+    );
+
     // One type parameter, held until every row it could be ordered
     // against exists.
     //
@@ -51,10 +60,13 @@ namespace IR.Emitter is
     class SRM_STRUCTURE_WALK(_assembly: SRM_ASSEMBLY_EMITTER) is
         _handles: SRM_HANDLES => _assembly.handles;
         _signatures: SRM_SIGNATURE_ENCODER;
+        _blobs: SRM_ATTRIBUTE_BLOB_ENCODER;
         _type_parameters: Collections.LIST[SRM_TYPE_PARAMETER];
 
         init(..) is
             _signatures = SRM_SIGNATURE_ENCODER(_assembly);
+            _blobs =
+                SRM_ATTRIBUTE_BLOB_ENCODER(IoC.CONTAINER.instance.innate_symbol_lookup);
             _type_parameters = Collections.LIST[SRM_TYPE_PARAMETER]();
         si
 
@@ -425,6 +437,10 @@ namespace IR.Emitter is
                     _mark(handle, "Ghul.Internal.CLOSED_ATTRIBUTE");
                 fi
             fi
+
+            if let attributes = declared.custom_attributes then
+                _write_attributes(handle, attributes);
+            fi
         si
 
         // A marker takes no arguments, so they all share one value blob
@@ -436,28 +452,23 @@ namespace IR.Emitter is
         // two halves out of step names a type that does not exist while
         // still emitting cleanly.
         _mark(parent: EntityHandle, qualified_name: string) is
-            let dot = qualified_name.last_index_of('.');
-
-            let namespace_name =
-                if dot >= 0 then qualified_name.substring(0, dot) else "" fi;
-
-            let simple_name =
-                if dot >= 0 then qualified_name.substring(dot + 1) else qualified_name fi;
-
-            let attribute_type =
-                _assembly.add_type_reference_by_name(
-                    "ghul-runtime", namespace_name, simple_name);
-
-            let constructor =
-                _assembly.add_constructor_reference(
-                    cast EntityHandle(attribute_type),
-                    "{qualified_name}::.ctor()",
-                    Collections.LIST[Semantic.Types.Type]());
-
-            _assembly.add_custom_attribute(
+            _attach(
                 parent,
-                cast EntityHandle(constructor),
+                "ghul-runtime",
+                qualified_name,
+                Collections.LIST[Semantic.Types.Type](),
                 SRM_ASSEMBLY_EMITTER.NO_ARGUMENT_ATTRIBUTE_VALUE);
+        si
+
+        _attach(
+            parent: EntityHandle,
+            assembly_name: string,
+            qualified_name: string,
+            argument_types: Collections.List[Semantic.Types.Type],
+            value: ubyte[]
+        ) is
+            _assembly.add_named_attribute(
+                parent, assembly_name, qualified_name, argument_types, value);
         si
 
         _write_type_parameters() is
@@ -578,10 +589,28 @@ namespace IR.Emitter is
             // it is an invalid index that faults on first read.
             let first_parameter = MetadataTokens.parameter_handle(_assembly.next_parameter_row);
 
+            // The return slot is parameter zero, and has no row of its
+            // own unless something has to hang off it. Written first so
+            // the run reads in sequence order.
+            let return_slot = _slot_attributes(method.return_type);
+
+            if return_slot.count > 0 then
+                let parameter = _assembly.add_parameter(_assembly.get_or_add_string(""), 0);
+
+                _write_slot(cast EntityHandle(parameter), return_slot);
+            fi
+
             let names = method.argument_names;
 
             for i in 0..names.count do
-                _assembly.add_parameter(_assembly.get_or_add_string(names[i]), i + 1);
+                let parameter =
+                    _assembly.add_parameter(_assembly.get_or_add_string(names[i]), i + 1);
+
+                _write_slot(cast EntityHandle(parameter), _slot_attributes(method.arguments[i]));
+
+                if let attributes = method.find_direct(names[i])?.custom_attributes then
+                    _write_attributes(cast EntityHandle(parameter), attributes);
+                fi
             od
 
             let handle = _assembly.add_method_definition(
@@ -600,11 +629,168 @@ namespace IR.Emitter is
                         cast EntityHandle(handle), i, type_parameters[i].name ?? "T{i}"));
             od
 
+            if method.is_declared_pure then
+                _mark(cast EntityHandle(handle), PURE_ATTRIBUTE_NAME);
+            fi
+
+            if let attributes = method.custom_attributes then
+                _write_attributes(cast EntityHandle(handle), attributes);
+            fi
+
             if let entry_point = _assembly.entry_point_function then
                 if entry_point == method then
                     _assembly.set_entry_point(handle);
                 fi
             fi
+        si
+
+        PURE_ATTRIBUTE_NAME: string static => "Ghul.Internal.PURE_ATTRIBUTE";
+
+        NULLABLE_ATTRIBUTE_NAME: string static =>
+            "System.Runtime.CompilerServices.NullableAttribute";
+
+        TUPLE_ELEMENT_NAMES_ATTRIBUTE_NAME: string static =>
+            "System.Runtime.CompilerServices.TupleElementNamesAttribute";
+
+        // What a return or parameter slot carries beyond its type: the
+        // reference nullability the CLR has no way to express, the
+        // element names a value tuple loses on the way into metadata,
+        // and whether the slot's function type was declared pure.
+        //
+        // Returned rather than written so the caller can decide whether
+        // the slot needs a Param row at all — the return slot has none
+        // unless something hangs off it.
+        _slot_attributes(type: Semantic.Types.Type?) -> Collections.LIST[SRM_SLOT_ATTRIBUTE] is
+            let result = Collections.LIST[SRM_SLOT_ATTRIBUTE]();
+
+            if !type? then
+                return result;
+            fi
+
+            let nullable = Semantic.DotNet.NULLABILITY.compute_bytes(type);
+
+            if Semantic.DotNet.NULLABILITY.needs_attribute_for_bytes(nullable) then
+                if nullable.count == 1 then
+                    result.add(
+                        SRM_SLOT_ATTRIBUTE(
+                            "System.Runtime",
+                            NULLABLE_ATTRIBUTE_NAME,
+                            _byte_constructor_types(),
+                            SRM_ATTRIBUTE_BLOB_ENCODER.encode_byte_argument(nullable[0])));
+                else
+                    result.add(
+                        SRM_SLOT_ATTRIBUTE(
+                            "System.Runtime",
+                            NULLABLE_ATTRIBUTE_NAME,
+                            _byte_array_constructor_types(),
+                            SRM_ATTRIBUTE_BLOB_ENCODER.encode_byte_array_argument(nullable)));
+                fi
+            fi
+
+            if let names = Semantic.DotNet.TUPLE_ELEMENT_NAMES.attribute_names_for_type(type) then
+                result.add(
+                    SRM_SLOT_ATTRIBUTE(
+                        "System.Runtime",
+                        TUPLE_ELEMENT_NAMES_ATTRIBUTE_NAME,
+                        _string_array_constructor_types(),
+                        SRM_ATTRIBUTE_BLOB_ENCODER.encode_string_array_argument(names)));
+            fi
+
+            if type.is_pure_function then
+                result.add(
+                    SRM_SLOT_ATTRIBUTE(
+                        "ghul-runtime",
+                        PURE_ATTRIBUTE_NAME,
+                        Collections.LIST[Semantic.Types.Type](),
+                        SRM_ASSEMBLY_EMITTER.NO_ARGUMENT_ATTRIBUTE_VALUE));
+            fi
+
+            return result;
+        si
+
+        _write_slot(parent: EntityHandle, attributes: Collections.List[SRM_SLOT_ATTRIBUTE]) is
+            for attribute in attributes do
+                _attach(
+                    parent,
+                    attribute.assembly_name,
+                    attribute.qualified_name,
+                    attribute.argument_types,
+                    attribute.value);
+            od
+        si
+
+        _byte_constructor_types() -> Collections.LIST[Semantic.Types.Type] is
+            let types = Collections.LIST[Semantic.Types.Type]();
+
+            types.add(IoC.CONTAINER.instance.innate_symbol_lookup.get_ubyte_type());
+
+            return types;
+        si
+
+        _byte_array_constructor_types() -> Collections.LIST[Semantic.Types.Type] is
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let types = Collections.LIST[Semantic.Types.Type]();
+
+            types.add(lookup.get_array_type(lookup.get_ubyte_type()));
+
+            return types;
+        si
+
+        _string_array_constructor_types() -> Collections.LIST[Semantic.Types.Type] is
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let types = Collections.LIST[Semantic.Types.Type]();
+
+            types.add(lookup.get_array_type(lookup.get_string_type()));
+
+            return types;
+        si
+
+        // Every attribute a pragma resolved onto a symbol. An argument
+        // the encoder cannot express is left off rather than emitted
+        // wrong: the resolver has already reported anything the source
+        // got wrong, so reaching here means the two disagree about what
+        // is expressible, and a truncated blob would fault the reader
+        // rather than say so.
+        _write_attributes(
+            parent: EntityHandle,
+            attributes: Collections.List[Semantic.CUSTOM_ATTRIBUTE]
+        ) is
+            for attribute in attributes do
+                let value = _blobs.encode(attribute);
+
+                if !value? then
+                    throw System.NotImplementedException(
+                        "the binary back end cannot yet encode the arguments of "
+                        "'{attribute.constructor.owner}'");
+                fi
+
+                _assembly.add_custom_attribute(
+                    parent,
+                    _constructor_handle(attribute.constructor),
+                    value!);
+            od
+        si
+
+        // A constructor this assembly defines is named by its own row;
+        // an imported one by a reference through its type.
+        _constructor_handle(constructor: Function) -> EntityHandle is
+            if let definition = _handles.method_definition(constructor) then
+                return cast EntityHandle(definition);
+            fi
+
+            let owner = cast Classy?(constructor.owner);
+
+            if !owner? then
+                throw System.NotImplementedException(
+                    "the binary back end cannot reference an attribute constructor "
+                    "with no owning type");
+            fi
+
+            return cast EntityHandle(
+                _assembly.add_constructor_reference(
+                    cast EntityHandle(_signatures.type_reference_for(owner)),
+                    "{owner.qualified_name}::.ctor",
+                    constructor.arguments));
         si
 
         // A globals carrier is abstract and sealed: never constructed,

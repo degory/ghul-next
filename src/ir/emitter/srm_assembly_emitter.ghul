@@ -43,6 +43,9 @@ namespace IR.Emitter is
         _entry_point: MethodDefinitionHandle?;
         _want_library: bool;
 
+        // What an assembly-level attribute hangs off.
+        assembly_handle: EntityHandle;
+
         // `version` is the colon-separated ilasm .ver format ("0:0:0:0")
         // module_version is already built in, so parsing here avoids a
         // second version representation at the call site.
@@ -79,13 +82,15 @@ namespace IR.Emitter is
                 _,
                 _);
 
-            _metadata.add_assembly(
-                _metadata.get_or_add_string(assembly_name),
-                parsed_version,
-                _,
-                _,
-                _,
-                _);
+            assembly_handle =
+                cast EntityHandle(
+                    _metadata.add_assembly(
+                        _metadata.get_or_add_string(assembly_name),
+                        parsed_version,
+                        _,
+                        _,
+                        _,
+                        _));
 
             // Boilerplate reference every assembly needs (base type of the
             // globals carrier); the text path hardcoded the same version
@@ -421,6 +426,44 @@ namespace IR.Emitter is
             value: ubyte[]
         ) is
             _metadata.add_custom_attribute(parent, constructor, get_or_add_blob(value));
+        si
+
+        // An attribute the compiler applies itself rather than resolving
+        // from a pragma, named rather than reached through a symbol: the
+        // marker attributes carrying what metadata cannot express, the
+        // framework attributes on a return or parameter slot, and the
+        // assembly-level attributes the command line supplies.
+        //
+        // The type name is qualified, and split here rather than written
+        // as a namespace and a simple name at each call site: a
+        // reference built from the two halves out of step names a type
+        // that does not exist while still emitting cleanly.
+        add_named_attribute(
+            parent: EntityHandle,
+            assembly_name: string,
+            qualified_name: string,
+            argument_types: Collections.List[Semantic.Types.Type],
+            value: ubyte[]
+        ) is
+            let dot = qualified_name.last_index_of('.');
+
+            let namespace_name =
+                if dot >= 0 then qualified_name.substring(0, dot) else "" fi;
+
+            let simple_name =
+                if dot >= 0 then qualified_name.substring(dot + 1) else qualified_name fi;
+
+            let attribute_type =
+                add_type_reference_by_name(assembly_name, namespace_name, simple_name);
+
+            add_custom_attribute(
+                parent,
+                cast EntityHandle(
+                    add_constructor_reference(
+                        cast EntityHandle(attribute_type),
+                        "{qualified_name}::.ctor",
+                        argument_types)),
+                value);
         si
 
         // The value blob of an attribute applied with no arguments: the
