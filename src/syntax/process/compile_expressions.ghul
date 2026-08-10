@@ -2308,6 +2308,17 @@ namespace Syntax.Process is
 
                 _lambdas.visit_function(function);
 
+                // The lambda's signature is settled by the line above,
+                // so this is the first point at which an async one is
+                // known to have a state machine — and the last before
+                // its body walks. A named async function's frame is
+                // realised at the equivalent point in
+                // visit(Definitions.FUNCTION); without the same here,
+                // the frame's constructor is first declared while the
+                // body is emitted, long after its row would have been
+                // numbered.
+                _declare_lambda_state_machine_frame(function);
+
                 super.visit(function);
 
                 _logger.commit();
@@ -3387,6 +3398,24 @@ namespace Syntax.Process is
                 _enclosing_state_machine_frame()
             then
                 `await.awaiter_field = frame.declare_awaiter_field(awaiter_type);
+            fi
+        si
+
+        _declare_lambda_state_machine_frame(function: Trees.Expressions.FUNCTION) is
+            let closure = cast Semantic.Symbols.Function?(function.scope);
+
+            if !closure? then
+                return;
+            fi
+
+            if let state_machine = Semantic.Symbols.state_machine_for(closure) then
+                if let frame = state_machine.frame then
+                    frame.declare();
+                fi
+            elif let async_state_machine = Semantic.Symbols.async_state_machine_for(closure) then
+                if let frame = async_state_machine.frame then
+                    frame.declare();
+                fi
             fi
         si
 
