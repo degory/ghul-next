@@ -278,9 +278,42 @@ namespace Semantic.Symbols.UnitTests is
             Assert.are_same(c.find_direct("U")!.type!, instantiation.arguments[1]);
         si
 
+        // An imported generic carries its parameters positionally and
+        // declares none of them into its own scope, so the lookup by
+        // name finds nothing and the index is the whole answer. Without
+        // this a consumer cannot name an imported generic at all.
+        An_imported_generic_answers_for_its_parameters_by_position() is
+            @test()
+
+            let c =
+                CLASS(
+                    LOCATION.reflected,
+                    LOCATION.reflected,
+                    null,
+                    "Imported",
+                    names_for(["T", "U"]),
+                    null);
+
+            c.set_type(Types.NAMED(c));
+
+            Assert.is_true(c.is_reflected);
+            Assert.is_false(c.find_direct("T")?);
+
+            let first = c.type_parameter_at(0);
+            let second = c.type_parameter_at(1);
+
+            Assert.is_true(first?);
+            Assert.is_true(second?);
+
+            Assert.are_equal(2, c.own_instantiation.arguments.count);
+        si
+
         // The parameters are looked up by the names the type declared,
-        // so a type that names a parameter it never declared has no
-        // instantiation to give rather than a half-built one.
+        // so a type declared here that names a parameter it never
+        // declared has no instantiation to give rather than a half-built
+        // one. The positional fallback above is for imported types only:
+        // widening it would silently answer for a local type that failed
+        // to declare a parameter it should have.
         A_generic_type_whose_parameter_was_never_declared_asserts() is
             @test()
 
