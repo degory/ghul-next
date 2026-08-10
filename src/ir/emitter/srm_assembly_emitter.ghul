@@ -531,11 +531,12 @@ namespace IR.Emitter is
         add_generic_parameter(
             owner: EntityHandle,
             index: int,
-            name: string
+            name: string,
+            attributes: System.Reflection.GenericParameterAttributes
         ) is
             _metadata.add_generic_parameter(
                 owner,
-                cast System.Reflection.GenericParameterAttributes(0),
+                attributes,
                 _metadata.get_or_add_string(name),
                 index);
         si

@@ -171,7 +171,7 @@ namespace IR is
             if innate_name =~ "string.equals" then
                 gen_arguments(value, block);
 
-                block.add("call bool string::op_Equality(string, string)");
+                block.add(Values.CALL_STRING_EQUALITY());
 
                 if value.actual_operation =~ "!~" then
                     block.add(Values.INSTRUCTION("ldc.i4 0"));

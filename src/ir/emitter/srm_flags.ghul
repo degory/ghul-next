@@ -143,6 +143,41 @@ namespace IR.Emitter is
         property_name(property: Semantic.Symbols.Property) -> string static =>
             property.il_bare_name.replace("'", "");
 
+        _COVARIANT: int static => 1;
+        _CONTRAVARIANT: int static => 2;
+        _REFERENCE_TYPE_CONSTRAINT: int static => 4;
+        _VALUE_TYPE_CONSTRAINT: int static => 8;
+
+        // What a GenericParam row says about one type parameter beyond
+        // its name: which way it varies, and which kind of type can
+        // instantiate it.
+        //
+        // Both are read back by an importing compiler and enforced by
+        // the CLR, so a row left at zero silently turns a covariant
+        // trait invariant and drops a `class` or `struct` bound.
+        type_parameter_attributes(
+            variance: Semantic.Types.TypeVariance,
+            constraint: Semantic.Symbols.TypeParameterConstraintKind
+        ) -> System.Reflection.GenericParameterAttributes static is
+            let flags mut = 0;
+
+            if variance == Semantic.Types.TypeVariance.COVARIANT then
+                flags = flags | _COVARIANT;
+            elif variance == Semantic.Types.TypeVariance.CONTRAVARIANT then
+                flags = flags | _CONTRAVARIANT;
+            fi
+
+            // OPTIONAL constrains what the parameter can hold rather
+            // than which kind of type it is, and has no CLR counterpart.
+            if constraint == Semantic.Symbols.TypeParameterConstraintKind.REFERENCE then
+                flags = flags | _REFERENCE_TYPE_CONSTRAINT;
+            elif constraint == Semantic.Symbols.TypeParameterConstraintKind.VALUE then
+                flags = flags | _VALUE_TYPE_CONSTRAINT;
+            fi
+
+            return cast System.Reflection.GenericParameterAttributes(flags);
+        si
+
         _PRIVATE_FIELD: int static => 1;
         _ASSEMBLY_FIELD: int static => 3;
         _PUBLIC_FIELD: int static => 6;

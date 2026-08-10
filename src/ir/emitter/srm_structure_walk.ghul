@@ -32,7 +32,12 @@ namespace IR.Emitter is
     // earlier type's method. Unlike the other sorted side tables, SRM
     // validates this one rather than ordering it, and rejects the
     // assembly outright.
-    class SRM_TYPE_PARAMETER(owner: EntityHandle, index: int, name: string) is
+    class SRM_TYPE_PARAMETER(
+        owner: EntityHandle,
+        index: int,
+        name: string,
+        attributes: System.Reflection.GenericParameterAttributes
+    ) is
         // The coded index the table is sorted on: the owner's row,
         // tagged with which table it points into.
         order: int =>
@@ -379,7 +384,13 @@ namespace IR.Emitter is
 
                     for i in 0..names.count do
                         _type_parameters.add(
-                            SRM_TYPE_PARAMETER(cast EntityHandle(handle), i, names[i]));
+                            SRM_TYPE_PARAMETER(
+                                cast EntityHandle(handle),
+                                i,
+                                names[i],
+                                SRM_FLAGS.type_parameter_attributes(
+                                    declared.get_argument_variance(i),
+                                    declared.get_argument_constraint_kind(i))));
                     od
 
                     for `interface in _interfaces(declared) do
@@ -542,7 +553,10 @@ namespace IR.Emitter is
 
             for type_parameter in _type_parameters do
                 _assembly.add_generic_parameter(
-                    type_parameter.owner, type_parameter.index, type_parameter.name);
+                    type_parameter.owner,
+                    type_parameter.index,
+                    type_parameter.name,
+                    type_parameter.attributes);
             od
         si
 
@@ -690,7 +704,16 @@ namespace IR.Emitter is
             for i in 0..type_parameters.count do
                 _type_parameters.add(
                     SRM_TYPE_PARAMETER(
-                        cast EntityHandle(handle), i, type_parameters[i].name ?? "T{i}"));
+                        cast EntityHandle(handle),
+                        i,
+                        type_parameters[i].name ?? "T{i}",
+                        // A method's type parameter cannot be variant —
+                        // the CLR allows variance only on an interface
+                        // or delegate type — so only the kind
+                        // constraints reach the row.
+                        SRM_FLAGS.type_parameter_attributes(
+                            Semantic.Types.TypeVariance.INVARIANT,
+                            method.get_argument_constraint_kind(i))));
             od
 
             if method.is_declared_pure then
