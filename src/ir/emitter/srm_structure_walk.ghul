@@ -467,11 +467,15 @@ namespace IR.Emitter is
             od
         si
 
+        // The interned instance a unit variant hands out. Its type is
+        // the variant applied to its own parameters: a generic variant's
+        // open form names no type the field could hold.
         _write_unit_variant_instance(variant: Classy) is
             _assembly.add_field_definition(
                 SRM_FLAGS.unit_variant_instance_attributes(),
                 _assembly.get_or_add_string("_instance"),
-                _assembly.get_or_add_blob(_signatures.field_signature(variant.type!)));
+                _assembly.get_or_add_blob(
+                    _signatures.field_signature(variant.own_instantiation)));
         si
 
         _write_unit_variant_initializer(variant: Classy) is
@@ -548,11 +552,22 @@ namespace IR.Emitter is
 
             // A union's variants are owned by the union rather than by a
             // namespace. They are emitted flat, under a name that carries
-            // the union's, so the union's own qualified name is what
-            // stands in front of the variant.
+            // the union's, so what stands in front of a variant is the
+            // union's own namespace followed by the union's name — built
+            // the same way the union's own row builds it, rather than
+            // read off `qualified_name`, so the two cannot disagree.
             if !owner.is_namespace then
                 if let owning_type: Classy = owner then
-                    return _strip_root(owning_type.qualified_name);
+                    let outer = owning_type.owner;
+
+                    let prefix = if outer? then _strip_root(outer.qualified_name) else "" fi;
+
+                    return
+                        if prefix.length == 0 then
+                            owning_type.name
+                        else
+                            "{prefix}.{owning_type.name}"
+                        fi;
                 fi
 
                 return "";
@@ -597,8 +612,12 @@ namespace IR.Emitter is
                     continue;
                 fi
 
-                if let ancestor_symbol: Classy = ancestor.symbol then
-                    return _type_handle(ancestor_symbol);
+                // Through the token rather than the symbol: a generic
+                // union's variant extends the union constructed over
+                // the variant's own parameters, and the open type it
+                // was declared from is not a type anything can extend.
+                if isa Classy(ancestor.symbol) then
+                    return _type_token(ancestor);
                 fi
             od
 

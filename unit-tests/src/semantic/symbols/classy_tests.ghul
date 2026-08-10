@@ -240,5 +240,60 @@ namespace Semantic.Symbols.UnitTests is
 
             Assert.are_equal("auto ansi ", buffer.to_string());
         si
+
+        // own_instantiation is what a type is called from inside itself
+        // and from anything that extends it. A generic's open form names
+        // no type at run time, so getting this wrong produces metadata
+        // that loads and then faults on first use rather than failing
+        // where it was written.
+        A_non_generic_type_is_its_own_instantiation() is
+            @test()
+
+            let c = CLASS(loc(), loc(), null, "Plain", LIST[string](), null);
+            c.set_type(Types.NAMED(c));
+
+            Assert.are_same(c.type!, c.own_instantiation);
+        si
+
+        A_generic_type_is_instantiated_over_its_own_parameters() is
+            @test()
+
+            let c = CLASS(loc(), loc(), null, "Pair", names_for(["T", "U"]), null);
+            c.set_type(Types.NAMED(c));
+
+            c.declare_type(loc(), "T", 0, null);
+            c.declare_type(loc(), "U", 1, null);
+
+            let instantiation = c.own_instantiation;
+
+            // A constructed generic's symbol wraps the open definition
+            // rather than being it.
+            let constructed = cast Semantic.Symbols.GENERIC?(instantiation.symbol);
+
+            Assert.is_true(constructed?);
+            Assert.are_same(cast Symbol(c), cast Symbol(constructed!.symbol));
+
+            Assert.are_equal(2, instantiation.arguments.count);
+            Assert.are_same(c.find_direct("T")!.type!, instantiation.arguments[0]);
+            Assert.are_same(c.find_direct("U")!.type!, instantiation.arguments[1]);
+        si
+
+        // The parameters are looked up by the names the type declared,
+        // so a type that names a parameter it never declared has no
+        // instantiation to give rather than a half-built one.
+        A_generic_type_whose_parameter_was_never_declared_asserts() is
+            @test()
+
+            let c = CLASS(loc(), loc(), null, "Missing", names_for(["T"]), null);
+            c.set_type(Types.NAMED(c));
+
+            try
+                c.own_instantiation;
+
+                Assert.is_true(false);
+            catch e: Ghul.AssertFailedException
+                Assert.is_true(e.message.contains("has no type parameter 'T'"));
+            yrt
+        si
     si
 si

@@ -1023,7 +1023,7 @@ namespace Syntax.Process is
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
             body.new_object(_context.resolve_call_target(constructors.functions[0]));
-            body.stsfld(cast System.Reflection.Metadata.EntityHandle(instance!));
+            body.stsfld(_context.resolve_unit_variant_instance(variant));
             body.ret();
 
             handles.set_unit_variant_initializer_body(variant, body.flush(assembly_emitter));
