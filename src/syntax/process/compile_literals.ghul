@@ -84,8 +84,15 @@ namespace Syntax.Process is
                 suffix = "r4";
             fi
 
+            let parsed: double mut = _;
+
+            if !double.try_parse(stripped, parsed ref) then
+                _logger.error(float.location, "invalid floating-point literal {stripped}");
+                return;
+            fi
+
             float.compile_expressions_state.value = Literal.NUMBER(
-                stripped,
+                parsed,
                 type,
                 suffix
             );
@@ -113,7 +120,7 @@ namespace Syntax.Process is
             fi
 
             character.compile_expressions_state.value = Literal.NUMBER(
-                "{c}",
+                c,
                 _innate_symbol_lookup.get_char_type(),
                 "i4"
             );
@@ -122,12 +129,12 @@ namespace Syntax.Process is
         visit_boolean(boolean: Trees.Expressions.Literals.BOOLEAN) is
             let value_string = boolean.value_string;
 
-            let value: string mut;
+            let value: int mut;
 
             if value_string =~ "true" then
-                value = "1";
+                value = 1;
             elif value_string =~ "false" then
-                value = "0";
+                value = 0;
             else
                 throw System.Exception("invalid value for boolean literal: {value_string}");
             fi

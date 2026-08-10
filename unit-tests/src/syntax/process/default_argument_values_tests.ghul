@@ -128,6 +128,23 @@ namespace Syntax.Process.UnitTests is
             Assert.are_equal("i8", result.suffix);
         si
 
+        Calling__build__with_ulong_above_long_max__should_keep_the_stored_value() is
+            @test()
+
+            // An ordinary .NET default that no signed parse can read.
+            // Reading it as signed and falling back to zero would emit
+            // a wrong default with nothing to show for it, so the value
+            // is checked rather than just the suffix.
+            let lookup = build_lookup();
+            let ulong_type = lookup.get_ulong_type();
+
+            let result =
+                cast IR.Values.Literal.NUMBER(
+                    DEFAULT_ARGUMENT_VALUES.build("18446744073709551615", ulong_type, lookup));
+
+            Assert.are_equal(18446744073709551615UL, result.integer_value);
+        si
+
         Calling__build__with_char_type_and_nonempty_string__should_return_char_code() is
             @test()
 
