@@ -3261,7 +3261,18 @@ namespace Syntax.Process is
             let parent: System.Reflection.Metadata.EntityHandle mut;
 
             if on_method then
-                let method = handles.method_definition(current_function!);
+                // `@test_method` reaches here whatever it was written
+                // against, so there may be no enclosing function to hang
+                // the attribute on. The text path emitted its template
+                // regardless; here there is nothing to name as the row's
+                // parent, so it is left off rather than faulting.
+                let function = current_function;
+
+                if !function? then
+                    return;
+                fi
+
+                let method = handles.method_definition(function);
 
                 if !method? then
                     return;
