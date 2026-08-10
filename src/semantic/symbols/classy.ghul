@@ -445,6 +445,32 @@ namespace Semantic.Symbols is
             return GENERIC(location, self, actual_type_arguments);
         si
 
+        // This type applied to its own type parameters.
+        //
+        // It is what its members' receiver is from inside its own
+        // methods, and what a subtype of it extends. The open type a
+        // generic is declared as is not a type anything can name at run
+        // time, so a row or a reference that needs to name this one has
+        // to construct it. A non-generic type is already itself.
+        own_instantiation: Type is
+            if argument_names.count == 0 then
+                return type!;
+            fi
+
+            let arguments = Collections.LIST[Type]();
+
+            for index in 0..argument_names.count do
+                let parameter = type_parameter_at(index);
+
+                assert parameter? else
+                    "generic type '{name}' has no type parameter '{argument_names[index]}'";
+
+                arguments.add(parameter.type!);
+            od
+
+            return Types.GENERIC(LOCATION.internal, self, arguments);
+        si
+
         // The symbol standing for the type parameter at `index`, or null
         // when there is none to be had.
         //

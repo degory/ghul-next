@@ -393,12 +393,20 @@ namespace IR is
                             "_instance",
                             "_instance {constructed.type}",
                             Emitter.SRM_SIGNATURE_ENCODER(emitter)
-                                .field_signature(classy.type!)));
+                                .field_signature(classy.own_instantiation)));
                 fi
 
-                throw System.NotImplementedException(
-                    "the binary back end cannot yet reach the interned instance of "
-                    "the generic unit variant '{classy.qualified_name}'");
+                // Reached from inside the variant's own static
+                // initializer, where there is no instantiation to hand:
+                // the parent is the variant applied to its own
+                // parameters, which is what the field's row names too.
+                return cast System.Reflection.Metadata.EntityHandle(
+                    emitter.add_named_member_reference(
+                        resolve_type_token(classy.own_instantiation),
+                        "_instance",
+                        "_instance {classy.own_instantiation}",
+                        Emitter.SRM_SIGNATURE_ENCODER(emitter)
+                            .field_signature(classy.own_instantiation)));
             fi
 
             let instance = emitter.handles.unit_variant_instance(classy);
@@ -854,24 +862,6 @@ namespace IR is
                     Emitter.SRM_SIGNATURE_ENCODER(emitter).field_signature(root)));
         si
 
-        // A generic type applied to its own type parameters, which is
-        // what its members' receiver is from inside its own methods.
-        //
-        _own_instantiation(owner: Semantic.Symbols.Classy) -> Semantic.Types.Type is
-            let arguments = Collections.LIST[Semantic.Types.Type]();
-
-            for index in 0..owner.argument_names.count do
-                let parameter = owner.type_parameter_at(index);
-
-                assert parameter? else
-                    "generic type '{owner.name}' has no type parameter '{owner.argument_names[index]}'";
-
-                arguments.add(parameter.type!);
-            od
-
-            return Semantic.Types.GENERIC(Source.LOCATION.internal, owner, arguments);
-        si
-
         // Whether a member is declared by a generic type.
         //
         // A member of one cannot be named by its own definition row even
@@ -919,7 +909,7 @@ namespace IR is
             if let owner: Semantic.Symbols.Classy = member.owner then
                 if owner.is_generic then
                     return cast System.Reflection.Metadata.EntityHandle(
-                        emitter.add_type_specification(_own_instantiation(owner)));
+                        emitter.add_type_specification(owner.own_instantiation));
                 fi
             fi
 
