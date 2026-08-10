@@ -1,5 +1,6 @@
 namespace IR.Emitter is
     use System.Reflection.Metadata.EntityHandle;
+    use System.Reflection.Metadata.TypeDefinitionHandle;
     use System.Reflection.Metadata.Ecma335.MetadataTokens;
 
     use Semantic.Symbols.Scope;
@@ -390,10 +391,66 @@ namespace IR.Emitter is
                     _assembly.add_method_implementation(handle, bound.body, bound.declaration);
                 od
 
+                _write_properties(handle, type);
+
                 _write_marker_attributes(cast EntityHandle(handle), type);
             od
 
             _write_type_parameters();
+        si
+
+        // A type's properties, and the map pointing at the run of rows
+        // they occupy.
+        //
+        // Without these an importing compiler sees the accessor methods
+        // and no property at all, and reports the property as a member
+        // that does not exist — a diagnostic that reads as a resolution
+        // problem rather than as missing metadata.
+        //
+        // A property is not a member in its own right at run time: the
+        // getter and setter are ordinary methods and already have their
+        // rows, and the property row only names them. So there is
+        // nothing here for a method body to refer to, and nothing that
+        // has to be numbered before bodies are encoded.
+        _write_properties(parent: TypeDefinitionHandle, type: SRM_EMITTED_TYPE) is
+            let properties = SRM_MEMBER_ORDER.properties(type);
+
+            if properties.count == 0 then
+                return;
+            fi
+
+            // PropertyList is a run pointer, so it names the first row
+            // of this type's run. The rows are written immediately
+            // below, in this same iteration, so the two cannot disagree
+            // — unlike the field and method runs, which are numbered in
+            // one pass and written in another.
+            let first = MetadataTokens.property_definition_handle(_assembly.next_property_row);
+
+            for property in properties do
+                let handle =
+                    _assembly.add_property(
+                        _assembly.get_or_add_string(SRM_FLAGS.property_name(property)),
+                        _signatures.property_signature(property));
+
+                if let read = property.read_function then
+                    if let accessor = _handles.method_definition(read) then
+                        _assembly.add_property_accessor(handle, accessor, true);
+                    fi
+                fi
+
+                if let assign = property.assign_function then
+                    if let accessor = _handles.method_definition(assign) then
+                        _assembly.add_property_accessor(handle, accessor, false);
+                    fi
+                fi
+
+                // The reader looks at the property before falling back
+                // to its getter's return slot, so the attributes have to
+                // be here as well as on the accessor.
+                _write_slot(cast EntityHandle(handle), _slot_attributes(property.type));
+            od
+
+            _assembly.add_property_map(parent, first);
         si
 
         // The attributes that carry to another assembly what the source
@@ -490,10 +547,17 @@ namespace IR.Emitter is
         si
 
         _write_field(`field: Field) is
-            _assembly.add_field_definition(
-                SRM_FLAGS.field_attributes(`field),
-                _assembly.get_or_add_string(`field.name),
-                _assembly.get_or_add_blob(_signatures.field_signature(`field)));
+            let handle =
+                _assembly.add_field_definition(
+                    SRM_FLAGS.field_attributes(`field),
+                    _assembly.get_or_add_string(`field.name),
+                    _assembly.get_or_add_blob(_signatures.field_signature(`field)));
+
+            // A field declares a type the same way a parameter does, so
+            // it needs the same attributes to carry what the type alone
+            // cannot say — a tuple's element names, a reference type's
+            // nullability.
+            _write_slot(cast EntityHandle(handle), _slot_attributes(`field.type));
         si
 
         // An enum is a value type whose members are compile-time

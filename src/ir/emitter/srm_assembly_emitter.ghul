@@ -5,6 +5,7 @@ namespace IR.Emitter is
     use System.Reflection.Metadata.StringHandle;
     use System.Reflection.Metadata.UserStringHandle;
     use System.Reflection.Metadata.AssemblyReferenceHandle;
+    use System.Reflection.Metadata.TypeDefinitionHandle;
     use System.Reflection.Metadata.TypeReferenceHandle;
     use System.Reflection.Metadata.MemberReferenceHandle;
     use System.Reflection.Metadata.MethodDefinitionHandle;
@@ -121,6 +122,7 @@ namespace IR.Emitter is
         next_method_row: int => _metadata.get_row_count(TableIndex.METHOD_DEF) + 1;
         next_type_row: int => _metadata.get_row_count(TableIndex.TYPE_DEF) + 1;
         next_parameter_row: int => _metadata.get_row_count(TableIndex.PARAM) + 1;
+        next_property_row: int => _metadata.get_row_count(TableIndex.PROPERTY) + 1;
 
         // The function the entrypoint pragma named during the tree
         // walk, so the structure walk can mark its row. Which function
@@ -426,6 +428,44 @@ namespace IR.Emitter is
             value: ubyte[]
         ) is
             _metadata.add_custom_attribute(parent, constructor, get_or_add_blob(value));
+        si
+
+        add_property(
+            name: StringHandle,
+            signature: ubyte[]
+        ) -> System.Reflection.Metadata.PropertyDefinitionHandle =>
+            _metadata.add_property(
+                cast System.Reflection.PropertyAttributes(0),
+                name,
+                get_or_add_blob(signature));
+
+        // Points a type at the run of property rows it owns. PropertyMap
+        // is sorted on its parent, and the walk writes types in
+        // ascending row order, so adding one per type as the walk
+        // reaches it is already in order.
+        add_property_map(
+            parent: TypeDefinitionHandle,
+            first_property: System.Reflection.Metadata.PropertyDefinitionHandle
+        ) is
+            _metadata.add_property_map(parent, first_property);
+        si
+
+        // Ties an accessor method to the property it reads or writes.
+        // MethodSemantics is a sorted side table that SRM orders itself,
+        // so these can be added as the walk reaches them.
+        add_property_accessor(
+            property: System.Reflection.Metadata.PropertyDefinitionHandle,
+            accessor: MethodDefinitionHandle,
+            is_getter: bool
+        ) is
+            _metadata.add_method_semantics(
+                cast EntityHandle(property),
+                if is_getter then
+                    System.Reflection.MethodSemanticsAttributes.GETTER;
+                else
+                    System.Reflection.MethodSemanticsAttributes.SETTER;
+                fi,
+                accessor);
         si
 
         // An attribute the compiler applies itself rather than resolving
