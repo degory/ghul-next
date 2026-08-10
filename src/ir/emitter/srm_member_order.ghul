@@ -4,6 +4,7 @@ namespace IR.Emitter is
     use Semantic.Symbols.Classy;
     use Semantic.Symbols.Function;
     use Semantic.Symbols.Field;
+    use Semantic.Symbols.Property;
     use Semantic.Symbols.FUNCTION_GROUP;
     use Semantic.Symbols.NAMESPACE;
 
@@ -281,6 +282,33 @@ namespace IR.Emitter is
                     _collect_closures(inner, into, seen);
                 fi
             od
+        si
+
+        // The properties a type declares, in the order their rows are
+        // written.
+        //
+        // Unlike the field and method runs this order is not agreed
+        // across the two passes: nothing outside the property's own rows
+        // names it, so the rows and the map that points at them are both
+        // written in the same iteration and cannot disagree.
+        properties(type: SRM_EMITTED_TYPE) -> Collections.List[Property] static is
+            let result = Collections.LIST[Property]();
+
+            for symbol in type.scope.symbols do
+                if !_is_owned_by(symbol, type) then
+                    continue;
+                fi
+
+                if symbol.is_reflected then
+                    continue;
+                fi
+
+                if let property: Property = symbol then
+                    result.add(property);
+                fi
+            od
+
+            return result;
         si
 
         methods(type: SRM_EMITTED_TYPE) -> Collections.List[Function] static is

@@ -51,6 +51,29 @@ namespace IR.Emitter is
             return null;
         si
 
+        // A property's signature is its accessors' shape rather than its
+        // own: the calling convention says PROPERTY, and an instance
+        // property sets HASTHIS to match the getter it is read through.
+        // ghūl declares no indexed properties, so the parameter list is
+        // always empty and the signature carries only the type.
+        property_signature(property: Semantic.Symbols.Property) -> ubyte[] is
+            let builder = BlobBuilder(16);
+
+            let return_type: ReturnTypeEncoder mut;
+            let parameters: ParametersEncoder mut;
+
+            BlobEncoder(builder)
+                .property_signature(_is_instance_property(property))
+                .parameters(0, return_type ref, parameters ref);
+
+            encode_type(return_type.`type(false), property.type!);
+
+            return builder.to_array();
+        si
+
+        _is_instance_property(property: Semantic.Symbols.Property) -> bool static =>
+            isa Semantic.Symbols.INSTANCE_PROPERTY(property);
+
         field_signature(`field: Semantic.Symbols.Field) -> ubyte[] is
             let closure = _frame_mapping(`field);
 

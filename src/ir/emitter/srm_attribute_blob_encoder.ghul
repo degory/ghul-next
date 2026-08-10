@@ -479,20 +479,47 @@ namespace IR.Emitter is
         // the type comes from the assembly being built or from the core
         // library, which a reader resolves without being told.
         _serialized_type_name(type: Type) -> string is
+            // The emitted name, not the source one. A type declared in a
+            // file with no namespace is emitted under a namespace
+            // derived from the file name, which its qualified name does
+            // not carry — so a `typeof` of one would name a type that
+            // does not exist in the assembly it claims to be in.
+            //
+            // The IL quoting has to come off: this name is parsed by the
+            // reflection type resolver rather than read by ilasm, and
+            // the resolver takes `'System'.'AttributeTargets'` literally.
+            let name =
+                SRM_SIGNATURE_ENCODER.unquote(
+                    _strip_assembly_prefix(type.get_il_class_name().trim()));
+
             let symbol = cast Semantic.Symbols.Classy?(type.symbol);
 
-            if !symbol? then
-                return type.symbol.qualified_name;
-            fi
+            let assembly_name = symbol?.il_assembly_name;
 
-            let name = symbol.il_name_override ?? symbol.qualified_name;
-            let assembly_name = symbol.il_assembly_name;
-
+            // A type this assembly declares is left unqualified, which
+            // is how the resolver is told to look here.
             if !assembly_name? \/ assembly_name.length == 0 then
                 return name;
             fi
 
             return "{name}, {assembly_name}";
+        si
+
+        // An IL class name from an imported assembly is written
+        // `[assembly]Namespace.NAME`; the assembly goes in the blob's
+        // own comma-separated tail instead, if at all.
+        _strip_assembly_prefix(name: string) -> string static is
+            if !name.starts_with("[") then
+                return name;
+            fi
+
+            let close = name.index_of(']');
+
+            if close < 0 then
+                return name;
+            fi
+
+            return name.substring(close + 1);
         si
 
         _is_string(type: Type) -> bool => type.matches(_lookup.get_string_type());

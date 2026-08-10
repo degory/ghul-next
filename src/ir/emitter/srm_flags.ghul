@@ -140,6 +140,9 @@ namespace IR.Emitter is
         method_name(method: Function) -> string static =>
             method.il_bare_name.replace("'", "");
 
+        property_name(property: Semantic.Symbols.Property) -> string static =>
+            property.il_bare_name.replace("'", "");
+
         _PRIVATE_FIELD: int static => 1;
         _ASSEMBLY_FIELD: int static => 3;
         _PUBLIC_FIELD: int static => 6;
