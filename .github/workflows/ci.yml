@@ -516,7 +516,7 @@ jobs:
       run: dotnet test analysis-tests -p:SkipCompilerProjectRef=true
 
   # Real .ghulproj builds against a separate assembly, so they need the
-  # emission surface too. Reported but not gating, same as codegen_tests.
+  # emission surface too.
   cross_assembly_tests:
     needs: [version, build]
     # The first of the disabled jobs to come back. The tests the binary
