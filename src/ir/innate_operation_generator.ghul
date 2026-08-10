@@ -268,21 +268,37 @@ namespace IR is
                 throw System.Exception("unexpected arithmetic_decimal operation: {op}");
             fi
 
-            if is_unary then
-                block.add("call {decimal_il} {decimal_il}::{method_name}({decimal_il})");
-            else
-                block.add("call {decimal_il} {decimal_il}::{method_name}({decimal_il}, {decimal_il})");
-            fi
+            let decimal_type = IoC.CONTAINER.instance.innate_symbol_lookup.get_decimal_type();
+
+            block.add(
+                Values.DECIMAL_CALL(
+                    decimal_type,
+                    method_name,
+                    _decimal_parameters(decimal_type, if is_unary then 1 else 2 fi)));
+        si
+
+        _decimal_parameters(decimal_type: Semantic.Types.Type, count: int) -> Collections.List[Semantic.Types.Type] is
+            let result = Collections.LIST[Semantic.Types.Type]();
+
+            for i in 0..count do
+                result.add(decimal_type);
+            od
+
+            return result;
         si
 
         gen_compare_decimal(value: INNATE, block: BLOCK) is
             gen_arguments(value, block);
 
-            let decimal_il = "valuetype ['System.Runtime']'System'.'Decimal'";
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let decimal_type = lookup.get_decimal_type();
+            let bool_type = lookup.get_bool_type();
+            let operands = _decimal_parameters(decimal_type, 2);
+
             let op = value.op_name;
 
             if op =~ "equality" then
-                block.add("call bool {decimal_il}::op_Equality({decimal_il}, {decimal_il})");
+                block.add(Values.DECIMAL_CALL(bool_type, "op_Equality", operands));
 
                 if value.actual_operation =~ "!=" then
                     block.add(Values.INSTRUCTION("ldc.i4 0"));
@@ -308,7 +324,7 @@ namespace IR is
                     throw System.Exception("unexpected compare_decimal.order operation: {actual}");
                 fi
 
-                block.add("call bool {decimal_il}::{method_name}({decimal_il}, {decimal_il})");
+                block.add(Values.DECIMAL_CALL(bool_type, method_name, operands));
 
                 return;
             fi

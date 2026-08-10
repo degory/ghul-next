@@ -12,9 +12,10 @@ namespace IR is
 
         // System.Decimal has no `conv.*` IL opcode. Conversion to or
         // from decimal is a static call to `op_Implicit` / `op_Explicit`
-        // on the Decimal type; the overload is keyed by the other type.
-        // Populated by complete_initialization alongside _instructions.
-        _decimal_to_il: Collections.MAP[string, string];
+        // on the Decimal type, overloaded per neighbouring type; this
+        // is the set of neighbours those overloads cover. Populated by
+        // complete_initialization alongside _instructions.
+        _decimal_neighbours: Collections.SET[string];
         _decimal_implicit_sources: Collections.SET[string];
 
         super();
@@ -45,7 +46,7 @@ namespace IR is
             add_instruction(_innate_symbol_lookup.get_single_type(), "conv.r4");
             add_instruction(_innate_symbol_lookup.get_double_type(), "conv.r8");
 
-            _decimal_to_il = Collections.MAP[string, string]();
+            _decimal_neighbours = Collections.SET[string]();
             _decimal_implicit_sources = Collections.SET[string]();
 
             // char is omitted intentionally — this table hard-codes a
@@ -57,25 +58,25 @@ namespace IR is
             // reaches those through the general methodref machinery
             // instead, so `cast char(d)` and `cast decimal(c)` still
             // work even though this fast-path table doesn't cover them.
-            register_decimal_neighbour(_innate_symbol_lookup.get_byte_type(), "int8", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_ubyte_type(), "unsigned int8", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_short_type(), "int16", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_ushort_type(), "unsigned int16", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_int_type(), "int32", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_uint_type(), "unsigned int32", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_long_type(), "int64", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_ulong_type(), "unsigned int64", true);
-            register_decimal_neighbour(_innate_symbol_lookup.get_single_type(), "float32", false);
-            register_decimal_neighbour(_innate_symbol_lookup.get_double_type(), "float64", false);
+            register_decimal_neighbour(_innate_symbol_lookup.get_byte_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_ubyte_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_short_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_ushort_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_int_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_uint_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_long_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_ulong_type(), true);
+            register_decimal_neighbour(_innate_symbol_lookup.get_single_type(), false);
+            register_decimal_neighbour(_innate_symbol_lookup.get_double_type(), false);
         si
 
         add_instruction(type: Type, instruction: string) is
             _instructions![type.symbol.qualified_name] = instruction;
         si
 
-        register_decimal_neighbour(type: Type, il_name: string, is_implicit_to_decimal: bool) is
+        register_decimal_neighbour(type: Type, is_implicit_to_decimal: bool) is
             let qn = type.symbol.qualified_name;
-            _decimal_to_il[qn] = il_name;
+            _decimal_neighbours.add(qn);
             if is_implicit_to_decimal then
                 _decimal_implicit_sources.add(qn);
             fi
@@ -98,14 +99,21 @@ namespace IR is
             return null;
         si
 
-        // Returns the IL line that converts a value of `source` on the
-        // stack to `target`, when at least one of them is decimal.
-        // Returns null if neither is decimal, or if the requested
-        // conversion has no Decimal::op_Implicit/op_Explicit overload.
-        // Returns "nop" for the decimal -> decimal identity case so
-        // callers can still emit a non-empty CONVERT (the stack stays
-        // typed as decimal either way).
-        get_decimal_conversion_instruction(source: Type?, target: Type?) -> string? is
+        // How a value of `source` on the stack becomes a `target`, when
+        // at least one of them is decimal. Null when neither is, or
+        // when the pair has no `Decimal::op_Implicit`/`op_Explicit`
+        // overload.
+        //
+        // `is_identity` is the decimal-to-decimal case, which is not a
+        // call: the stack stays typed as decimal either way. Otherwise
+        // the conversion is that one static method on `System.Decimal`,
+        // described by the types it goes between rather than by the IL
+        // line that calls it — the caller needs a token for it, and a
+        // rendered call is not something a token can be read out of.
+        get_decimal_conversion(
+            source: Type?,
+            target: Type?
+        ) -> (is_identity: bool, method_name: string, parameter_type: Type, return_type: Type)? is
             complete_initialization();
 
             if !source? \/ !target? then
@@ -122,35 +130,40 @@ namespace IR is
             fi
 
             if source_is_decimal /\ target_is_decimal then
-                return "nop";
+                return (
+                    is_identity = true,
+                    method_name = "",
+                    parameter_type = decimal_type,
+                    return_type = decimal_type);
             fi
 
-            let decimal_il = "valuetype ['System.Runtime']'System'.'Decimal'";
-
             if target_is_decimal then
-                if !_decimal_to_il.contains_key(source.symbol.qualified_name) then
+                if !_decimal_neighbours.contains(source.symbol.qualified_name) then
                     return null;
                 fi
 
-                let source_il = _decimal_to_il[source.symbol.qualified_name];
-
-                let method_name =
-                    if _decimal_implicit_sources.contains(source.symbol.qualified_name) then
-                        "op_Implicit"
-                    else
-                        "op_Explicit"
-                    fi;
-
-                return "call {decimal_il} {decimal_il}::{method_name}({source_il})";
+                return (
+                    is_identity = false,
+                    method_name =
+                        if _decimal_implicit_sources.contains(source.symbol.qualified_name) then
+                            "op_Implicit"
+                        else
+                            "op_Explicit"
+                        fi,
+                    parameter_type = source,
+                    return_type = decimal_type);
             fi
 
-            if !_decimal_to_il.contains_key(target.symbol.qualified_name) then
+            if !_decimal_neighbours.contains(target.symbol.qualified_name) then
                 return null;
             fi
 
-            let target_il = _decimal_to_il[target.symbol.qualified_name];
-
-            return "call {target_il} {decimal_il}::op_Explicit({decimal_il})";
+            return (
+                is_identity = false,
+                method_name = "op_Explicit",
+                parameter_type = decimal_type,
+                return_type = target);
         si
+
     si
 si
