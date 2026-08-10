@@ -958,16 +958,28 @@ namespace IR is
         // the receiver is the type applied to its own parameters, and a
         // definition row names the open type, which no instantiation is.
         _owner_is_generic(member: Semantic.Symbols.Symbol) -> bool is
-            if isa Semantic.Symbols.GENERIC(member.owner) then
+            let owner = _owning_scope(member);
+
+            if isa Semantic.Symbols.GENERIC(owner) then
                 return true;
             fi
 
-            if let owner: Semantic.Symbols.Classy = member.owner then
-                return owner.is_generic;
+            if let classy: Semantic.Symbols.Classy = owner then
+                return classy.is_generic;
             fi
 
             return false;
         si
+
+        // An `impl` or `partial` block owns its members through the
+        // block's own scope, but they are members of the type the block
+        // injects into, and it is that type they hang off.
+        _owning_scope(member: Semantic.Symbols.Symbol) -> Semantic.Scope? =>
+            if let injection: Semantic.INJECTION_SCOPE = member.owner then
+                injection.target
+            else
+                member.owner
+            fi;
 
         // The reference row for the type an imported member hangs off.
         // A global function or variable hangs off its namespace's
@@ -978,12 +990,14 @@ namespace IR is
         ) -> System.Reflection.Metadata.EntityHandle is
             let emitter = srm_assembly_emitter!;
 
+            let owner = _owning_scope(member);
+
             // A member of a constructed generic hangs off the
             // instantiation, which is named by a specification. The
             // open type's own reference names a type of no arguments
             // by that name, which does not exist, so a reference
             // through it fails to load.
-            if let constructed: Semantic.Symbols.GENERIC = member.owner then
+            if let constructed: Semantic.Symbols.GENERIC = owner then
                 return resolve_type_token(constructed.type);
             fi
 
@@ -995,10 +1009,10 @@ namespace IR is
             // `Classy.type` is the *open* type (`Types.NAMED(self)`), so
             // the instantiation has to be built here from the type
             // parameters the class declared into its own scope.
-            if let owner: Semantic.Symbols.Classy = member.owner then
-                if owner.is_generic then
+            if let classy: Semantic.Symbols.Classy = owner then
+                if classy.is_generic then
                     return cast System.Reflection.Metadata.EntityHandle(
-                        emitter.add_type_specification(owner.own_instantiation));
+                        emitter.add_type_specification(classy.own_instantiation));
                 fi
             fi
 
@@ -1017,9 +1031,9 @@ namespace IR is
             // standing for it, and only the latter answers
             // `containing_namespace`.
             let owner_namespace =
-                if let declared: Semantic.Symbols.NAMESPACE = member.owner then
+                if let declared: Semantic.Symbols.NAMESPACE = owner then
                     declared;
-                elif let scope: Semantic.NAMESPACE_SCOPE = member.owner then
+                elif let scope: Semantic.NAMESPACE_SCOPE = owner then
                     scope.containing_namespace;
                 else
                     null;
@@ -1033,9 +1047,22 @@ namespace IR is
                     Semantic.DotNet.GLOBALS_CARRIER.name));
             fi
 
-            let owner_classy = cast Semantic.Symbols.Classy?(member.owner);
+            let owner_classy = cast Semantic.Symbols.Classy?(owner);
 
-            assert owner_classy? else "cannot reference a member owned by {member.owner}";
+            assert owner_classy? else "cannot reference a member owned by {owner}";
+
+            // A type this assembly defines is named by its own
+            // definition row rather than by a reference into another
+            // assembly. The row does not exist yet — the numbering pass
+            // fixed which row it will be, and the token resolves once
+            // the structure walk writes it.
+            //
+            // This comes after the generic branches above: a definition
+            // row names the open type, so an instantiation still needs
+            // a specification even when this assembly declares it.
+            if let definition = emitter.handles.type_definition(owner_classy) then
+                return cast System.Reflection.Metadata.EntityHandle(definition);
+            fi
 
             // il_name_override on an imported type is the CLR-side
             // dotted full name (see symbol_factory.ghul's get_il_name),

@@ -6,6 +6,7 @@ namespace IR.Emitter is
     use Semantic.Symbols.Field;
     use Semantic.Symbols.Property;
     use Semantic.Symbols.FUNCTION_GROUP;
+    use Semantic.Symbols.TYPE_GROUP;
     use Semantic.Symbols.NAMESPACE;
 
     // One type in the emitted assembly.
@@ -119,20 +120,37 @@ namespace IR.Emitter is
                     namespaces.add(`namespace);
 
                     _collect(`namespace, declared, namespaces, seen);
+                elif let group: TYPE_GROUP = symbol then
+                    // Same-name types at different argument counts are
+                    // one symbol in the scope and separate types in the
+                    // assembly, so the group is descended into rather
+                    // than emitted.
+                    for type in group.classies do
+                        _collect_type(type, declared, namespaces, seen);
+                    od
                 elif let type: Classy = symbol then
-                    if seen.contains(type) then
-                        continue;
-                    fi
-
-                    seen.add(type);
-                    declared.add(type);
-
-                    // A union's variants are declared into the union's
-                    // own scope rather than into the namespace, and are
-                    // types in their own right in the emitted assembly.
-                    _collect(type, declared, namespaces, seen);
+                    _collect_type(type, declared, namespaces, seen);
                 fi
             od
+        si
+
+        _collect_type(
+            type: Classy,
+            declared: Collections.LIST[Classy],
+            namespaces: Collections.LIST[NAMESPACE],
+            seen: Collections.SET[Classy]
+        ) static is
+            if seen.contains(type) then
+                return;
+            fi
+
+            seen.add(type);
+            declared.add(type);
+
+            // A union's variants are declared into the union's own
+            // scope rather than into the namespace, and are types in
+            // their own right in the emitted assembly.
+            _collect(type, declared, namespaces, seen);
         si
 
         _frames(
