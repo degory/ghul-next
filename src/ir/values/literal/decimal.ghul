@@ -35,6 +35,17 @@ namespace IR.Values.Literal is
         si
 
         gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.ldc_i4(_lo);
+                body.ldc_i4(_mid);
+                body.ldc_i4(_hi);
+                body.ldc_i4(0);
+                body.ldc_i4(_scale);
+                body.new_object(context.resolve_decimal_constructor());
+
+                return;
+            fi
+
             context.write_line("ldc.i4 {_lo}");
             context.write_line("ldc.i4 {_mid}");
             context.write_line("ldc.i4 {_hi}");
