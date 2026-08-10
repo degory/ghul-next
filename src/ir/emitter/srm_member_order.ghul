@@ -291,6 +291,12 @@ namespace IR.Emitter is
         // across the two passes: nothing outside the property's own rows
         // names it, so the rows and the map that points at them are both
         // written in the same iteration and cannot disagree.
+        //
+        // Sorted all the same. A scope enumerates by name-keyed map
+        // order, so without this an unrelated edit elsewhere in the same
+        // scope reorders the emitted rows while nothing about the
+        // properties has changed — which the planned byte-comparison of
+        // two bootstrap assemblies would read as a difference.
         properties(type: SRM_EMITTED_TYPE) -> Collections.List[Property] static is
             let result = Collections.LIST[Property]();
 
@@ -307,6 +313,8 @@ namespace IR.Emitter is
                     result.add(property);
                 fi
             od
+
+            _sort_by_declaration(result);
 
             return result;
         si
