@@ -409,6 +409,26 @@ namespace IR.Emitter is
         ) -> System.Reflection.Metadata.ConstantHandle =>
             _metadata.add_constant(parent, value);
 
+        // A custom attribute on whatever `parent` names — a type, a
+        // method, a parameter, the assembly itself.
+        //
+        // CustomAttribute is sorted on its parent, but SRM sorts it
+        // rather than validating it, so rows can be added as the walk
+        // reaches them.
+        add_custom_attribute(
+            parent: EntityHandle,
+            constructor: EntityHandle,
+            value: ubyte[]
+        ) is
+            _metadata.add_custom_attribute(parent, constructor, get_or_add_blob(value));
+        si
+
+        // The value blob of an attribute applied with no arguments: the
+        // two-byte prolog every attribute blob opens with, then a
+        // named-argument count of zero. `01 00 00 00`, which is what the
+        // text emitter writes out by hand at each marker site.
+        NO_ARGUMENT_ATTRIBUTE_VALUE: ubyte[] static => [1ub, 0ub, 0ub, 0ub];
+
         add_type_definition(
             flags: System.Reflection.TypeAttributes,
             namespace_name: StringHandle,
