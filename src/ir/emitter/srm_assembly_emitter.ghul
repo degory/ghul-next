@@ -179,6 +179,35 @@ namespace IR.Emitter is
             return handle;
         si
 
+        // A type nested inside another. Its scope is the enclosing
+        // type's own reference rather than the assembly, and it carries
+        // no namespace of its own — the enclosing reference supplies it.
+        //
+        // Encoded any other way the row names a type that does not
+        // exist: a top-level name containing a separator resolves to
+        // nothing, and the failure surfaces at load as
+        // `Could not load type 'List`1/Enumerator'`.
+        add_nested_type_reference(
+            assembly_name: string,
+            enclosing: TypeReferenceHandle,
+            simple_name: string
+        ) -> TypeReferenceHandle is
+            let key = "{assembly_name}|{MetadataTokens.get_token(cast EntityHandle(enclosing))}|{simple_name}";
+
+            if _named_type_refs.contains_key(key) then
+                return _named_type_refs[key];
+            fi
+
+            let handle = _metadata.add_type_reference(
+                cast EntityHandle(enclosing),
+                _,
+                _metadata.get_or_add_string(simple_name));
+
+            _named_type_refs[key] = handle;
+
+            return handle;
+        si
+
         // Reference to a type that no symbol names — the framework
         // types every assembly needs as a base type regardless of what
         // the source declares.
