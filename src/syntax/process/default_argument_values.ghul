@@ -27,16 +27,16 @@ namespace Syntax.Process is
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_bool_type()) then
-                let v = if stored =~ "True" then "1" else "0" fi;
+                let v = if stored =~ "True" then 1 else 0 fi;
                 return IR.Values.Literal.NUMBER(v, formal_type, "i4");
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_char_type()) then
                 let v =
                     if stored.length > 0 then
-                        "{cast int(stored.get_chars(0))}"
+                        cast int(stored.get_chars(0))
                     else
-                        "0"
+                        0
                     fi;
                 return IR.Values.Literal.NUMBER(v, formal_type, "i4");
             fi
@@ -44,15 +44,15 @@ namespace Syntax.Process is
             if formal_type.matches(innate_symbol_lookup.get_long_type())
                \/ formal_type.matches(innate_symbol_lookup.get_ulong_type())
             then
-                return IR.Values.Literal.NUMBER(stored, formal_type, "i8");
+                return IR.Values.Literal.NUMBER(_stored_integer(stored), formal_type, "i8");
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_single_type()) then
-                return IR.Values.Literal.NUMBER(stored, formal_type, "r4");
+                return IR.Values.Literal.NUMBER(_stored_real(stored), formal_type, "r4");
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_double_type()) then
-                return IR.Values.Literal.NUMBER(stored, formal_type, "r8");
+                return IR.Values.Literal.NUMBER(_stored_real(stored), formal_type, "r8");
             fi
 
             let is_enum_type =
@@ -66,10 +66,34 @@ namespace Syntax.Process is
                \/ formal_type.matches(innate_symbol_lookup.get_uint_type())
                \/ is_enum_type
             then
-                return IR.Values.Literal.NUMBER(stored, formal_type, "i4");
+                return IR.Values.Literal.NUMBER(_stored_integer(stored), formal_type, "i4");
             fi
 
             return IR.Values.DEFAULT(formal_type);
+        si
+
+        // A default value arrives from assembly metadata as its
+        // rendered form, so it is read back here - the one place a
+        // parse is unavoidable, because the rendering is all the
+        // metadata carries.
+        _stored_integer(stored: string) -> long static is
+            let value: long mut = _;
+
+            if long.try_parse(stored, value ref) then
+                return value;
+            fi
+
+            return 0L;
+        si
+
+        _stored_real(stored: string) -> double static is
+            let value: double mut = _;
+
+            if double.try_parse(stored, value ref) then
+                return value;
+            fi
+
+            return 0.0D;
         si
     si
 si

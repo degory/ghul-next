@@ -2,24 +2,69 @@ namespace IR.Values.Literal is
     use TypeTyped = Semantic.Types.Typed;
     use Semantic.Types.Type;
 
+    // A numeric constant, held as the value rather than as the way it
+    // was written down. A source literal can be written in any radix
+    // and with any suffix, so the spelling and the value are not the
+    // same thing: `0xFF00FF00` is a `uint` in range, and reading that
+    // spelling back as a number is not something either back end
+    // should have to do.
+    //
+    // Integers are carried unsigned and reinterpreted at the width the
+    // load asks for, which is what makes the `uint` case above work:
+    // it does not fit `int32` as a magnitude, and the constant `ldc.i4`
+    // takes is the 32-bit pattern, not the magnitude.
     class NUMBER: Value, TypeTyped is
-        value: string;
+        integer_value: ulong;
+        real_value: double;
         type: Type;
         suffix: string;
         conv: string?;
         is_lightweight_pure: bool => true;
 
-        init(value: string, type: Type, suffix: string, conv: string?) is
+        is_real: bool => suffix =~ "r4" \/ suffix =~ "r8";
+
+        _as_int32: int => cast int(cast uint(integer_value));
+        _as_int64: long => cast long(integer_value);
+
+        // What ilasm is given for the constant. Written from the value,
+        // so it agrees with what the binary back end pushes.
+        value: string =>
+            if is_real then
+                "{real_value}";
+            elif suffix =~ "i8" then
+                "{_as_int64}";
+            else
+                "{_as_int32}";
+            fi;
+
+        init(integer_value: ulong, real_value: double, type: Type, suffix: string, conv: string?) is
             super.init();
 
-            self.value = value;
+            self.integer_value = integer_value;
+            self.real_value = real_value;
             self.type = type;
             self.suffix = suffix;
             self.conv = conv;
         si
 
-        init(value: string, type: Type, suffix: string) is
-            self.init(value, type, suffix, null);
+        init(value: ulong, type: Type, suffix: string, conv: string?) is
+            self.init(value, 0.0D, type, suffix, conv);
+        si
+
+        init(value: ulong, type: Type, suffix: string) is
+            self.init(value, 0.0D, type, suffix, null);
+        si
+
+        init(value: long, type: Type, suffix: string) is
+            self.init(cast ulong(value), 0.0D, type, suffix, null);
+        si
+
+        init(value: int, type: Type, suffix: string) is
+            self.init(cast ulong(cast uint(value)), 0.0D, type, suffix, null);
+        si
+
+        init(value: double, type: Type, suffix: string) is
+            self.init(0UL, value, type, suffix, null);
         si
 
         gen(context: IR.CONTEXT) is
@@ -40,18 +85,17 @@ namespace IR.Values.Literal is
             fi
         si
 
-        // `suffix` is the ilasm operand-size selector on the ldc
-        // mnemonic (`i4`, `i8`, `r4`, `r8`), and `value` is the literal
-        // exactly as written in source, so each size parses its own.
+        // `suffix` is the operand-size selector (`i4`, `i8`, `r4`,
+        // `r8`), which decides the width the value is loaded at.
         _gen_srm(body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is
             if suffix =~ "i4" then
-                body.ldc_i4(int.parse(value));
+                body.ldc_i4(_as_int32);
             elif suffix =~ "i8" then
-                body.ldc_i8(long.parse(value));
+                body.ldc_i8(_as_int64);
             elif suffix =~ "r4" then
-                body.ldc_r4(single.parse(value));
+                body.ldc_r4(cast single(real_value));
             elif suffix =~ "r8" then
-                body.ldc_r8(double.parse(value));
+                body.ldc_r8(real_value);
             else
                 throw System.NotImplementedException(
                     "the binary back end cannot load a numeric literal of size '{suffix}' yet");

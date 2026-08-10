@@ -139,11 +139,13 @@ namespace Syntax.Process is
                 return null;
             fi
 
-            if !fits(location, working, type) then
+            let (ok, parsed) = parse_magnitude(working);
+
+            if !ok \/ !fits(location, working, type) then
                 return null;
             fi
 
-            return Literal.NUMBER(working, type, suffix, conv);
+            return Literal.NUMBER(parsed, type, suffix, conv);
         si
 
         // Range-check a parsed integer literal against its target
@@ -152,15 +154,23 @@ namespace Syntax.Process is
         // unary minus negates separately" convention. Without this,
         // oversize literals reach IL emission and ilasm rejects the
         // `ldc.i4 <bignum>` with an opaque syntax error (issue #580).
-        fits(location: LOCATION, value_string: string, type: Type) -> bool is
-            let (ok, parsed) =
-                if value_string.starts_with("0x") \/ value_string.starts_with("0X") then
-                    parse_hex(value_string.substring(2, value_string.length - 2));
-                else
+        // The magnitude a literal denotes, whatever radix it is written
+        // in. Both the range check and the constant the literal loads
+        // need it, so it is read once here rather than each reading the
+        // spelling for itself.
+        parse_magnitude(value_string: string) -> (ok: bool, value: ulong) =>
+            if value_string.starts_with("0x") \/ value_string.starts_with("0X") then
+                parse_hex(value_string.substring(2, value_string.length - 2));
+            else
+                val
                     let v: ulong mut = _;
                     let parsed_ok = ulong.try_parse(value_string, v ref);
-                    (parsed_ok, v);
-                fi;
+                    (parsed_ok, v)
+                lav;
+            fi;
+
+        fits(location: LOCATION, value_string: string, type: Type) -> bool is
+            let (ok, parsed) = parse_magnitude(value_string);
 
             if !ok then
                 _logger.error(location, "numeric literal {value_string} does not fit in {type}");
