@@ -159,9 +159,10 @@ namespace Syntax.Process is
     // and the value BLOCK is rewritten to hold just a `ldfld` of the
     // field. Consumers see a clean load.
     //
-    // One spiller per composite. `init` decides spill-vs-capture
-    // from the value's BLOCK type, the SM frame, and whether body
-    // contains a suspend outside nested function literals. `enter`
+    // One spiller per composite. Which mode it is in follows from
+    // whether compile-expressions recorded a frame field for the
+    // node, which is where the spill-vs-capture decision is made.
+    // `enter`
     // opens the BLOCK for direct emission when capturing; `emit
     // _value` emits each tail/branch value (spill or forward);
     // `leave` either rewrites the BLOCK's contents to a field load
@@ -176,9 +177,9 @@ namespace Syntax.Process is
 
         init(
             gen: GENERATE_IL,
+            node: Trees.Node,
             value: IR.Values.Value?,
-            frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE?,
-            contains_suspend: bool
+            frame: Semantic.Symbols.STATE_MACHINE_FRAME_BASE?
         ) is
             _gen = gen;
 
@@ -186,25 +187,24 @@ namespace Syntax.Process is
                 return;
             fi
 
-            let value_block = cast IR.Values.BLOCK(value);
-            _value_block = value_block;
+            _value_block = cast IR.Values.BLOCK(value);
 
-            if !frame? \/ !contains_suspend then
+            if !frame? then
                 return;
             fi
 
-            // Void-typed value BLOCK: declare_anonymous_field on a
-            // void type produces invalid IL, and the ldarg.0/v/stfld
-            // triple would itself be bogus. Stay in capture mode —
-            // the void value carries no data across the join.
-            let value_type = value_block.type;
+            // Compile-expressions makes the spill-vs-capture decision
+            // and allocates the field, because a frame field first
+            // declared here would be numbered by nothing. An entry
+            // means spill; none means capture.
+            let spill_field = gen.composite_spill_state.get(node);
 
-            if value_type.is_void then
+            if !spill_field? then
                 return;
             fi
 
             _frame = frame;
-            _spill_field = frame.declare_anonymous_field("spill", value_type);
+            _spill_field = spill_field;
         si
 
         is_spilling: bool => _spill_field?;
@@ -277,6 +277,10 @@ namespace Syntax.Process is
         _overload_resolver: Semantic.OVERLOAD_RESOLVER;
         _symbol_use_locations: Semantic.SYMBOL_USE_LOCATIONS;
         _build_flags: Compiler.GLOBAL_BUILD_FLAGS;
+
+        // Read by COMPOSITE_VALUE_SPILLER: an entry is compile-
+        // expressions telling this composite to spill.
+        composite_spill_state: COMPOSITE_SPILL_STORE;
 
         _context: CONTEXT;
         _brancher: BRANCHER;
@@ -379,7 +383,8 @@ namespace Syntax.Process is
             brancher: BRANCHER,
             boilerplate_generator: BOILERPLATE_GENERATOR,
             boxer: VALUE_BOXER,
-            build_flags: Compiler.GLOBAL_BUILD_FLAGS
+            build_flags: Compiler.GLOBAL_BUILD_FLAGS,
+            composite_spill_state: COMPOSITE_SPILL_STORE
         )
         is
             super.init(logger, symbol_table, namespaces);
@@ -400,6 +405,7 @@ namespace Syntax.Process is
             _boilerplate_generator = boilerplate_generator;
             _boxer = boxer;
             _build_flags = build_flags;
+            self.composite_spill_state = composite_spill_state;
 
             _loops = LOOP_LABEL_STACK();
             _try_extents = Collections.STACK[Values.TRY_EXTENT]();
@@ -2080,17 +2086,6 @@ namespace Syntax.Process is
             return null;
         si
 
-        // Does `node` contain a state-machine suspend (`await` or
-        // `yield`) outside any nested function literal? Drives the
-        // decision in `LIST.visit` / IF / CASE composite handlers
-        // whether to spill their BLOCK value to a frame field.
-        _contains_suspend(node: Trees.Node) -> bool =>
-            val
-                let scanner = Syntax.Process.CONTAINS_SUSPEND_SCANNER();
-                node.walk(scanner);
-                scanner.found
-            lav;
-
         // Build the IR Value that loads from `field` on the current
         // state-machine frame — used as the spilled BLOCK's stand-in
         // value. The consumer that does `add(block)` reads this
@@ -2126,18 +2121,11 @@ namespace Syntax.Process is
         // load. Returns true if the spill path ran (caller skips
         // the ordinary capture path); false otherwise.
         _try_spill_block_with_suspend(list: Statements.LIST) -> bool is
-            // `want_dispose` lists need their `.try` body inside
-            // the protected region — bypass spill and let the
-            // capture path handle it.
-            if list.want_dispose then
-                return false;
-            fi
-
             let spiller = COMPOSITE_VALUE_SPILLER(
                 self,
+                list,
                 list.value,
-                _current_state_machine_frame(),
-                _contains_suspend(list)
+                _current_state_machine_frame()
             );
 
             if !spiller.is_spilling then
@@ -3683,9 +3671,9 @@ namespace Syntax.Process is
             // holding just a `ldfld` so consumers see a clean load.
             let spiller = COMPOSITE_VALUE_SPILLER(
                 self,
+                block,
                 block.value,
-                _current_state_machine_frame(),
-                _contains_suspend(block)
+                _current_state_machine_frame()
             );
 
             spiller.enter();
@@ -5206,9 +5194,9 @@ namespace Syntax.Process is
             // directly.
             let spiller = COMPOSITE_VALUE_SPILLER(
                 self,
+                `if,
                 `if.value,
-                _current_state_machine_frame(),
-                _contains_suspend(`if)
+                _current_state_machine_frame()
             );
 
             spiller.enter();
@@ -5359,9 +5347,9 @@ namespace Syntax.Process is
             // exactly when `case.want_value` is true.
             let spiller = COMPOSITE_VALUE_SPILLER(
                 self,
+                `case,
                 `case.value,
-                _current_state_machine_frame(),
-                _contains_suspend(`case)
+                _current_state_machine_frame()
             );
 
             spiller.enter();
