@@ -15,6 +15,34 @@ namespace IR.UnitTests is
     // decodes, so nothing here can disagree with the encoder about what
     // a byte means.
     class EMITTED_IL is
+        // The bytes a call to `emit` encodes, for something that is not
+        // a whole value - a prefix, say.
+        encoded_by(emit: (IR.CONTEXT) -> void) -> ubyte[] static is
+            let context = IR.CONTEXT(null, null);
+            let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+
+            context.srm_assembly_emitter =
+                IR.Emitter.SRM_ASSEMBLY_EMITTER("test", "test", "0:0:0:0", true);
+
+            context.current_srm_body_emitter = body;
+
+            emit(context);
+
+            return body.encoded;
+        si
+
+        assert_encoded_by(
+            op_codes: Collections.Iterable[ILOpCode],
+            emit: (IR.CONTEXT) -> void
+        ) static is
+            let actual = encoded_by(emit);
+            let expected = bytes_of(op_codes);
+
+            Assert.is_true(
+                _describe(actual).starts_with(_describe(expected)),
+                "expected IL beginning {_describe(expected)}, got {_describe(actual)}");
+        si
+
         // The bytes a value encodes. An assembly emitter is present
         // because a value naming a type or a member resolves a token
         // through one.

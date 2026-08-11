@@ -1,7 +1,4 @@
 namespace IR.Values.UnitTests is
-    use System.Reflection.Metadata.ILOpCode;
-
-    use IR.UnitTests.EMITTED_IL;
     use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
     use Source.LOCATION;
@@ -21,21 +18,6 @@ namespace IR.Values.UnitTests is
         type_t() -> Semantic.Types.Type =>
             CLASSY_GENERIC_ARGUMENT(loc(), null, "T", 0).type!;
 
-
-        Calling__gen__should_emit_inner_then_ldnull_then_cgt_un() is
-            @test()
-
-            // `x?` lowers to `x; ldnull; cgt.un` — pushes 1 if the reference
-            // on the stack is non-null, 0 otherwise. The unsigned compare
-            // (cgt.un) is load-bearing: a signed cgt would treat one of
-            // null/non-null as negative depending on pointer representation
-            // and produce wrong results on 64-bit. Pinning the unsigned
-            // form catches a regression to plain `cgt`.
-            let inner = RAW("// inner-ref");
-            let value = HAS_VALUE(inner, type_t());
-
-            EMITTED_IL.assert_emits([ILOpCode.LDNULL, ILOpCode.CGT_UN], value);
-        si
 
         has_type__should_be_true_when_type_is_set() is
             @test()

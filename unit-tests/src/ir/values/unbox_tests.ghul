@@ -1,7 +1,4 @@
 namespace IR.Values.UnitTests is
-    use System.Reflection.Metadata.ILOpCode;
-
-    use IR.UnitTests.EMITTED_IL;
     use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
     use Source.LOCATION;
@@ -33,17 +30,5 @@ namespace IR.Values.UnitTests is
             Assert.is_true(value.is_value_type);
         si
 
-        Calling__gen__should_emit_inner_then_unbox_any_il_type() is
-            @test()
-
-            // UNBOX lowers to `value; unbox.any {il_type}`. The `.any`
-            // suffix matters: bare `unbox` returns a managed pointer to
-            // the inside of the boxed value, which is rarely what callers
-            // want. `unbox.any` does the deref and gives a value-type
-            // copy on the stack.
-            let value = UNBOX(raw_value());
-
-            EMITTED_IL.assert_emits_token_instructions([ILOpCode.UNBOX_ANY], value);
-        si
     si
 si

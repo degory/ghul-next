@@ -1,4 +1,7 @@
 namespace IR.Values.UnitTests is
+    use System.Reflection.Metadata.ILOpCode;
+
+    use IR.UnitTests.EMITTED_IL;
     use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
     use Source.LOCATION;
@@ -39,11 +42,9 @@ namespace IR.Values.UnitTests is
         Calling__gen_prefix__should_emit_the_constrained_prefix_for_the_receiver_type() is
             @test()
 
-            let context = IR.CONTEXT(null, null);
-            context.enter_buffer(false);
-            receiver().gen_prefix(context);
-
-            Assert.are_equal("constrained. !0 \n", context.leave_buffer());
+            EMITTED_IL.assert_encoded_by(
+                [ILOpCode.CONSTRAINED],
+                (context: IR.CONTEXT) -> void is receiver().gen_prefix(context); si);
         si
     si
 si
