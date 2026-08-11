@@ -362,9 +362,9 @@ jobs:
   # Publishing does depend on this job, so it stops for as long as this fails.
   # That is the intent - a compiler that cannot emit is not worth putting on a
   # feed - and each run's packed artefact stays downloadable regardless.
-  # The execution and il groups need the whole emission surface, of which
-  # the SRM back end so far covers a hello world. Reported but not gating
-  # until the ported surface catches up, one group at a time.
+  # The execution and il groups need the whole emission surface, which
+  # the SRM back end does not cover yet. Reported but not gating until
+  # the ported surface catches up, one group at a time.
   codegen_tests:
     needs: [version, bootstrap]
     # Disabled until the back end emits everything this one needs. A job
@@ -661,8 +661,9 @@ jobs:
       working-directory: ghul-runtime
       run: dotnet test tests/tests.ghulproj
 
-  # Builds ghul-examples against the freshly built compiler, so it needs
-  # the emission surface. Reported but not gating, same as codegen_tests.
+  # Builds ghul-examples against the freshly built compiler, so it
+  # exercises the emission surface end to end: a consumer repository has
+  # to compile against what the bootstrapped compiler produced.
   examples_tests:
     needs: [version, bootstrap]
     name: Run examples tests
