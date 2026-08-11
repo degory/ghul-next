@@ -36,7 +36,7 @@ namespace IR.Emitter is
         // this: it names the frame at the arguments the *caller* passes,
         // which are the caller's own parameters and are spelled where
         // the caller stands.
-        _frame_mapping(member: Semantic.Symbols.Symbol) -> Semantic.Symbols.Closure? static is
+        frame_mapping(member: Semantic.Symbols.Symbol) -> Semantic.Symbols.Closure? static is
             // The closure's own method is emitted as a member of its
             // frame, but it is declared into the function the literal
             // was written in, so its owner does not name the frame.
@@ -45,6 +45,14 @@ namespace IR.Emitter is
             fi
 
             if let frame: Semantic.Symbols.FRAME = member.owner then
+                return frame.closure;
+            fi
+
+            // The frame's own rows need it too: its type parameters are
+            // the enclosing function's symbols, so a bound naming one
+            // encodes at that symbol's method-level position unless the
+            // frame's class-level one is installed.
+            if let frame: Semantic.Symbols.FRAME = member then
                 return frame.closure;
             fi
 
@@ -75,7 +83,7 @@ namespace IR.Emitter is
             isa Semantic.Symbols.INSTANCE_PROPERTY(property);
 
         field_signature(`field: Semantic.Symbols.Field) -> ubyte[] is
-            let closure = _frame_mapping(`field);
+            let closure = frame_mapping(`field);
 
             if closure? then
                 closure.map_type_arguments();
@@ -344,7 +352,7 @@ namespace IR.Emitter is
         si
 
         method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
-            let closure = _frame_mapping(function);
+            let closure = frame_mapping(function);
 
             if closure? then
                 closure.map_type_arguments();
