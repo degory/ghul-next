@@ -71,17 +71,16 @@ namespace Syntax.Process is
             fi
 
             let type: Type mut;
-            let suffix: string mut;
+            let is_double mut = false;
 
             if
                 value_string.ends_with('D') \/
                 value_string.ends_with('d')
             then
                 type = _innate_symbol_lookup.get_double_type();
-                suffix = "r8";
+                is_double = true;
             else
                 type = _innate_symbol_lookup.get_single_type();
-                suffix = "r4";
             fi
 
             let parsed: double mut = _;
@@ -91,11 +90,15 @@ namespace Syntax.Process is
                 return;
             fi
 
-            float.compile_expressions_state.value = Literal.NUMBER(
-                parsed,
-                type,
-                suffix
-            );
+            float.compile_expressions_state.value =
+                Literal.NUMBER(
+                    if is_double then
+                        Literal.CONSTANT.R8(parsed)
+                    else
+                        Literal.CONSTANT.R4(cast single(parsed))
+                    fi,
+                    type
+                );
         si
 
         visit_interpolation(interpolation: Trees.Expressions.STRING_INTERPOLATION) is
@@ -121,8 +124,7 @@ namespace Syntax.Process is
 
             character.compile_expressions_state.value = Literal.NUMBER(
                 c,
-                _innate_symbol_lookup.get_char_type(),
-                "i4"
+                _innate_symbol_lookup.get_char_type()
             );
         si
 
@@ -141,8 +143,7 @@ namespace Syntax.Process is
 
             boolean.compile_expressions_state.value = Literal.NUMBER(
                 value,
-                _innate_symbol_lookup.get_bool_type(),
-                "i4"
+                _innate_symbol_lookup.get_bool_type()
             );
         si
 

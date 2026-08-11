@@ -96,9 +96,9 @@ namespace Semantic is
 
         load_enum_struct_member(symbol: Symbols.ENUM_STRUCT_MEMBER) -> Value =>
             if let number = symbol.numeric_value then
-                Literal.NUMBER(number, symbol.type, "i4");
+                Literal.NUMBER(number, symbol.type);
             else
-                Literal.NUMBER(_wide_enum_pattern(symbol.emitted_value), symbol.type, "i4");
+                Literal.NUMBER(Literal.CONSTANT.I4(cast int(cast uint(_wide_enum_pattern(symbol.emitted_value)))), symbol.type);
             fi;
 
         // A member of an enum wider than int32 has no int32 value to

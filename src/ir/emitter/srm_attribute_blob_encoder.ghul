@@ -337,66 +337,36 @@ namespace IR.Emitter is
         // value: which enum it was is carried by the signature, or by
         // the tag a named or boxed argument writes ahead of it.
         _write_scalar(buffer: BlobBuilder, type: Type, value: IR.Values.Value) -> bool is
-            let text = _constant_text(value);
+            let constant = _constant_of(value);
 
-            if !text? then
+            if !constant? then
                 return false;
             fi
 
             let code = _element_type(type) ?? I4;
 
             if code == BOOLEAN then
-                buffer.write_byte(if text =~ "0" then 0ub else 1ub fi);
-
-                return true;
-            fi
-
-            if code == R4 then
-                buffer.write_single(single.parse(text));
-
-                return true;
-            fi
-
-            if code == R8 then
-                buffer.write_double(double.parse(text));
-
-                return true;
-            fi
-
-            if code == U1 \/ code == U2 \/ code == U4 \/ code == U8 \/ code == CHAR then
-                let unsigned = _parse_unsigned(text);
-
-                if !unsigned? then
-                    return false;
-                fi
-
-                if code == U1 then
-                    buffer.write_byte(cast ubyte(unsigned));
-                elif code == U2 \/ code == CHAR then
-                    buffer.write_u_int16(cast ushort(unsigned));
-                elif code == U4 then
-                    buffer.write_u_int32(cast uint(unsigned));
-                else
-                    buffer.write_u_int64(unsigned);
-                fi
-
-                return true;
-            fi
-
-            let signed = _parse_signed(text);
-
-            if !signed? then
-                return false;
-            fi
-
-            if code == I1 then
-                buffer.write_s_byte(cast byte(signed));
+                buffer.write_byte(if _as_signed(constant) == 0L then 0ub else 1ub fi);
+            elif code == R4 then
+                buffer.write_single(cast single(_as_real(constant)));
+            elif code == R8 then
+                buffer.write_double(_as_real(constant));
+            elif code == U1 then
+                buffer.write_byte(cast ubyte(_as_signed(constant)));
+            elif code == U2 \/ code == CHAR then
+                buffer.write_u_int16(cast ushort(_as_signed(constant)));
+            elif code == U4 then
+                buffer.write_u_int32(cast uint(_as_signed(constant)));
+            elif code == U8 then
+                buffer.write_u_int64(cast ulong(_as_signed(constant)));
+            elif code == I1 then
+                buffer.write_s_byte(cast byte(_as_signed(constant)));
             elif code == I2 then
-                buffer.write_int16(cast short(signed));
+                buffer.write_int16(cast short(_as_signed(constant)));
             elif code == I4 then
-                buffer.write_int32(cast int(signed));
+                buffer.write_int32(cast int(_as_signed(constant)));
             elif code == I8 then
-                buffer.write_int64(signed);
+                buffer.write_int64(_as_signed(constant));
             else
                 return false;
             fi
@@ -404,18 +374,36 @@ namespace IR.Emitter is
             return true;
         si
 
-        // The literal text of a numeric constant: a number, or the unary
-        // minus applied to one - `-5` is a negation over `5` rather than
-        // a negative literal.
-        _constant_text(value: IR.Values.Value) -> string? static is
+        // The integral constant, widened. A narrower target takes the
+        // low bytes of it, which is what the attribute blob holds.
+        _as_signed(constant: IR.Values.Literal.CONSTANT) -> long static =>
+            case constant
+            when i4: IR.Values.Literal.CONSTANT.I4 then cast long(i4.value)
+            when i8: IR.Values.Literal.CONSTANT.I8 then i8.value
+            when r4: IR.Values.Literal.CONSTANT.R4 then cast long(r4.value)
+            when r8: IR.Values.Literal.CONSTANT.R8 then cast long(r8.value)
+            esac;
+
+        _as_real(constant: IR.Values.Literal.CONSTANT) -> double static =>
+            case constant
+            when i4: IR.Values.Literal.CONSTANT.I4 then cast double(i4.value)
+            when i8: IR.Values.Literal.CONSTANT.I8 then cast double(i8.value)
+            when r4: IR.Values.Literal.CONSTANT.R4 then cast double(r4.value)
+            when r8: IR.Values.Literal.CONSTANT.R8 then r8.value
+            esac;
+
+        // The constant a value denotes: a literal, or the unary minus
+        // applied to one - `-5` is a negation over `5` rather than a
+        // negative literal.
+        _constant_of(value: IR.Values.Value) -> IR.Values.Literal.CONSTANT? is
             if let number: IR.Values.Literal.NUMBER = value then
-                return number.value;
+                return number.constant;
             fi
 
             if let negation: IR.Values.Call.INNATE = value then
                 if negation.function.name =~ "-" /\ negation.arguments.count == 1 then
                     if let number: IR.Values.Literal.NUMBER = negation.arguments[0] then
-                        return "-{number.value}";
+                        return _negate(number.constant);
                     fi
                 fi
             fi
@@ -423,31 +411,16 @@ namespace IR.Emitter is
             return null;
         si
 
-        _parse_signed(text: string) -> long? static is
-            let (negative, digits, radix) = _split_literal(text);
+        _negate(constant: IR.Values.Literal.CONSTANT) -> IR.Values.Literal.CONSTANT static =>
+            case constant
+            when i4: IR.Values.Literal.CONSTANT.I4 then IR.Values.Literal.CONSTANT.I4(-i4.value)
+            when i8: IR.Values.Literal.CONSTANT.I8 then IR.Values.Literal.CONSTANT.I8(-i8.value)
+            when r4: IR.Values.Literal.CONSTANT.R4 then IR.Values.Literal.CONSTANT.R4(-r4.value)
+            when r8: IR.Values.Literal.CONSTANT.R8 then IR.Values.Literal.CONSTANT.R8(-r8.value)
+            esac;
 
-            let magnitude = _parse_magnitude(digits, radix);
 
-            if !magnitude? then
-                return null;
-            fi
 
-            if negative then
-                return -cast long(magnitude);
-            fi
-
-            return cast long(magnitude);
-        si
-
-        _parse_unsigned(text: string) -> ulong? static is
-            let (negative, digits, radix) = _split_literal(text);
-
-            if negative then
-                return null;
-            fi
-
-            return _parse_magnitude(digits, radix);
-        si
 
         // A source literal keeps the shape it was written in: a sign, an
         // optional radix prefix, and digits that may be grouped.

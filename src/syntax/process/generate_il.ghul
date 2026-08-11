@@ -2212,7 +2212,7 @@ namespace Syntax.Process is
             get_brancher_for_block().branch(
                 BRANCH.GE,
                 Values.Load.TEMP(state_local_il, int_type),
-                Values.Literal.NUMBER(0, int_type, "i4"),
+                Values.Literal.NUMBER(0, int_type),
                 skip);
 
             return skip;
@@ -2267,7 +2267,7 @@ namespace Syntax.Process is
                 holder.block.add(
                     Values.Load.TEMP(holder.state_local_il, _innate_symbol_lookup.get_int_type()));
                 holder.block.add(
-                    Values.Literal.NUMBER(entry.state, _innate_symbol_lookup.get_int_type(), "i4"));
+                    Values.Literal.NUMBER(entry.state, _innate_symbol_lookup.get_int_type()));
                 holder.block.add(
                     Values.BRANCH_TO(ILOpCode.BEQ, entry.cold_resume_label));
             od
@@ -4485,7 +4485,7 @@ namespace Syntax.Process is
                     current_try.return_value!.store(value);
                 fi
 
-                current_try.return_needed!.store(Literal.NUMBER(1, _innate_symbol_lookup.get_bool_type(), "i4"));
+                current_try.return_needed!.store(Literal.NUMBER(1, _innate_symbol_lookup.get_bool_type()));
 
                 let brancher = get_brancher_for_block();
 
@@ -4683,7 +4683,7 @@ namespace Syntax.Process is
             _emit_state_stamp(
                 frame,
                 frame.state_field,
-                Values.Literal.NUMBER(state, _innate_symbol_lookup.get_int_type(), "i4"),
+                Values.Literal.NUMBER(state, _innate_symbol_lookup.get_int_type()),
                 "'.gen_state'");
 
             // Suspend. From INSIDE an inner `.try`, `ret` is
@@ -5585,7 +5585,7 @@ namespace Syntax.Process is
                 fi
 
                 if outer_try.is_in_finally then
-                    outer_try.return_needed!.store(Literal.NUMBER(1, _innate_symbol_lookup.get_bool_type(), "i4"));
+                    outer_try.return_needed!.store(Literal.NUMBER(1, _innate_symbol_lookup.get_bool_type()));
                     brancher.branch(outer_try.middle);
                 else
                     brancher.leave(outer_try.start);
@@ -5983,7 +5983,7 @@ namespace Syntax.Process is
                     stage_counters.add(null);
                 elif stage.is_index then
                     let counter = TEMP(current_block, "fused_index", _innate_symbol_lookup.get_int_type());
-                    counter.store(Literal.NUMBER(stage.index_start, _innate_symbol_lookup.get_int_type(), "i4"));
+                    counter.store(Literal.NUMBER(stage.index_start, _innate_symbol_lookup.get_int_type()));
                     stage_delegates.add(null);
                     stage_counters.add(counter);
                 else
@@ -6021,11 +6021,11 @@ namespace Syntax.Process is
                     // Decrement the counter for this element; once it goes
                     // negative the take limit is spent, so leave the loop.
                     // The element passes through unchanged otherwise.
-                    brancher.branch(BRANCH.LT, cast Value(IR.Values.PRE_DECREMENT(stage_counters[index]!.il_name, int_type)), cast Value(Literal.NUMBER(0, int_type, "i4")), loop_end);
+                    brancher.branch(BRANCH.LT, cast Value(IR.Values.PRE_DECREMENT(stage_counters[index]!.il_name, int_type)), cast Value(Literal.NUMBER(0, int_type)), loop_end);
                 elif stage.is_skip then
                     // Decrement the counter; while it stays non-negative this
                     // is a leading element to drop, so pull the next one.
-                    brancher.branch(BRANCH.GE, cast Value(IR.Values.PRE_DECREMENT(stage_counters[index]!.il_name, int_type)), cast Value(Literal.NUMBER(0, int_type, "i4")), loop_start);
+                    brancher.branch(BRANCH.GE, cast Value(IR.Values.PRE_DECREMENT(stage_counters[index]!.il_name, int_type)), cast Value(Literal.NUMBER(0, int_type)), loop_start);
                 else
                     let stage_result: Value mut;
 
@@ -6229,7 +6229,7 @@ namespace Syntax.Process is
 
             // Fallback setup: build the pipe chain and iterate it, exactly
             // as the normal for loop would.
-            use_fused.store(Literal.NUMBER(0, bool_type, "i4"));
+            use_fused.store(Literal.NUMBER(0, bool_type));
 
             let pipe_iterator_value =
                 if `for.read_iterator? then
@@ -6246,7 +6246,7 @@ namespace Syntax.Process is
             // pipe objects are never built.
             brancher.label(fused_setup);
 
-            use_fused.store(Literal.NUMBER(1, bool_type, "i4"));
+            use_fused.store(Literal.NUMBER(1, bool_type));
 
             let source_iterator_value =
                 if fusion.source_read_iterator? then
@@ -6407,8 +6407,8 @@ namespace Syntax.Process is
 
             let string_type = _innate_symbol_lookup.get_string_type();
 
-            let literal_length = Literal.NUMBER(interpolation.literal_length, _innate_symbol_lookup.get_int_type(), "i4");
-            let expression_count = Literal.NUMBER(interpolation.expression_count, _innate_symbol_lookup.get_int_type(), "i4");
+            let literal_length = Literal.NUMBER(interpolation.literal_length, _innate_symbol_lookup.get_int_type());
+            let expression_count = Literal.NUMBER(interpolation.expression_count, _innate_symbol_lookup.get_int_type());
 
             let interpolator = 
                 TEMP(

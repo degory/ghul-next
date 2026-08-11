@@ -28,7 +28,7 @@ namespace Syntax.Process is
 
             if formal_type.matches(innate_symbol_lookup.get_bool_type()) then
                 let v = if stored =~ "True" then 1 else 0 fi;
-                return IR.Values.Literal.NUMBER(v, formal_type, "i4");
+                return IR.Values.Literal.NUMBER(v, formal_type);
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_char_type()) then
@@ -38,7 +38,7 @@ namespace Syntax.Process is
                     else
                         0
                     fi;
-                return IR.Values.Literal.NUMBER(v, formal_type, "i4");
+                return IR.Values.Literal.NUMBER(v, formal_type);
             fi
 
             if formal_type.matches(innate_symbol_lookup.get_long_type())
@@ -48,7 +48,7 @@ namespace Syntax.Process is
 
                 return
                     if ok then
-                        IR.Values.Literal.NUMBER(value, formal_type, "i8")
+                        IR.Values.Literal.NUMBER(IR.Values.Literal.CONSTANT.I8(cast long(value)), formal_type)
                     else
                         IR.Values.DEFAULT(formal_type)
                     fi;
@@ -59,7 +59,7 @@ namespace Syntax.Process is
 
                 return
                     if ok then
-                        IR.Values.Literal.NUMBER(value, formal_type, "r4")
+                        IR.Values.Literal.NUMBER(cast single(value), formal_type)
                     else
                         IR.Values.DEFAULT(formal_type)
                     fi;
@@ -70,7 +70,7 @@ namespace Syntax.Process is
 
                 return
                     if ok then
-                        IR.Values.Literal.NUMBER(value, formal_type, "r8")
+                        IR.Values.Literal.NUMBER(value, formal_type)
                     else
                         IR.Values.DEFAULT(formal_type)
                     fi;
@@ -91,7 +91,9 @@ namespace Syntax.Process is
 
                 return
                     if ok then
-                        IR.Values.Literal.NUMBER(value, formal_type, "i4")
+                        IR.Values.Literal.NUMBER(
+                            IR.Values.Literal.CONSTANT.I4(cast int(cast uint(value))),
+                            formal_type)
                     else
                         IR.Values.DEFAULT(formal_type)
                     fi;

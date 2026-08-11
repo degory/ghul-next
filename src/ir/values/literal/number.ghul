@@ -1,138 +1,98 @@
 namespace IR.Values.Literal is
+    use System.Reflection.Metadata.ILOpCode;
     use TypeTyped = Semantic.Types.Typed;
     use Semantic.Types.Type;
 
-    // A numeric constant, held as the value rather than as the way it
-    // was written down. A source literal can be written in any radix
-    // and with any suffix, so the spelling and the value are not the
-    // same thing: `0xFF00FF00` is a `uint` in range, and reading that
-    // spelling back as a number is not something either back end
-    // should have to do.
+    // The constant a numeric literal loads, at the width it is loaded at.
     //
-    // Integers are carried unsigned and reinterpreted at the width the
-    // load asks for, which is what makes the `uint` case above work:
-    // it does not fit `int32` as a magnitude, and the constant `ldc.i4`
-    // takes is the 32-bit pattern, not the magnitude.
+    // An integer is held at the width its load asks for rather than as a
+    // magnitude, because the two are not the same: `0xFF00FF00` is a
+    // `uint` in range, and the constant `ldc.i4` takes is the 32-bit
+    // pattern, which read as a magnitude is negative.
+    union CONSTANT is
+        I4(value: int);
+        I8(value: long);
+        R4(value: single);
+        R8(value: double);
+    si
+
+    // A numeric constant, held as the value rather than as the way it was
+    // written down. A source literal can be written in any radix and with
+    // any suffix, so the spelling and the value are not the same thing,
+    // and reading that spelling back is not something emission should
+    // have to do.
     class NUMBER: Value, TypeTyped is
-        integer_value: ulong;
-        real_value: double;
+        constant: CONSTANT;
         type: Type;
-        suffix: string;
-        conv: string?;
+
+        // Narrows the loaded constant to the literal's declared type,
+        // where the width it is loaded at is wider than that type.
+        conv: ILOpCode?;
+
         is_lightweight_pure: bool => true;
 
-        is_real: bool => suffix =~ "r4" \/ suffix =~ "r8";
+        is_real: bool =>
+            case constant
+            when _: CONSTANT.R4 then true
+            when _: CONSTANT.R8 then true
+            else false
+            esac;
 
-        _as_int32: int => cast int(cast uint(integer_value));
-        _as_int64: long => cast long(integer_value);
+        // The constant written out. Wanted by the text back end, which
+        // renders attribute arguments as assembler source, and as a key
+        // for comparing case-arm constants.
+        rendered: string =>
+            case constant
+            when i4: CONSTANT.I4 then "{i4.value}"
+            when i8: CONSTANT.I8 then "{i8.value}"
+            when r4: CONSTANT.R4 then "{r4.value}"
+            when r8: CONSTANT.R8 then "{r8.value}"
+            esac;
 
-        // What ilasm is given for the constant. Written from the value,
-        // so it agrees with what the binary back end pushes.
-        value: string =>
-            if is_real then
-                "{real_value}";
-            elif suffix =~ "i8" then
-                "{_as_int64}";
-            else
-                "{_as_int32}";
-            fi;
-
-        init(integer_value: ulong, real_value: double, type: Type, suffix: string, conv: string?) is
+        init(constant: CONSTANT, type: Type, conv: ILOpCode?) is
             super.init();
 
-            self.integer_value = integer_value;
-            self.real_value = real_value;
+            self.constant = constant;
             self.type = type;
-            self.suffix = suffix;
             self.conv = conv;
         si
 
-        init(value: ulong, type: Type, suffix: string, conv: string?) is
-            self.init(value, 0.0D, type, suffix, conv);
+        init(constant: CONSTANT, type: Type) is
+            self.init(constant, type, null);
         si
 
-        init(value: ulong, type: Type, suffix: string) is
-            self.init(value, 0.0D, type, suffix, null);
+        init(value: int, type: Type) is
+            self.init(CONSTANT.I4(value), type, null);
         si
 
-        init(value: long, type: Type, suffix: string) is
-            self.init(cast ulong(value), 0.0D, type, suffix, null);
+        init(value: long, type: Type) is
+            self.init(CONSTANT.I8(value), type, null);
         si
 
-        init(value: int, type: Type, suffix: string) is
-            self.init(cast ulong(cast uint(value)), 0.0D, type, suffix, null);
+        init(value: single, type: Type) is
+            self.init(CONSTANT.R4(value), type, null);
         si
 
-        init(value: double, type: Type, suffix: string) is
-            self.init(0UL, value, type, suffix, null);
+        init(value: double, type: Type) is
+            self.init(CONSTANT.R8(value), type, null);
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
-                _gen_srm(body);
+            let body = context.current_srm_body_emitter!;
 
-                if conv? then
-                    _gen_srm_conversion(body);
-                fi
+            case constant
+            when i4: CONSTANT.I4 then body.ldc_i4(i4.value)
+            when i8: CONSTANT.I8 then body.ldc_i8(i8.value)
+            when r4: CONSTANT.R4 then body.ldc_r4(r4.value)
+            when r8: CONSTANT.R8 then body.ldc_r8(r8.value)
+            esac;
 
-                return;
-            fi
-
-            context.write_line("ldc.{suffix} {value}");
-
-            if conv? then
-                context.write_line(conv!);
-            fi
-        si
-
-        // `suffix` is the operand-size selector (`i4`, `i8`, `r4`,
-        // `r8`), which decides the width the value is loaded at.
-        _gen_srm(body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is
-            if suffix =~ "i4" then
-                body.ldc_i4(_as_int32);
-            elif suffix =~ "i8" then
-                body.ldc_i8(_as_int64);
-            elif suffix =~ "r4" then
-                body.ldc_r4(cast single(real_value));
-            elif suffix =~ "r8" then
-                body.ldc_r8(real_value);
-            else
-                throw System.NotImplementedException(
-                    "the binary back end cannot load a numeric literal of size '{suffix}' yet");
-            fi
-        si
-
-        // `conv` is a bare ilasm conversion mnemonic appended after the
-        // load, narrowing the pushed constant to the literal's declared
-        // type.
-        _gen_srm_conversion(body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is
-            if conv! =~ "conv.i1" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_I1);
-            elif conv! =~ "conv.u1" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_U1);
-            elif conv! =~ "conv.i2" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_I2);
-            elif conv! =~ "conv.u2" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_U2);
-            elif conv! =~ "conv.i4" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_I4);
-            elif conv! =~ "conv.u4" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_U4);
-            elif conv! =~ "conv.i8" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_I8);
-            elif conv! =~ "conv.u8" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_U8);
-            elif conv! =~ "conv.i" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_I);
-            elif conv! =~ "conv.u" then
-                body.op(System.Reflection.Metadata.ILOpCode.CONV_U);
-            else
-                throw System.NotImplementedException(
-                    "the binary back end cannot emit the conversion '{conv!}' yet");
+            if let narrowing = conv then
+                body.op(narrowing);
             fi
         si
 
         to_string() -> string =>
-            "literal:[{type}]({value})";
+            "literal:[{type}]({constant})";
     si
 si
