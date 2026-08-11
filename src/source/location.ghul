@@ -88,6 +88,8 @@ namespace Source is
                 self.start == other.start /\ self.end == other.end /\ self.file_name =~ other.file_name;
             fi;
 
+        get_hash_code() -> int => start ^ (end << 1) ^ file_name.get_hash_code();
+
         pair(line: int, column: int) -> int static => (line << 12) | column;
 
         line_of(line_column: int) -> int static => line_column >> 12;
@@ -119,6 +121,11 @@ namespace Source is
         strictly_contains(other: LOCATION) -> bool =>
             contains(other) /\
             (self.start < other.start \/ self.end > other.end);
+
+        // The zero-width position at this location's start. Combined
+        // with `::` it builds a span running from here to the end of
+        // some inner location.
+        start_position: LOCATION => LOCATION(file_name, start, start);
 
         to_string() -> string =>
             "{file_name} {start_line},{start_column}..{end_line},{end_column}";

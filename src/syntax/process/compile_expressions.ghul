@@ -475,8 +475,12 @@ namespace Syntax.Process is
             return ACCESS_PATH(root, members);
         si
 
-        _check_pure_slots(location: LOCATION, value: IR.Values.Value?) is
-            _pure_slots.check_call(location, value);
+        _check_pure_slots(
+            location: LOCATION,
+            value: IR.Values.Value?,
+            syntax_arguments: Trees.Expressions.LIST?
+        ) is
+            _pure_slots.check_call(location, value, syntax_arguments);
         si
 
         // Drop field narrows once an expression that lowers to a real
@@ -564,7 +568,7 @@ namespace Syntax.Process is
         si
 
         // Statements.LIST.walk calls these around every child. We
-        // push the child's source location onto the workspace
+        // push the child's debug location onto the workspace
         // LOCATION_STACK; every IR Value constructed while that
         // statement is being walked picks it up as its ambient
         // location in Value.init(). Generic at the Node level — the
@@ -578,7 +582,7 @@ namespace Syntax.Process is
             if !_build_flags.want_debug then
                 return;
             fi
-            IoC.CONTAINER.instance.location_stack.push(node.location);
+            IoC.CONTAINER.instance.location_stack.push(node.debug_location);
         si
 
         leave_node(node: Trees.Node) is
@@ -2760,15 +2764,15 @@ namespace Syntax.Process is
                 );
         si
 
-        visit(`new: Trees.Expressions.NEW) is
-            _calls.visit_new(`new);
-            _check_pure_slots(`new.location, `new.value);
-            _note_call(`new.location, `new.value);
+        visit(construct: Trees.Expressions.CONSTRUCT) is
+            _calls.visit_construct(construct);
+            _check_pure_slots(construct.location, construct.value, construct.arguments);
+            _note_call(construct.location, construct.value);
         si
 
         visit(unary: Trees.Expressions.UNARY) is
             _operators.visit_unary(unary);
-            _check_pure_slots(unary.location, unary.value);
+            _check_pure_slots(unary.location, unary.value, null);
             _note_call(unary.location, unary.value);
         si
 
@@ -2778,7 +2782,7 @@ namespace Syntax.Process is
         visit(binary: Trees.Expressions.BINARY) is
             try
                 _operators.visit_binary(binary);
-                _check_pure_slots(binary.location, binary.value);
+                _check_pure_slots(binary.location, binary.value, null);
                 _note_call(binary.location, binary.value);
             catch ex: Exception
                 _logger.exception(binary.location, ex, "exception compiling binary operator (called from {System.Diagnostics.StackTrace().to_string().replace_line_endings(" ")})");
@@ -2789,7 +2793,7 @@ namespace Syntax.Process is
             try
                 _operators.visit_index(index);
                 check_receiver_present(index.left);
-                _check_pure_slots(index.location, index.value);
+                _check_pure_slots(index.location, index.value, null);
                 _note_call(index.location, index.value);
             catch e: Exception
                 index.compile_expressions_state.value = null;
@@ -3774,7 +3778,7 @@ namespace Syntax.Process is
                     fi
                 fi
 
-                _check_pure_slots(call.location, call.value);
+                _check_pure_slots(call.location, call.value, call.arguments);
                 _note_call(call.location, call.value);
 
                 _logger.commit();

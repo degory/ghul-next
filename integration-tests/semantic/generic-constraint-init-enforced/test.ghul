@@ -1,0 +1,19 @@
+// A type argument that does not expose an accessible parameterless
+// constructor violates the `init` constraint — both at explicit and
+// inferred specialisation.
+
+namespace Test is
+    class NO_DEFAULT is
+        init(x: int) is si
+    si
+
+    f[T: init](x: T) -> T => x;
+
+    class Main is
+        entry() static is
+            f[NO_DEFAULT](NO_DEFAULT(1));
+            f(NO_DEFAULT(2));
+            return;
+        si
+    si
+si

@@ -1803,10 +1803,8 @@ namespace Analysis is
             let checked_paths = Collections.LIST[string]();
 
             // An interface-preserving single-file EDIT takes the incremental
-            // body re-walk instead of the whole-project rebuild — when the
-            // process was launched with `--incremental-analysis`. Off by
-            // default; clients (the VS Code extension, the analysis
-            // profiler, the test harness via ANALYSER_EXTRA_ARGS) opt in.
+            // body re-walk instead of the whole-project rebuild.
+            // On by default; `--no-incremental-analysis` turns it off.
             let incremental_eligible =
                 _build_flags.want_incremental_analysis /\
                 !_is_interface_changed /\
@@ -1929,6 +1927,143 @@ namespace Analysis is
 
                 _timers.finish("edit-write-response");
             yrt
+        si
+    si
+
+    // Turns each file's replaced span into that file's whole new text,
+    // then hands the result to the ordinary edit path.
+    //
+    // Reconstruction rather than partial reparsing is the whole of what
+    // this saves: a client sending a keystroke's worth of text instead of
+    // a whole file pays for the edit it made rather than for the size of
+    // the file it made it in. Everything downstream sees exactly what an
+    // edit carrying the same text would.
+    //
+    // Keeping the two copies of a file in step is the client's job: it
+    // sends a delta only when it knows what the analyser holds, and sends
+    // whole text whenever it does not. `expected_length` is the assertion
+    // that it did so, not a negotiation - splicing a span into text that
+    // is not the text it was computed against yields a plausible file
+    // rather than a failure, and every later delta compounds it. So a
+    // mismatch, or a delta for a file the analyser does not hold, is
+    // treated as the desync it is: the analyser recycles, and the
+    // replacement is primed with full text by the same path that primes
+    // any freshly-spawned one.
+    class EDIT_DELTA_HANDLER(
+        _watchdog: WATCHDOG,
+        _file_edited_handler: FILE_EDITED_HANDLER
+    ): RequestHandler[Protocol.Request.EDIT_DELTA] is
+        super();
+
+        handle_request(request: Protocol.Request.EDIT_DELTA, writer: IO.TextWriter) is
+            let files = Collections.LIST[Protocol.EDIT_FILE]();
+
+            for delta in request.files do
+                let retained = _file_edited_handler.find_source_file(delta.path)?.source_text;
+
+                if !retained? then
+                    _desynchronized(writer, delta.path, "no retained text for this file");
+
+                    return;
+                fi
+
+                if retained.length != delta.expected_length then
+                    _desynchronized(
+                        writer,
+                        delta.path,
+                        "retained text is {retained.length} characters, "
+                        "the delta expected {delta.expected_length}"
+                    );
+
+                    return;
+                fi
+
+                let edited = _apply(retained, delta);
+
+                if !edited? then
+                    _desynchronized(
+                        writer,
+                        delta.path,
+                        "the replaced span falls outside the retained text"
+                    );
+
+                    return;
+                fi
+
+                files.add(Protocol.EDIT_FILE(delta.path, edited));
+            od
+
+            _file_edited_handler.handle_request(Protocol.Request.EDIT(files), writer);
+        si
+
+        // Report the desync and recycle. Recycling rather than answering
+        // is what makes this safe to get wrong in only one direction: the
+        // analyser never carries on holding text it cannot account for,
+        // and the process that replaces it starts from whatever the
+        // client sends it.
+        _desynchronized(writer: IO.TextWriter, path: string, reason: string) is
+            Std.error.write_line("edit delta for {path} cannot be applied: {reason}");
+            Std.error.flush();
+
+            _watchdog.recycle(writer, "edit delta out of step with retained text");
+        si
+
+        // `text` with the delta's span replaced by its new text, or null
+        // when the span does not lie within `text`.
+        _apply(text: string, delta: Protocol.EDIT_DELTA_FILE) -> string? is
+            let start = _offset_of(text, delta.start_line, delta.start_column);
+            let stop = _offset_of(text, delta.end_line, delta.end_column);
+
+            if start < 0 \/ stop < start then
+                return null;
+            fi
+
+            let result = System.Text.StringBuilder();
+
+            result.append(text.substring(0, start));
+            result.append(delta.new_text);
+            result.append(text.substring(stop));
+
+            return result.to_string();
+        si
+
+        // Character offset of a 1-based line and column in `text`, or -1
+        // when the position lies outside it. Lines are delimited by a
+        // newline and a carriage return belongs to the line it ends, so a
+        // column counts the characters a client's own buffer holds
+        // whichever line endings the file uses.
+        _offset_of(text: string, line: int, column: int) -> int static is
+            if line < 1 \/ column < 1 then
+                return -1;
+            fi
+
+            let offset mut = 0;
+            let current_line mut = 1;
+
+            while current_line < line do
+                let next_line_start = text.index_of('\n', offset);
+
+                if next_line_start < 0 then
+                    return -1;
+                fi
+
+                offset = next_line_start + 1;
+                current_line = current_line + 1;
+            od
+
+            let line_end mut = text.index_of('\n', offset);
+
+            if line_end < 0 then
+                line_end = text.length;
+            fi
+
+            let result = offset + column - 1;
+
+            if result > line_end then
+                return -1;
+            fi
+
+            return result;
         si
     si
 
@@ -2217,31 +2352,54 @@ namespace Analysis is
                 if !_watchdog.want_restart then
                     let results = find_completions(path, target_line, target_column);
 
-                    if results? then
+                    // The client asked because the user typed a `.`, but
+                    // there is no member access at that position in the
+                    // text this analyser holds — so the text is older
+                    // than the client's and the enclosing scope is not
+                    // an answer to what was asked. Offering it anyway
+                    // fills the list with locals, globals, namespaces
+                    // and statement keywords, none of which can follow
+                    // a `.`.
+                    let answers_the_question =
+                        !request.is_member_trigger \/ _completer.is_member_completion;
+
+                    if results? /\ answers_the_question then
                         for pair in results do
+                            let is_operator = Lexical.TOKENIZER.is_operator_name(pair.key);
+
                             items.add(
                                 Protocol.COMPLETION_ITEM(
                                     pair.key,
-                                    cast int(pair.value.completion_kind),
+                                    if is_operator then
+                                        cast int(Semantic.Symbols.CompletionKind.OPERATOR)
+                                    else
+                                        cast int(pair.value.completion_kind)
+                                    fi,
                                     pair.value.signature,
                                     pair.value.kind_label,
-                                    ""
+                                    if is_operator then
+                                        operator_insert_text(pair.key)
+                                    else
+                                        ""
+                                    fi
                                 )
                             );
                         od
                     fi
 
-                    for keyword in _completer.keyword_results do
-                        items.add(
-                            Protocol.COMPLETION_ITEM(
-                                keyword.name,
-                                cast int(Semantic.Symbols.CompletionKind.KEYWORD),
-                                "",
-                                "keyword",
-                                keyword.snippet
-                            )
-                        );
-                    od
+                    if answers_the_question then
+                        for keyword in _completer.keyword_results do
+                            items.add(
+                                Protocol.COMPLETION_ITEM(
+                                    keyword.name,
+                                    cast int(Semantic.Symbols.CompletionKind.KEYWORD),
+                                    "",
+                                    "keyword",
+                                    keyword.snippet
+                                )
+                            );
+                        od
+                    fi
                 fi
             catch ex: Exception
                 debug_always("COMPLETION caught: {ex.get_type()} {ex.message}");
@@ -2252,6 +2410,30 @@ namespace Analysis is
             Std.error.flush();
 
             JSON_PROTOCOL.write_response(writer, Protocol.Response.COMPLETION(items));
+        si
+
+        // What to insert for an operator member offered after a `.`.
+        // Inserting the bare name would put the operator's characters
+        // straight after the dot, where the tokenizer scans them as one
+        // run and produces a single operator token (`.=~`) rather than a
+        // member access. The backtick escape is the spelling that always
+        // lexes as a member name, whatever the operator is made of.
+        //
+        // The client renders this as an LSP snippet, so the two
+        // characters that carry meaning there are escaped; `$` and `\`
+        // are both operator characters, so both can genuinely occur.
+        operator_insert_text(name: string) -> string is
+            let buffer = System.Text.StringBuilder("`");
+
+            for c in name do
+                if c == '$' \/ c == '\\' then
+                    buffer.append('\\');
+                fi
+
+                buffer.append(c);
+            od
+
+            return buffer.to_string();
         si
 
         find_completions(path: string, target_line: int, target_column: int) -> Iterable[Pair[string,Semantic.Symbols.Symbol]]? is
