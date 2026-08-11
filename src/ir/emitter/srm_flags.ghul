@@ -43,6 +43,14 @@ namespace IR.Emitter is
                 flags = flags | _ABSTRACT_TYPE;
             fi
 
+            // A type declaring its own static constructor must not
+            // carry beforefieldinit, which lets the CLR run the
+            // `.cctor` at an unspecified point before first use rather
+            // than precisely before it.
+            if type.has_static_constructor then
+                return cast TypeAttributes(flags);
+            fi
+
             return cast TypeAttributes(flags | _BEFORE_FIELD_INIT);
         si
 
@@ -62,6 +70,14 @@ namespace IR.Emitter is
         _RT_SPECIAL_NAME: int static => 4096;
 
         method_attributes(method: Function) -> MethodAttributes static is
+            // A `.cctor` is reached by the runtime rather than by any
+            // call site, and only the rtspecialname mark tells it so.
+            // Without it the row is an ordinary static method that
+            // happens to be named `.cctor`, and nothing ever runs it.
+            if method.is_static_constructor then
+                return static_initializer_attributes();
+            fi
+
             let flags mut =
                 if method.is_public_readable then _PUBLIC_METHOD else _ASSEMBLY_METHOD fi;
 
@@ -128,9 +144,9 @@ namespace IR.Emitter is
             return cast MethodAttributes(flags);
         si
 
-        // A unit variant's static constructor, which the back end
-        // synthesises: private, static, and reserved-named like any
-        // other `.cctor`.
+        // A static constructor: private, static, and reserved-named.
+        // Shared by a declared `init() static` and by the one the back
+        // end synthesises to intern a unit variant.
         static_initializer_attributes() -> MethodAttributes static =>
             cast MethodAttributes(
                 _PRIVATE_METHOD | _HIDE_BY_SIG | _STATIC | _SPECIAL_NAME | _RT_SPECIAL_NAME);
