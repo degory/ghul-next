@@ -245,5 +245,10 @@ namespace IR.Emitter is
 
         flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int =>
             assembly_emitter.add_method_body(_encoder, self);
+
+        // The instruction bytes encoded so far. The body is not complete
+        // until it is flushed, which is what fixes branch offsets, so
+        // this is what has been emitted rather than what will be run.
+        encoded: ubyte[] => _encoder.code_builder.to_array();
     si
 si
