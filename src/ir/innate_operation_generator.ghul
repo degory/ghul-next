@@ -188,7 +188,21 @@ namespace IR is
             let left mut = value.arguments[0];
             let right mut = value.arguments[1];
 
-            if left.is_value_type != right.is_value_type then
+            // A pointer against null. A pointer is a value type, so the
+            // mismatch below would box it, and the CLI has no boxed
+            // form for a pointer: what came out was an object reference
+            // that is never null, so a null pointer read as present.
+            // A null pointer is a zero native integer, which is what
+            // the null side pushes instead.
+            if _is_pointer(left) \/ _is_pointer(right) then
+                if _is_null(left) then
+                    left = _native_zero(right.type!);
+                fi
+
+                if _is_null(right) then
+                    right = _native_zero(left.type!);
+                fi
+            elif left.is_value_type != right.is_value_type then
                 left = _boxer.box_if_value(left);
                 right = _boxer.box_if_value(right);
             fi
@@ -215,6 +229,24 @@ namespace IR is
                 block.add(Values.INSTRUCTION("ldc.i4 0"));
                 block.add(Values.INSTRUCTION("ceq"));
             fi                
+        si
+
+        _is_pointer(value: Value) -> bool static =>
+            if let type = value.type then type.is_pointer else false fi;
+
+        _is_null(value: Value) -> bool static =>
+            if let type = value.type then type.is_null else false fi;
+
+        // The zero of a pointer type, typed as the pointer it is being
+        // compared against so the block it goes into agrees about what
+        // is on the stack.
+        _native_zero(pointer_type: Semantic.Types.Type) -> Value static is
+            let block = BLOCK(pointer_type);
+
+            block.add(Values.INSTRUCTION("ldc.i4 0"));
+            block.add(Values.INSTRUCTION("conv.u"));
+
+            return block;
         si
 
         gen_range(value: INNATE, block: BLOCK) is
