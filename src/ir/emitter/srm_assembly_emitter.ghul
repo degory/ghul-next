@@ -44,6 +44,13 @@ namespace IR.Emitter is
         _entry_point: MethodDefinitionHandle?;
         _want_library: bool;
 
+        // The portable PDB format version the debug directory
+        // advertises: 1.0, as every portable PDB emitted to date is.
+        _PORTABLE_PDB_VERSION: ushort static => 0x100us;
+
+        // Non-null only when the build asked for debug information.
+        _pdb: SRM_PDB_BUILDER?;
+
         // The module version id, left empty until the content that
         // determines it has been written. Reserving the blob rather
         // than filling it now is what lets the id be a hash of the
@@ -73,6 +80,12 @@ namespace IR.Emitter is
             handles = SRM_HANDLES();
 
             _want_library = want_library;
+
+            _sequence_points = Collections.MAP[int, Collections.List[SRM_SEQUENCE_POINT]]();
+
+            if IoC.CONTAINER.instance.build_flags.want_debug then
+                _pdb = SRM_PDB_BUILDER();
+            fi
 
             // TypeDef row 1 must be <Module>, before any user type.
             _metadata.add_type_definition(
@@ -424,6 +437,21 @@ namespace IR.Emitter is
             return _metadata.add_standalone_signature(_metadata.get_or_add_blob(builder.to_array()));
         si
 
+        // The source positions of the body at `offset`, recorded as the
+        // body is flushed and read back when its MethodDef row is
+        // written. Keyed on the offset because that is the only thing
+        // the two sides share: the body is encoded during the tree
+        // walk and the row is written afterwards, and every body
+        // occupies a distinct offset in the stream.
+        _sequence_points: Collections.MAP[int, Collections.List[SRM_SEQUENCE_POINT]];
+
+        set_sequence_points(
+            body_offset: int,
+            points: Collections.List[SRM_SEQUENCE_POINT]
+        ) is
+            _sequence_points[body_offset] = points;
+        si
+
         add_method_definition(
             flags: MethodAttributes,
             impl_flags: MethodImplAttributes,
@@ -431,8 +459,28 @@ namespace IR.Emitter is
             signature: BlobHandle,
             body_offset: int,
             parameter_list: System.Reflection.Metadata.ParameterHandle
-        ) -> MethodDefinitionHandle =>
-            _metadata.add_method_definition(flags, impl_flags, name, signature, body_offset, parameter_list);
+        ) -> MethodDefinitionHandle is
+            let handle =
+                _metadata.add_method_definition(
+                    flags, impl_flags, name, signature, body_offset, parameter_list);
+
+            // MethodDebugInformation is read positionally against
+            // MethodDef, so every row added here needs one there -
+            // including the ones with nothing to say. Doing it in the
+            // same call is what keeps the two in step; see
+            // SRM_PDB_BUILDER.
+            if let pdb = _pdb then
+                let points: Collections.List[SRM_SEQUENCE_POINT] mut;
+
+                if !_sequence_points.try_get_value(body_offset, points ref) then
+                    points = null;
+                fi
+
+                pdb.add_method_debug_information(points);
+            fi
+
+            return handle;
+        si
 
         add_parameter(
             name: StringHandle,
@@ -649,6 +697,37 @@ namespace IR.Emitter is
         si
 
         write_to(path: string) is
+            // The PDB is written first because the assembly has to name
+            // it: a debug directory entry carries the PDB's path and
+            // the identity a runtime checks the two match on, and that
+            // identity is not known until the PDB's bytes are.
+            let debug_directory =
+                if let pdb = _pdb then
+                    let pdb_path = IO.Path.change_extension(path, ".pdb")!;
+
+                    let pdb_content_id =
+                        pdb.write_to(
+                            pdb_path,
+                            _metadata.get_row_counts(),
+                            _entry_point ?? _[MethodDefinitionHandle],
+                            _content_id_from_content);
+
+                    let builder =
+                        System.Reflection.PortableExecutable.DebugDirectoryBuilder();
+
+                    // The name is what the runtime looks for beside the
+                    // assembly, so it is the file's own name rather than
+                    // the path this compiler happened to write it to.
+                    builder.add_code_view_entry(
+                        IO.Path.get_file_name(pdb_path)!,
+                        pdb_content_id,
+                        _PORTABLE_PDB_VERSION);
+
+                    builder;
+                else
+                    _[System.Reflection.PortableExecutable.DebugDirectoryBuilder?];
+                fi;
+
             let pe_header =
                 if _want_library then
                     PEHeaderBuilder.create_library_header();
@@ -663,7 +742,7 @@ namespace IR.Emitter is
                 null,
                 null,
                 null,
-                null,
+                debug_directory,
                 0,
                 _entry_point ?? _[MethodDefinitionHandle],
                 cast CorFlags(1),   // ILOnly

@@ -50,6 +50,10 @@ namespace IR.Emitter is
         // are numbered here rather than sharing `_labels`.
         _region_labels: Collections.LIST[LabelHandle];
 
+        // Source positions for this body, in emission order, or null in
+        // a build that was not asked for debug information.
+        _sequence_points: Collections.LIST[SRM_SEQUENCE_POINT]?;
+
         init() is
             _encoder = InstructionEncoder(BlobBuilder(32), ControlFlowBuilder());
 
@@ -243,8 +247,48 @@ namespace IR.Emitter is
 
         ret() is _encoder.op_code(ILOpCode.RET); si
 
-        flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int =>
-            assembly_emitter.add_method_body(_encoder, self);
+        // Note that the instructions emitted from here on belong to a
+        // new source position. Called per statement, from the one place
+        // the text back end wrote a `.line` directive.
+        mark_sequence_point(location: Source.LOCATION) is
+            if !_sequence_points? then
+                _sequence_points = Collections.LIST[SRM_SEQUENCE_POINT]();
+            fi
+
+            let offset = _encoder.offset;
+
+            // Two statements can start at the same offset when the
+            // first emits nothing. A sequence-point record after the
+            // first has to advance the offset - a zero delta is the
+            // document-change marker - so the later position replaces
+            // the earlier rather than being appended after it.
+            if _sequence_points.count > 0 /\
+                _sequence_points[_sequence_points.count - 1].il_offset == offset
+            then
+                _sequence_points.remove_at(_sequence_points.count - 1);
+            fi
+
+            _sequence_points.add(
+                SRM_SEQUENCE_POINT(
+                    offset,
+                    IO.Path.get_full_path(location.file_name),
+                    location.start_line,
+                    location.start_column,
+                    location.end_line,
+                    // A sequence point's end column is exclusive, and a
+                    // LOCATION's is not.
+                    location.end_column + 1));
+        si
+
+        flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int is
+            let offset = assembly_emitter.add_method_body(_encoder, self);
+
+            if let points = _sequence_points then
+                assembly_emitter.set_sequence_points(offset, points);
+            fi
+
+            return offset;
+        si
 
         // The instruction bytes encoded so far. The body is not complete
         // until it is flushed, which is what fixes branch offsets, so
