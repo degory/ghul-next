@@ -92,7 +92,14 @@ namespace IR.Emitter is
             try
                 let builder = BlobBuilder(16);
 
-                encode_type(BlobEncoder(builder).field_signature(), `field.type!);
+                // Same recovery as for a method signature: a field
+                // inherited from a constructed-generic base in another
+                // assembly surfaces via reflection with its type
+                // parameter substituted, and the open form is carried as
+                // unspecialized_type. Prefer it when present.
+                encode_type(
+                    BlobEncoder(builder).field_signature(),
+                    `field.unspecialized_type ?? `field.type!);
 
                 return builder.to_array();
             finally
@@ -370,7 +377,13 @@ namespace IR.Emitter is
         _method_signature(function: Semantic.Symbols.Function) -> ubyte[] is
             let builder = BlobBuilder(32);
 
-            let arguments = function.arguments;
+            // A method inherited from a constructed-generic base in
+            // another assembly surfaces via reflection with its type-
+            // parameter references substituted to concrete types, which
+            // the CLR will not match at the call site. The open-generic
+            // form is recovered at import time (symbol_factory) and
+            // carried as unspecialized_*; prefer it when present.
+            let arguments = function.unspecialized_arguments ?? function.arguments;
 
             let return_type: ReturnTypeEncoder mut;
             let parameters: ParametersEncoder mut;
@@ -385,7 +398,7 @@ namespace IR.Emitter is
                     function.is_emitted_with_receiver)
                 .parameters(arguments.count, return_type ref, parameters ref);
 
-            encode_return(return_type, function.return_type);
+            encode_return(return_type, function.unspecialized_return_type ?? function.return_type);
 
             for argument in arguments do
                 let referenced = pointee(argument);
