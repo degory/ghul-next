@@ -684,7 +684,7 @@ namespace Syntax.Process is
         // negative literal — or null if `value` is not a numeric constant.
         try_get_number_text(value: IR.Values.Value) -> string? is
             if let number: IR.Values.Literal.NUMBER = value then
-                return number.value;
+                return number.rendered;
             fi
 
             if let innate_call: IR.Values.Call.INNATE = value then
@@ -693,7 +693,7 @@ namespace Syntax.Process is
                     innate_call.arguments.count == 1
                 then
                     if let number: IR.Values.Literal.NUMBER = innate_call.arguments[0] then
-                        return "-{number.value}";
+                        return "-{number.rendered}";
                     fi
                 fi
             fi
