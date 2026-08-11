@@ -1,7 +1,0 @@
-Underscore-named types and methods are emitted public, so they escape the
-assembly and the expected access errors are never reported.
-
-Not a flag to set: which visibility a declaration gets exists only as rendered
-IL text, in 23 gen_access overrides across the symbol classes, with no
-predicate behind it for the binary back end to read. Needs those derived from
-one predicate first.
