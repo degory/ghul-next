@@ -1,20 +1,14 @@
 namespace IR.Values.UnitTests is
-    use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+    use System.Reflection.Metadata.ILOpCode;
 
     use IR.RAW;
     use IR.Values.NOT;
+    use IR.UnitTests.EMITTED_IL;
 
     class NOT_TESTS is
         @test()
 
         init() is si
-
-        gen_to_string(value: IR.Values.Value) -> string is
-            let context = IR.CONTEXT(null, null);
-            context.enter_buffer(false);
-            value.gen(context);
-            return context.leave_buffer();
-        si
 
         Calling__gen__should_emit_inner_then_ldc_i4_0_then_ceq() is
             @test()
@@ -26,10 +20,7 @@ namespace IR.Values.UnitTests is
             let inner = RAW("// inner-bool");
             let value = NOT(inner);
 
-            Assert.are_equal(
-                "// inner-bool\nldc.i4 0\nceq\n",
-                gen_to_string(value)
-            );
+            EMITTED_IL.assert_emits([ILOpCode.LDC_I4_0, ILOpCode.CEQ], value);
         si
     si
 si

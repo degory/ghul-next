@@ -1,4 +1,7 @@
 namespace IR.Values.UnitTests is
+    use System.Reflection.Metadata.ILOpCode;
+
+    use IR.UnitTests.EMITTED_IL;
     use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
     use Source.LOCATION;
@@ -21,12 +24,6 @@ namespace IR.Values.UnitTests is
         typed(text: string, type: Semantic.Types.Type) -> Value =>
             IR.Values.TYPE_WRAPPER(type, RAW(text));
 
-        gen_to_string(value: IR.Values.Value) -> string is
-            let context = IR.CONTEXT(null, null);
-            context.enter_buffer(false);
-            value.gen(context);
-            return context.leave_buffer();
-        si
 
         type__should_be_the_projected_inner_T() is
             @test()
@@ -74,7 +71,7 @@ namespace IR.Values.UnitTests is
             let projected = typed("// inner", type_t());
             let value = NARROW_PROJECT(underlying, projected);
 
-            Assert.are_equal("// inner\n", gen_to_string(value));
+            EMITTED_IL.assert_emits([], value);
         si
     si
 si

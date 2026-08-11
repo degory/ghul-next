@@ -1,4 +1,7 @@
 namespace IR.Values.UnitTests is
+    use System.Reflection.Metadata.ILOpCode;
+
+    use IR.UnitTests.EMITTED_IL;
     use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
     use Source.LOCATION;
@@ -18,12 +21,6 @@ namespace IR.Values.UnitTests is
         raw_value() -> IR.Values.Value =>
             RAW(CLASSY_GENERIC_ARGUMENT(loc(), null, "T", 0).type!, "// value");
 
-        gen_to_string(value: IR.Values.Value) -> string is
-            let context = IR.CONTEXT(null, null);
-            context.enter_buffer(false);
-            value.gen(context);
-            return context.leave_buffer();
-        si
 
         is_value_type__should_be_true_regardless_of_inner() is
             @test()
@@ -46,10 +43,7 @@ namespace IR.Values.UnitTests is
             // copy on the stack.
             let value = UNBOX(raw_value());
 
-            Assert.are_equal(
-                "// value\nunbox.any !0 \n",
-                gen_to_string(value)
-            );
+            EMITTED_IL.assert_emits_token_instructions([ILOpCode.UNBOX_ANY], value);
         si
     si
 si
