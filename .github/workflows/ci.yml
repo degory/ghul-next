@@ -192,13 +192,6 @@ jobs:
     - name: Run unit tests
       run: dotnet test unit-tests
 
-  # Builds the compiler and publishes the artefacts every test job consumes.
-  #
-  # Self-hosting is deliberately not verified here. While the IL back end is
-  # being replaced the compiler cannot compile itself, but the test suite
-  # still needs a compiler to test — so the build and the self-hosting check
-  # are separate concerns, and only the build gates anything. `build/
-  # bootstrap.sh` is unreferenced until self-hosting is restored.
   # The compiler compiles itself, the compiler that produces does the same,
   # and the two agree byte for byte. Everything downstream then consumes
   # the fourth pass, so what the tests run and what the feed receives is a
@@ -223,7 +216,7 @@ jobs:
     # parallelise its source walk, so cores past the second buy nothing.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
 
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v6
