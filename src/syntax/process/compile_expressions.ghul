@@ -58,6 +58,7 @@ namespace Syntax.Process is
         // optional-by-default flow warnings are read straight off it.
         _build_flags: Compiler.GLOBAL_BUILD_FLAGS;
         _variable_left_state: VARIABLE_LEFT_STATE_STORE;
+        _composite_spill_state: COMPOSITE_SPILL_STORE;
 
         _pragma_scope_stack: PRAGMA_SCOPE_STACK;
         _attribute_resolver: ATTRIBUTE_RESOLVER;
@@ -148,7 +149,8 @@ namespace Syntax.Process is
             value_converter: VALUE_CONVERTER,
             value_boxer: VALUE_BOXER,
             build_flags: Compiler.GLOBAL_BUILD_FLAGS,
-            variable_left_state: VARIABLE_LEFT_STATE_STORE
+            variable_left_state: VARIABLE_LEFT_STATE_STORE,
+            composite_spill_state: COMPOSITE_SPILL_STORE
         )
         is
             super.init(logger, symbol_table, namespaces);
@@ -173,6 +175,7 @@ namespace Syntax.Process is
             _value_boxer = value_boxer;
             _build_flags = build_flags;
             _variable_left_state = variable_left_state;
+            _composite_spill_state = composite_spill_state;
 
             _tuples = COMPILE_TUPLES(logger, innate_symbol_lookup, value_boxer, self);
 
@@ -3369,6 +3372,50 @@ namespace Syntax.Process is
             fi
         si
 
+        // The frame field a composite value expression routes its result
+        // through when its body suspends. Recording one is what tells IL
+        // generation to spill rather than capture, so the conditions here
+        // are the whole decision.
+        //
+        // Allocated here for the same reason the fields above are: the
+        // emitter runs after the rows the assembly contains have been
+        // fixed, so a field first declared while a body is emitted is
+        // numbered by nothing and the assembly loads and then dies
+        // looking for it.
+        _declare_composite_spill_field(node: Trees.Node, value: Value?) is
+            if _composite_spill_state.get(node)? then
+                return;
+            fi
+
+            if !value? \/ !isa IR.Values.BLOCK(value) then
+                return;
+            fi
+
+            // A void result carries no data across the join, and
+            // declaring a void-typed field would itself produce invalid
+            // IL. Capture mode handles it.
+            let type = value.type;
+
+            if !type? \/ type.is_void then
+                return;
+            fi
+
+            if !_contains_suspend(node) then
+                return;
+            fi
+
+            if let frame = _enclosing_state_machine_frame() then
+                _composite_spill_state.set(node, frame.declare_anonymous_field("spill", type));
+            fi
+        si
+
+        _contains_suspend(node: Trees.Node) -> bool =>
+            val
+                let scanner = CONTAINS_SUSPEND_SCANNER();
+                node.walk(scanner);
+                scanner.found
+            lav;
+
         _declare_await_result_field(`await: Trees.Expressions.AWAIT, type: Type) is
             if `await.result_field? then
                 return;
@@ -4051,6 +4098,8 @@ namespace Syntax.Process is
                     "val block produced no value"
                 );
             fi
+
+            _declare_composite_spill_field(block, block.value);
         si
 
         pre(list: Trees.Statements.LIST) -> bool is
@@ -4106,6 +4155,13 @@ namespace Syntax.Process is
 
                 if let last.value? then
                     list.compile_expressions_state.value = IR.Values.BLOCK(value.type!);
+
+                    // A list that disposes needs its body inside the
+                    // protected region, which the spill path does not
+                    // build - so it always captures.
+                    if !list.want_dispose then
+                        _declare_composite_spill_field(list, list.value);
+                    fi
                 fi
             finally
                 current_statement_list = enclosing_statement_list;
@@ -4119,6 +4175,8 @@ namespace Syntax.Process is
 
         visit(`if: Trees.Statements.IF) is
             _conditionals.visit_if(`if);
+
+            _declare_composite_spill_field(`if, `if.value);
         si
 
         pre(`case: Trees.Statements.CASE) -> bool is
@@ -4128,6 +4186,9 @@ namespace Syntax.Process is
 
         visit(`case: Trees.Statements.CASE) is
             _conditionals.visit_case(`case);
+
+            _declare_composite_spill_field(`case, `case.value);
+
             super.visit(`case);
         si
 
