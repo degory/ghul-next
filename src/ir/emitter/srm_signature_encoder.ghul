@@ -426,6 +426,17 @@ namespace IR.Emitter is
                 return;
             fi
 
+            // A pointer is its own element type in the format, not a
+            // generic named `POINTER` over one. Encoding it as the
+            // latter names a class the runtime has never heard of, and
+            // the slot then holds an object reference where the code
+            // reading it expects a native integer.
+            if let pointer: Semantic.Types.POINTER = type then
+                encode_type(encoder.pointer(), pointer.arguments[0]);
+
+                return;
+            fi
+
             let symbol = type.symbol;
 
             if let generic_argument: Semantic.Symbols.GenericArgument = symbol then
