@@ -139,9 +139,11 @@ namespace IR.Emitter is
 
                 buffer.write_compressed_integer(delta_lines);
 
-                // The column delta is unsigned only when the point
-                // spans more than one line; on a single line it can go
-                // either way and is signed.
+                // On a point that begins and ends on one line the
+                // column delta is that line's width, which cannot be
+                // negative, so it is unsigned. Across lines the end
+                // column can fall to the left of the start column, so
+                // it is signed.
                 if delta_lines == 0 then
                     buffer.write_compressed_integer(delta_columns);
                 else

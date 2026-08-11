@@ -88,6 +88,46 @@ namespace IR.Emitter.UnitTests is
             return result | .join(" ");
         si
 
+        // The full extent of every point, as
+        // `startLine,startColumn-endLine,endColumn`.
+        _decoded_spans(provider: MetadataReaderProvider, row: int) -> string static is
+            let result = LIST[string]();
+
+            let reader =
+                provider.get_metadata_reader(
+                    System.Reflection.Metadata.MetadataReaderOptions.DEFAULT, null);
+
+            let information =
+                reader.get_method_debug_information(
+                    MetadataTokens.method_debug_information_handle(row));
+
+            for point in information.get_sequence_points() do
+                result.add(
+                    "{point.start_line},{point.start_column}-{point.end_line},{point.end_column}");
+            od
+
+            return result | .join(" ");
+        si
+
+        // A point that ends on a later line than it starts takes the
+        // signed column delta, and its end column is free to fall to the
+        // left of its start column - which is what makes the delta
+        // signed, and what an unsigned write would mangle.
+        A_point_spanning_lines_decodes_to_what_was_written() is
+            @test()
+
+            let builder = SRM_PDB_BUILDER();
+
+            builder.add_method_debug_information(
+                [
+                    SRM_SEQUENCE_POINT(0, "/src/a.ghul", 10, 20, 12, 3),
+                    SRM_SEQUENCE_POINT(9, "/src/a.ghul", 14, 2, 14, 30)
+                ]);
+
+            Assert.are_equal(
+                "10,20-12,3 14,2-14,30", _decoded_spans(_read_back(builder), 1));
+        si
+
         A_method_with_no_points_decodes_to_nothing() is
             @test()
 
