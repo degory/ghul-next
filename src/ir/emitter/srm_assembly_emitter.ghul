@@ -44,6 +44,13 @@ namespace IR.Emitter is
         _entry_point: MethodDefinitionHandle?;
         _want_library: bool;
 
+        // The module version id, left empty until the content that
+        // determines it has been written. Reserving the blob rather
+        // than filling it now is what lets the id be a hash of the
+        // assembly: the hash is taken over these bytes as zeros, and
+        // the result is written back into them afterwards.
+        _module_version_id: System.Reflection.Metadata.Blob field;
+
         // What an assembly-level attribute hangs off.
         assembly_handle: EntityHandle;
 
@@ -76,10 +83,14 @@ namespace IR.Emitter is
                 MetadataTokens.field_definition_handle(1),
                 MetadataTokens.method_definition_handle(1));
 
+            let reserved_module_version_id = _metadata.reserve_guid();
+
+            _module_version_id = reserved_module_version_id.content;
+
             _metadata.add_module(
                 0,
                 _metadata.get_or_add_string(module_name),
-                _metadata.get_or_add_guid(System.Guid.new_guid()),
+                reserved_module_version_id.handle,
                 _,
                 _);
 
@@ -600,6 +611,30 @@ namespace IR.Emitter is
             _entry_point = method;
         si
 
+        // The identity a deterministic build gives its output: a hash of
+        // the content, rather than a fresh guid and the wall clock. Two
+        // builds of the same source then produce the same bytes, which
+        // is what lets the self-hosting check be a comparison of two
+        // assemblies rather than of two disassemblies.
+        _content_id_from_content(
+            content: Collections.Iterable[System.Reflection.Metadata.Blob]
+        ) -> System.Reflection.Metadata.BlobContentId static is
+            let hasher =
+                System.Security.Cryptography.IncrementalHash.create_hash(
+                    System.Security.Cryptography.HashAlgorithmName.sha256);
+
+            for blob in content do
+                let bytes = blob.get_bytes();
+
+                hasher.append_data(bytes.array, bytes.offset, bytes.count);
+            od
+
+            return
+                System.Reflection.Metadata.BlobContentId.from_hash(
+                    System.Collections.Immutable.ImmutableArray.create[ubyte](
+                        hasher.get_hash_and_reset()));
+        si
+
         write_to(path: string) is
             let pe_header =
                 if _want_library then
@@ -619,10 +654,14 @@ namespace IR.Emitter is
                 0,
                 _entry_point ?? _[MethodDefinitionHandle],
                 cast CorFlags(1),   // ILOnly
-                null);
+                _content_id_from_content);
 
             let pe_blob = BlobBuilder(1024);
-            pe_builder.serialize(pe_blob);
+            let content_id = pe_builder.serialize(pe_blob);
+
+            // Now that the content is fixed, the id derived from it can
+            // go into the space reserved for it above.
+            System.Reflection.Metadata.BlobWriter(_module_version_id).write_guid(content_id.guid);
 
             let stream = IO.File.create(path);
             pe_blob.write_content_to(stream);
