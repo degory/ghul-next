@@ -281,10 +281,6 @@ namespace Driver is
                     catch ex: Exception
                         Std.error.write_line("warning: ignoring garbled version number: {version_string}");
                     yrt
-                elif s =~ "--ilasm-packages" then
-                    let package_paths = get_next_argument(args_iterator);
-
-                    paths.add_ilasm_packages(package_paths.split([';']));
                 elif s =~ "--sdk-ref-path" then
                     paths.sdk_reference_path = get_next_argument(args_iterator);
                 elif s =~ "--target-framework" then
