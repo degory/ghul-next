@@ -62,6 +62,7 @@ A test directory must contain one or more `.ghul` source files and a `ghulflags`
 | `warn.expected` | Expected compiler warning output. |
 | `run.expected` | Expected stdout from running the compiled binary. |
 | `il.expected` | Expected IL disassembly output. |
+| `il.item` | If present, scopes the IL disassembly to one type or member (`Namespace.TYPE` or `Namespace.TYPE::member`). Without it the whole assembly is disassembled. |
 | `ghul.json` | Configuration file pointing at the compiler (created from the template). |
 | `disabled*` | Any file beginning with `disabled` causes the test to be skipped. |
 | `tags` | Zero or more whitespace-separated tag names, used to select a subset of tests with `--tag`. See 'Tags' below. |
@@ -102,36 +103,32 @@ an existing test clearly needs a feature tag that doesn't exist yet. Don't go
 looking for mistagged tests outside of what you're already touching — this is
 opportunistic upkeep, not a project.
 
-## The text-IL snapshot tests are disabled in this repository
+## The text-IL snapshot tests
 
-Every test under `il/` carrying an `il.expected` snapshot is disabled here, 84
-of the group's 86. They assert the output of the text-IL emitter, which this
-repository is replacing with direct binary emission, so none of them can say
-anything about whether that work is going well.
+Tests under `il/` carrying an `il.expected` snapshot assert the shape of what
+the compiler emits. Originally these captured the text-IL emitter's output;
+this repository is replacing that emitter with direct binary emission, so the
+snapshots are being recaptured from the emitted assembly disassembled by ildasm.
 
-They fail in two different ways, and the second is the more misleading. A test
-whose declaration still takes the text path produces an `il.out` that no longer
-matches, and fails. A test whose declaration has moved to the binary back end
-produces no `il.out` at all — and step 4 below **skips** the comparison when
-that file is missing rather than failing, so the test passes while asserting
-nothing.
+A re-enabled test builds as a library (`--library`), the emitted assembly is
+disassembled by ildasm, and the result is compared to `il.expected`. An `il.item`
+file scopes the dump to one type or member so the snapshot is about the construct
+under test rather than the whole assembly. Re-enable a test by dropping the
+`@IL.output` pragma from its source, switching `--assembler` to `--library`,
+adding `il.item` if scoping is needed, and recapturing the snapshot.
 
-That means each test flips from failing to vacuously passing as its emission is
-migrated. The suite's pass count would climb as the work proceeds, driven
-entirely by tests that have stopped checking anything. Reading it as progress
-would be exactly backwards.
-
-The two still enabled assert something that does not depend on the back end:
-`boolean-literals` checks runtime output and `def-namespace-minimal` checks
-that a build fails.
+74 of the group's 86 tests are still disabled. The 12 that are not split into
+two kinds: 10 type-level tests that scope to a whole type declaration by name,
+and 2 that assert something not dependent on the back end at all
+(`boolean-literals` checks runtime output, `def-namespace-minimal` checks that
+a build fails). The remaining 74 are statement- or expression-level and need
+finer scoping than a type name, which requires the compiler to emit each
+`@IL.output` pragma's source span.
 
 Disabled rather than deleted for two reasons: the snapshots record what the
 emitter is expected to produce, which is the reference the binary back end is
 written against; and keeping the directories in place lets merges from upstream
 ghul apply to them cleanly.
-
-Re-enable a test by deleting its `disabled` file, once binary emission covers
-what it exercises and its snapshot has been recaptured.
 
 ## Expectation comparison workflow
 
