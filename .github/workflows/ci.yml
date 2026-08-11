@@ -199,89 +199,22 @@ jobs:
   # still needs a compiler to test — so the build and the self-hosting check
   # are separate concerns, and only the build gates anything. `build/
   # bootstrap.sh` is unreferenced until self-hosting is restored.
-  build:
-    name: Build compiler
-    needs: [version]
-    # Single-thread-bound: the ghul compiler doesn't parallelise the source
-    # walk. 2 vCPU is enough for a pack alongside one compiler pass.
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
-
-    timeout-minutes: 5
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Set up .NET 10
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '10.0.x'
-        cache: true
-        cache-dependency-path: |
-          **/Directory.Packages.props
-          **/.config/dotnet-tools.json
-
-    - name: Add GHCR package source
-      run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
-
-    - name: Restore local .NET tools
-      run: dotnet tool restore
-
-    - name: Install the bootstrap compiler
-      run: |
-        for attempt in 1 2 3 4 5; do
-          if dotnet tool update --local ghul.compiler --version ${{ needs.version.outputs.compiler }}; then
-            exit 0
-          fi
-          echo "install attempt ${attempt} failed; retrying in 15s..."
-          sleep 15
-        done
-        exit 1
-
-    - name: Pack the compiler
-      run: dotnet pack -nologo -p:CI=true -p:Version=${{ needs.version.outputs.package }} -consoleloggerparameters:NoSummary
-
-    - uses: actions/upload-artifact@v7
-      with:
-        name: ghul-compiler-package
-        path: ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg
-
-    # Separate artefact for consumers that need to spawn the bootstrapped
-    # compiler as a process (e.g. analysis_tests). The whole tool tree is
-    # required, not just ghul.dll: the .NET host needs ghul.runtimeconfig.json
-    # / ghul.deps.json beside the dll, and the compiler needs sibling
-    # assemblies (ghul-runtime, System.IO.Abstractions, ...), the IL
-    # templates under lib/dotnet/il/, and the native ilasm under
-    # runtimes/.
-    - name: Extract compiler tool tree
-      run: |
-        unzip -o nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg \
-          'tools/net10.0/any/*' -d extracted-tool
-
-    - uses: actions/upload-artifact@v7
-      with:
-        name: ghul-compiler-tool
-        path: ./extracted-tool/tools/net10.0/any
-
-    # The analysis protocol client library ships as its own package so
-    # out-of-repo tools can drive the compiler's analysis mode. Packed with
-    # the same version as the compiler built from this commit.
-    - name: Pack analysis protocol library
-      run: dotnet pack analysis-protocol/analysis-protocol.ghulproj -nologo -p:CI=true -p:Version=${{ needs.version.outputs.package }}
-
-    - uses: actions/upload-artifact@v7
-      with:
-        name: ghul-analysis-protocol-package
-        path: ./analysis-protocol/nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
-
-  # The compiler compiles itself, and the compiler that produces does the
-  # same, and the two agree byte for byte. Upstream split this out of the
-  # build when the back end was replaced, because a half-migrated emitter
-  # could not self-host and a job that always fails makes every other
-  # result read as suspect. It can be a gate again.
+  # The compiler compiles itself, the compiler that produces does the same,
+  # and the two agree byte for byte. Everything downstream then consumes
+  # the fourth pass, so what the tests run and what the feed receives is a
+  # compiler emitted by the emitter in this commit, rather than by the last
+  # published one.
   #
-  # Not folded into `build`: this packs and installs four times over, and
-  # every test job needs the artefacts `build` publishes long before this
-  # has finished.
+  # That distinction is not academic. A single-pass build is emitted by the
+  # previous release, so a defect in the new back end that only shows when
+  # the compiler itself carries it is invisible to every test: the whole
+  # suite passed while the back end could not produce a working compiler,
+  # because nothing under test had been through it.
+  #
+  # A failure here therefore stops the test jobs rather than merely
+  # reporting alongside them. That is deliberate - a compiler that cannot
+  # reproduce itself makes the suite's verdict meaningless - and it is why
+  # this was split out while the back end could not self-host.
   bootstrap:
     needs: [version]
     name: Bootstrap compiler
@@ -290,7 +223,7 @@ jobs:
     # parallelise its source walk, so cores past the second buy nothing.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
 
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v6
@@ -327,12 +260,46 @@ jobs:
         PACKAGE_VERSION: ${{ needs.version.outputs.package }}
       run: ./build/bootstrap.sh
 
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ghul-compiler-package
+        path: ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg
+
+    # Separate artefact for consumers that need to spawn the bootstrapped
+    # compiler as a process (e.g. analysis_tests). The whole tool tree is
+    # required, not just ghul.dll: the .NET host needs ghul.runtimeconfig.json
+    # / ghul.deps.json beside the dll, and the compiler needs sibling
+    # assemblies (ghul-runtime, System.IO.Abstractions, ...), the IL
+    # templates under lib/dotnet/il/, and the native ilasm under
+    # runtimes/.
+    - name: Extract compiler tool tree
+      run: |
+        unzip -o nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg \
+          'tools/net10.0/any/*' -d extracted-tool
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ghul-compiler-tool
+        path: ./extracted-tool/tools/net10.0/any
+
+    # The analysis protocol client library ships as its own package so
+    # out-of-repo tools can drive the compiler's analysis mode. Packed with
+    # the same version as the compiler built from this commit.
+    - name: Pack analysis protocol library
+      run: dotnet pack analysis-protocol/analysis-protocol.ghulproj -nologo -p:CI=true -p:Version=${{ needs.version.outputs.package }}
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ghul-analysis-protocol-package
+        path: ./analysis-protocol/nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
+
+
   # parse and semantic compile nothing -- every test in them either suppresses
   # code generation or expects the build to fail -- so this stays green while
   # the IL back end is being replaced. The groups that do emit are run by
   # codegen_tests, which is expected to fail for the duration.
   integration_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     name: Run integration tests
 
     # The ghul-test harness spawns cpu*3/2 worker processes for >6 cores
@@ -406,7 +373,7 @@ jobs:
   # the SRM back end so far covers a hello world. Reported but not gating
   # until the ported surface catches up, one group at a time.
   codegen_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     # Disabled until the binary back end can build a working compiler.
     # A job that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
@@ -490,7 +457,7 @@ jobs:
   # needs the emission surface after all. Reported but not gating, same
   # as codegen_tests.
   analysis_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     # Disabled until the binary back end can build a working compiler.
     # A job that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
@@ -572,7 +539,7 @@ jobs:
   # Real .ghulproj builds against a separate assembly, so they need the
   # emission surface too.
   cross_assembly_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     # The first of the disabled jobs to come back. The tests the binary
     # back end cannot yet pass carry a 'disabled' file naming what each
     # is waiting for, so this job gates the rest rather than always
@@ -629,7 +596,7 @@ jobs:
   # Builds ghul-runtime against the freshly built compiler, so it needs
   # the emission surface. Reported but not gating, same as codegen_tests.
   runtime_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     # Disabled until the binary back end can build a working compiler.
     # A job that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
@@ -735,7 +702,7 @@ jobs:
   # Builds ghul-examples against the freshly built compiler, so it needs
   # the emission surface. Reported but not gating, same as codegen_tests.
   examples_tests:
-    needs: [version, build]
+    needs: [version, bootstrap]
     # Disabled until the binary back end can build a working compiler.
     # A job that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
