@@ -378,12 +378,14 @@ namespace IR.Emitter is
                     // declared them. Checking the group answers for the
                     // group, not for what is in it.
                     for function in group.functions do
-                        if _is_owned_by(function, type) then
+                        if _is_owned_by(function, type) /\ _is_emitted(function) then
                             result.add(function);
                         fi
                     od
                 elif let function: Function = symbol then
-                    result.add(function);
+                    if _is_emitted(function) then
+                        result.add(function);
+                    fi
                 fi
             od
 
@@ -428,6 +430,15 @@ namespace IR.Emitter is
         // injects into in the same way, so it is resolved here too: a
         // closure written in an injected member is emitted onto the
         // target, not onto the block.
+        // An innate is a call site's instruction sequence wearing a
+        // symbol, not a method: it has no body to encode, and the
+        // declaration it stands for is emitted separately by whichever
+        // type actually declares it. A compilation that declares its own
+        // intrinsics gets one registered into `Ghul` for every intrinsic
+        // it declares, all of them owned by that namespace - so the
+        // ownership test above admits them and only this turns them away.
+        _is_emitted(function: Function) -> bool static => !function.is_innate;
+
         _is_owned_by(member: Symbol, type: SRM_EMITTED_TYPE) -> bool static =>
             _emitted_home(member.owner) == _emitted_home(type.scope);
 

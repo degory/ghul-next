@@ -665,20 +665,7 @@ jobs:
   # the emission surface. Reported but not gating, same as codegen_tests.
   examples_tests:
     needs: [version, bootstrap]
-    # Disabled until the back end emits everything this one needs. A job
-    # that always fails costs runner minutes and makes every other
-    # result read as suspect. Delete the 'if: false' to re-enable.
-    #
-    # codegen_tests and cross_assembly_tests need only correct emission,
-    # so they recover first; runtime_tests and examples_tests also need
-    # their consumer repositories to build against the result, so they
-    # recover last.
-    #
-    # Self-hosting is verified by the bootstrap job, which gates every
-    # one of these.
-    if: false
     name: Run examples tests
-    continue-on-error: true
 
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-4' }}
 
