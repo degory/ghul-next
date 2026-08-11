@@ -163,19 +163,27 @@ namespace IR.Emitter is
         _CONTRAVARIANT: int static => 2;
         _REFERENCE_TYPE_CONSTRAINT: int static => 4;
         _VALUE_TYPE_CONSTRAINT: int static => 8;
+        _DEFAULT_CONSTRUCTOR_CONSTRAINT: int static => 16;
 
         // What a GenericParam row says about one type parameter beyond
-        // its name: which way it varies, and which kind of type can
-        // instantiate it.
+        // its name: which way it varies, which kind of type can
+        // instantiate it, and whether it must be constructible.
         //
-        // Both are read back by an importing compiler and enforced by
-        // the CLR, so a row left at zero silently turns a covariant
-        // trait invariant and drops a `class` or `struct` bound.
+        // All three are read back by an importing compiler and enforced
+        // by the CLR, so a row left at zero silently turns a covariant
+        // trait invariant and drops a `class`, `struct` or `init` bound.
+        // A bound naming a type is a GenericParamConstraint row instead,
+        // and cannot be expressed here.
         type_parameter_attributes(
             variance: Semantic.Types.TypeVariance,
-            constraint: Semantic.Symbols.TypeParameterConstraintKind
+            constraint: Semantic.Symbols.TypeParameterConstraintKind,
+            has_constructor_constraint: bool
         ) -> System.Reflection.GenericParameterAttributes static is
             let flags mut = 0;
+
+            if has_constructor_constraint then
+                flags = flags | _DEFAULT_CONSTRUCTOR_CONSTRAINT;
+            fi
 
             if variance == Semantic.Types.TypeVariance.COVARIANT then
                 flags = flags | _COVARIANT;

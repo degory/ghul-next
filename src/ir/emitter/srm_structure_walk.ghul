@@ -36,7 +36,19 @@ namespace IR.Emitter is
         owner: EntityHandle,
         index: int,
         name: string,
-        attributes: System.Reflection.GenericParameterAttributes
+        attributes: System.Reflection.GenericParameterAttributes,
+        // The type this parameter is bounded by, or null when it is
+        // unbounded. Held rather than resolved to a handle here: the
+        // constraint row has to follow its parameter's row, and the
+        // parameters are not in that order until they are sorted.
+        bound: Semantic.Types.Type?,
+        // The closure whose mapping the bound has to be encoded under,
+        // for a parameter belonging to a closure frame. See
+        // SRM_SIGNATURE_ENCODER.frame_mapping - a bound naming the
+        // parameter itself encodes at the parameter's method-level
+        // position otherwise, which on a frame class names a method
+        // that is not there.
+        mapping: Semantic.Symbols.Closure?
     ) is
         // The coded index the table is sorted on: the owner's row,
         // tagged with which table it points into.
@@ -390,7 +402,10 @@ namespace IR.Emitter is
                                 names[i],
                                 SRM_FLAGS.type_parameter_attributes(
                                     declared.get_argument_variance(i),
-                                    declared.get_argument_constraint_kind(i))));
+                                    declared.get_argument_constraint_kind(i),
+                                    declared.get_argument_has_constructor_constraint(i)),
+                                declared.get_argument_type_bound(i),
+                                SRM_SIGNATURE_ENCODER.frame_mapping(declared)));
                     od
 
                     for `interface in _interfaces(declared) do
@@ -556,11 +571,33 @@ namespace IR.Emitter is
                 si);
 
             for type_parameter in _type_parameters do
-                _assembly.add_generic_parameter(
-                    type_parameter.owner,
-                    type_parameter.index,
-                    type_parameter.name,
-                    type_parameter.attributes);
+                let handle =
+                    _assembly.add_generic_parameter(
+                        type_parameter.owner,
+                        type_parameter.index,
+                        type_parameter.name,
+                        type_parameter.attributes);
+
+                // GenericParamConstraint is sorted on the parameter it
+                // constrains, so writing each parameter's constraint as
+                // the parameter itself is written keeps the table in
+                // order without a second sort.
+                if let type_parameter.bound then
+                    let mapping = type_parameter.mapping;
+
+                    if mapping? then
+                        mapping.map_type_arguments();
+                    fi
+
+                    try
+                        _assembly.add_generic_parameter_constraint(
+                            handle, _type_token(bound));
+                    finally
+                        if mapping? then
+                            mapping.unmap_type_arguments();
+                        fi
+                    yrt
+                fi
             od
         si
 
@@ -721,7 +758,10 @@ namespace IR.Emitter is
                         // constraints reach the row.
                         SRM_FLAGS.type_parameter_attributes(
                             Semantic.Types.TypeVariance.INVARIANT,
-                            method.get_argument_constraint_kind(i))));
+                            method.get_argument_constraint_kind(i),
+                            method.get_argument_has_constructor_constraint(i)),
+                        method.get_argument_type_bound(i),
+                        SRM_SIGNATURE_ENCODER.frame_mapping(method)));
             od
 
             if method.is_declared_pure then
@@ -1123,7 +1163,11 @@ namespace IR.Emitter is
         // The same choice as IR.CONTEXT.resolve_type_token, which the
         // structure walk cannot reach: it runs without an IR context.
         _type_token(type: Semantic.Types.Type) -> EntityHandle is
-            if type.arguments.count > 0 then
+            // A type variable has no row of its own either: it is named
+            // by position, which only a signature can express. Reached
+            // by a bound that is itself a type parameter
+            // (`[TBase: BOX, TDerived: TBase]`).
+            if type.arguments.count > 0 \/ type.is_type_variable then
                 return cast EntityHandle(_assembly.add_type_specification(type));
             fi
 

@@ -573,12 +573,25 @@ namespace IR.Emitter is
             index: int,
             name: string,
             attributes: System.Reflection.GenericParameterAttributes
-        ) is
+        ) -> System.Reflection.Metadata.GenericParameterHandle =>
             _metadata.add_generic_parameter(
                 owner,
                 attributes,
                 _metadata.get_or_add_string(name),
                 index);
+
+        // The type a parameter is bounded by (`[T: SomeBase]`). The CLR
+        // verifies shared generic code against the declared parameter
+        // rather than against each call site's substitution, so without
+        // this row the parameter is unbounded as far as the runtime is
+        // concerned: a body that relies on the bound fails verification,
+        // and passing the parameter on to a callee declaring the same
+        // bound is rejected as violating it.
+        add_generic_parameter_constraint(
+            parameter: System.Reflection.Metadata.GenericParameterHandle,
+            `type: EntityHandle
+        ) is
+            _metadata.add_generic_parameter_constraint(parameter, `type);
         si
 
         // One row per interface a type declares. Without it the type
