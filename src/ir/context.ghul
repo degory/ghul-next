@@ -411,9 +411,23 @@ namespace IR is
 
             let instance = emitter.handles.unit_variant_instance(classy);
 
-            assert instance? else "unit variant '{variant.name}' has no interned instance";
+            if instance? then
+                return cast System.Reflection.Metadata.EntityHandle(instance);
+            fi
 
-            return cast System.Reflection.Metadata.EntityHandle(instance);
+            // A variant of a union another assembly declares. Its
+            // interned instance is a field over there, so it is reached
+            // by reference rather than by the row this assembly would
+            // have written for one of its own.
+            assert classy.is_reflected else
+                "unit variant '{variant.name}' has no interned instance";
+
+            return cast System.Reflection.Metadata.EntityHandle(
+                emitter.add_named_member_reference(
+                    resolve_type_token(classy.type!),
+                    "_instance",
+                    "_instance {classy.type}",
+                    Emitter.SRM_SIGNATURE_ENCODER(emitter).field_signature(classy.type!)));
         si
 
         // A token for a type named rather than resolved: the compiler
