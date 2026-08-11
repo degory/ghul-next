@@ -1,4 +1,5 @@
 namespace IR is
+    use System.Reflection.Metadata.ILOpCode;
     use IO.Std;
 
     use Semantic.Types.Type;
@@ -19,7 +20,7 @@ namespace IR is
         _logger: Logging.Logger,
         _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup
     ) is
-        _instructions: Collections.MAP[string, string]?;
+        _instructions: Collections.MAP[string, ILOpCode]?;
 
         // System.Decimal has no `conv.*` IL opcode. Conversion to or
         // from decimal is a static call to `op_Implicit` / `op_Explicit`
@@ -36,26 +37,26 @@ namespace IR is
                 return;
             fi
 
-            _instructions = Collections.MAP[string, string]();
+            _instructions = Collections.MAP[string, ILOpCode]();
 
-            add_instruction(_innate_symbol_lookup.get_bool_type(), "conv.u1");
+            add_instruction(_innate_symbol_lookup.get_bool_type(), ILOpCode.CONV_U1);
 
-            add_instruction(_innate_symbol_lookup.get_ubyte_type(), "conv.u1");
-            add_instruction(_innate_symbol_lookup.get_byte_type(), "conv.i1");
+            add_instruction(_innate_symbol_lookup.get_ubyte_type(), ILOpCode.CONV_U1);
+            add_instruction(_innate_symbol_lookup.get_byte_type(), ILOpCode.CONV_I1);
 
-            add_instruction(_innate_symbol_lookup.get_char_type(), "conv.u2");
+            add_instruction(_innate_symbol_lookup.get_char_type(), ILOpCode.CONV_U2);
 
-            add_instruction(_innate_symbol_lookup.get_ushort_type(), "conv.u2");
-            add_instruction(_innate_symbol_lookup.get_short_type(), "conv.i2");
+            add_instruction(_innate_symbol_lookup.get_ushort_type(), ILOpCode.CONV_U2);
+            add_instruction(_innate_symbol_lookup.get_short_type(), ILOpCode.CONV_I2);
 
-            add_instruction(_innate_symbol_lookup.get_uint_type(), "conv.u4");
-            add_instruction(_innate_symbol_lookup.get_int_type(), "conv.i4");
+            add_instruction(_innate_symbol_lookup.get_uint_type(), ILOpCode.CONV_U4);
+            add_instruction(_innate_symbol_lookup.get_int_type(), ILOpCode.CONV_I4);
 
-            add_instruction(_innate_symbol_lookup.get_ulong_type(), "conv.u8");
-            add_instruction(_innate_symbol_lookup.get_long_type(), "conv.i8");
+            add_instruction(_innate_symbol_lookup.get_ulong_type(), ILOpCode.CONV_U8);
+            add_instruction(_innate_symbol_lookup.get_long_type(), ILOpCode.CONV_I8);
 
-            add_instruction(_innate_symbol_lookup.get_single_type(), "conv.r4");
-            add_instruction(_innate_symbol_lookup.get_double_type(), "conv.r8");
+            add_instruction(_innate_symbol_lookup.get_single_type(), ILOpCode.CONV_R4);
+            add_instruction(_innate_symbol_lookup.get_double_type(), ILOpCode.CONV_R8);
 
             _decimal_neighbours = Collections.SET[string]();
             _decimal_implicit_sources = Collections.SET[string]();
@@ -80,8 +81,8 @@ namespace IR is
             register_decimal_neighbour(_innate_symbol_lookup.get_double_type(), false);
         si
 
-        add_instruction(type: Type, instruction: string) is
-            _instructions![type.symbol.qualified_name] = instruction;
+        add_instruction(type: Type, op_code: ILOpCode) is
+            _instructions![type.symbol.qualified_name] = op_code;
         si
 
         register_decimal_neighbour(type: Type, is_implicit_to_decimal: bool) is
@@ -92,7 +93,7 @@ namespace IR is
             fi
         si
 
-        get_instruction(type: Type?) -> string? is
+        get_instruction(type: Type?) -> ILOpCode? is
             complete_initialization();
 
             if !type? then
