@@ -13,6 +13,12 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                body.begin_capture();
+
+                return;
+            fi
+
             context.enter_file(path, false);
         si
 
@@ -32,6 +38,12 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
+            if let body = context.current_srm_body_emitter then
+                context.write_captured(path, body.end_capture());
+
+                return;
+            fi
+
             context.leave_file(path);
         si
 

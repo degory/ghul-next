@@ -291,6 +291,25 @@ namespace IR is
             _outputs.push(FILE_ASSEMBLER_OUTPUT(path, writer, want_comments));
         si
 
+        // The binary back end's answer to an `@IL.output` pragma. There
+        // is no writer to redirect, so the instructions encoded while
+        // the pragma was open arrive here already rendered. Create or
+        // append on the same rule the text path uses, so several
+        // pragmas naming one file accumulate into it in walk order.
+        write_captured(path: string, lines: Collections.Iterable[string]) is
+            let use writer =
+                if _seen.contains(path) then
+                    File.append_text(path);
+                else
+                    _seen.add(path);
+                    File.create_text(path);
+                fi;
+
+            for line in lines do
+                writer.write_line(line);
+            od
+        si
+
         leave_file(path: string) is
             assert
                 _outputs.count > 0 /\

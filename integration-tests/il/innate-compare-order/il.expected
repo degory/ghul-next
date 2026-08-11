@@ -9,13 +9,13 @@ stloc 'b.0'
 ldc.i4 100
 ldc.i4 100
 cgt
-ldc.i4 0
+ldc.i4.0
 ceq
 stloc 'b.0'
 ldc.i4 100
 ldc.i4 201
 clt
-ldc.i4 0
+ldc.i4.0
 ceq
 stloc 'b.0'
 ldc.i8 100
@@ -29,12 +29,12 @@ stloc 'b.0'
 ldc.i8 150
 ldc.i8 50
 clt
-ldc.i4 0
+ldc.i4.0
 ceq
 stloc 'b.0'
 ldc.i8 200
 ldc.i8 100
 cgt
-ldc.i4 0
+ldc.i4.0
 ceq
 stloc 'b.0'

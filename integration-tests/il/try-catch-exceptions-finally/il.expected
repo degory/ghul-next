@@ -1,23 +1,10 @@
-.locals init (bool  '.need_return.0.1')
-.try {
-.try {
 leave L_0
-}
-catch class ['System.Runtime']'System'.'Exception'  {
-.locals init (class ['System.Runtime']'System'.'Exception' 'ex1.0')
 stloc 'ex1.0'
 leave L_0
-}
-catch class 'TestTryCatchTwoExceptionsFinally'.'MY_EXCEPTION'  {
-.locals init (class 'TestTryCatchTwoExceptionsFinally'.'MY_EXCEPTION' 'ex2.1')
 stloc 'ex2.1'
 leave L_0
-}
-}
-finally {
 L_1:
 endfinally
-}
 L_0:
 ldloc '.need_return.0.1'
 brfalse L_2

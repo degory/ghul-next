@@ -1,11 +1,6 @@
-.locals init (bool  '.need_return.0.1')
-.try {
 leave L_0
-}
-finally {
 L_1:
 endfinally
-}
 L_0:
 ldloc '.need_return.0.1'
 brfalse L_2

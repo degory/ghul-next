@@ -1,53 +1,53 @@
-ldc.i4 1
+ldc.i4.1
 ldloc 't.0'
 brtrue LE0
 pop
 ldloc 't.0'
 LE0:
 stloc 'b.2'
-ldc.i4 1
+ldc.i4.1
 ldloc 't.0'
 brtrue LE1
 pop
 ldloc 'f.1'
 LE1:
 stloc 'b.2'
-ldc.i4 1
+ldc.i4.1
 ldloc 'f.1'
 brtrue LE2
 pop
 ldloc 't.0'
 LE2:
 stloc 'b.2'
-ldc.i4 1
+ldc.i4.1
 ldloc 'f.1'
 brtrue LE3
 pop
 ldloc 'f.1'
 LE3:
 stloc 'b.2'
-ldc.i4 0
+ldc.i4.0
 ldloc 't.0'
 brfalse LE4
 pop
 ldloc 't.0'
 LE4:
 stloc 'b.2'
-ldc.i4 0
+ldc.i4.0
 ldloc 't.0'
 brfalse LE5
 pop
 ldloc 'f.1'
 LE5:
 stloc 'b.2'
-ldc.i4 0
+ldc.i4.0
 ldloc 'f.1'
 brfalse LE6
 pop
 ldloc 't.0'
 LE6:
 stloc 'b.2'
-ldc.i4 0
+ldc.i4.0
 ldloc 'f.1'
 brfalse LE7
 pop

@@ -50,6 +50,20 @@ namespace IR.Emitter is
         // are numbered here rather than sharing `_labels`.
         _region_labels: Collections.LIST[LabelHandle];
 
+        // Set while an `@IL.output` pragma is open over part of this
+        // body, and holding the instructions encoded since it opened,
+        // rendered. The text back end satisfies the pragma by pointing
+        // its writer at the file, which has no counterpart here: the
+        // encoder writes bytes, and what a snapshot wants to assert is
+        // which instructions were asked for.
+        //
+        // What this witnesses is therefore the call, not the byte. An
+        // encoder call that is itself wrong - the wrong overload, a
+        // token for the wrong row - renders as what it was asked to do
+        // rather than what it did. The bootstrap and the execution
+        // tests cover that; this covers which construct emitted what.
+        _capture: Collections.LIST[string]?;
+
         init() is
             _encoder = InstructionEncoder(BlobBuilder(32), ControlFlowBuilder());
 
@@ -122,10 +136,12 @@ namespace IR.Emitter is
         si
 
         mark_label(label: IR.LABEL) is
+            _record("{label}:");
             _encoder.mark_label(_label(label));
         si
 
         branch(op_code: ILOpCode, label: IR.LABEL) is
+            _record("{_mnemonic(op_code)} {label}");
             _encoder.branch(op_code, _label(label));
         si
 
@@ -161,36 +177,78 @@ namespace IR.Emitter is
         has_locals: bool => _local_types.count > 0;
         local_types: Collections.List[Type] => _local_types;
 
-        ldloc(name: string) is _encoder.load_local(_slot(name)); si
-        stloc(name: string) is _encoder.store_local(_slot(name)); si
-        ldloca(name: string) is _encoder.load_local_address(_slot(name)); si
+        is_capturing: bool => _capture?;
 
-        ldarg(index: int) is _encoder.load_argument(index); si
-        starg(index: int) is _encoder.store_argument(index); si
-        ldarga(index: int) is _encoder.load_argument_address(index); si
+        begin_capture() is
+            _capture = Collections.LIST[string]();
+        si
+
+        end_capture() -> Collections.List[string] is
+            let captured = _capture ?? Collections.LIST[string]();
+
+            _capture = null;
+
+            return captured;
+        si
+
+        _record(text: string) is
+            if let capture = _capture then
+                capture.add(text);
+            fi
+        si
+
+        // ILOpCode's members are named for the mnemonics, so the
+        // rendering is the .NET name lowercased with its underscores
+        // turned back into the dots the assembler spells them with:
+        // CONV_U1 is conv.u1, CGT_UN is cgt.un.
+        _mnemonic(op_code: ILOpCode) -> string static =>
+            op_code.to_string().to_lower().replace("_", ".");
+
+        ldloc(name: string) is _record("ldloc {name}"); _encoder.load_local(_slot(name)); si
+        stloc(name: string) is _record("stloc {name}"); _encoder.store_local(_slot(name)); si
+        ldloca(name: string) is _record("ldloca {name}"); _encoder.load_local_address(_slot(name)); si
+
+        ldarg(index: int) is _record("ldarg {index}"); _encoder.load_argument(index); si
+        starg(index: int) is _record("starg {index}"); _encoder.store_argument(index); si
+        ldarga(index: int) is _record("ldarga {index}"); _encoder.load_argument_address(index); si
 
         ldstr(metadata: SRM_ASSEMBLY_EMITTER, value: string) is
+            _record("ldstr \"{value}\"");
             _encoder.load_string(metadata.get_or_add_user_string(value));
         si
 
-        ldc_i4(value: int) is _encoder.load_constant_i4(value); si
-        ldc_i8(value: long) is _encoder.load_constant_i8(value); si
-        ldc_r4(value: single) is _encoder.load_constant_r4(value); si
-        ldc_r8(value: double) is _encoder.load_constant_r8(value); si
-        ldnull() is _encoder.op_code(ILOpCode.LDNULL); si
+        ldc_i4(value: int) is _record("ldc.i4 {value}"); _encoder.load_constant_i4(value); si
+        ldc_i8(value: long) is _record("ldc.i8 {value}"); _encoder.load_constant_i8(value); si
+        ldc_r4(value: single) is _record("ldc.r4 {value}"); _encoder.load_constant_r4(value); si
+        ldc_r8(value: double) is _record("ldc.r8 {value}"); _encoder.load_constant_r8(value); si
+        ldnull() is _record("ldnull"); _encoder.op_code(ILOpCode.LDNULL); si
 
-        call(target: EntityHandle) is _encoder.call(target); si
+        // A token operand is recorded as the row it points at rather
+        // than as the name the text back end would print. Resolving a
+        // handle back to a name needs a reverse of the emitter's
+        // reference caches, which does not exist yet, and recording
+        // nothing would be worse than recording a row: a captured
+        // region containing a call would come out silently short, and a
+        // snapshot that omits an instruction is the failure mode this
+        // whole mechanism exists to remove.
+        _token_instruction(op_code: ILOpCode, token: EntityHandle) is
+            _record(
+                "{_mnemonic(op_code)} "
+                "{System.Reflection.Metadata.Ecma335.MetadataTokens.get_row_number(token)}");
+
+            _encoder.op_code(op_code);
+            _encoder.token(token);
+        si
+
+        call(target: EntityHandle) is _token_instruction(ILOpCode.CALL, target); si
 
         // Prefixes the following call with the type its receiver is
         // reached through, which is how a call on a value whose type is
         // a type parameter dispatches without the caller knowing whether
         // that parameter will be a value or a reference type.
-        constrained(type: EntityHandle) is
-            _encoder.op_code(ILOpCode.CONSTRAINED);
-            _encoder.token(type);
-        si
-        call_virtual(target: EntityHandle) is _encoder.op_code(ILOpCode.CALLVIRT); _encoder.token(target); si
-        new_object(constructor: EntityHandle) is _encoder.op_code(ILOpCode.NEWOBJ); _encoder.token(constructor); si
+        constrained(type: EntityHandle) is _token_instruction(ILOpCode.CONSTRAINED, type); si
+        call_virtual(target: EntityHandle) is _token_instruction(ILOpCode.CALLVIRT, target); si
+        new_object(constructor: EntityHandle) is _token_instruction(ILOpCode.NEWOBJ, constructor); si
 
         ldfld(`field: EntityHandle) is _field_instruction(ILOpCode.LDFLD, `field); si
         ldflda(`field: EntityHandle) is _field_instruction(ILOpCode.LDFLDA, `field); si
@@ -199,49 +257,31 @@ namespace IR.Emitter is
         ldsflda(`field: EntityHandle) is _field_instruction(ILOpCode.LDSFLDA, `field); si
         stsfld(`field: EntityHandle) is _field_instruction(ILOpCode.STSFLD, `field); si
 
-        _field_instruction(op_code: ILOpCode, `field: EntityHandle) is
-            _encoder.op_code(op_code);
-            _encoder.token(`field);
-        si
+        _field_instruction(op_code: ILOpCode, `field: EntityHandle) is _token_instruction(op_code, `field); si
 
-        ldtoken(type: EntityHandle) is _encoder.op_code(ILOpCode.LDTOKEN); _encoder.token(type); si
+        ldtoken(type: EntityHandle) is _token_instruction(ILOpCode.LDTOKEN, type); si
 
-        box(type: EntityHandle) is _encoder.op_code(ILOpCode.BOX); _encoder.token(type); si
-        unbox_any(type: EntityHandle) is _encoder.op_code(ILOpCode.UNBOX_ANY); _encoder.token(type); si
-        cast_class(type: EntityHandle) is _encoder.op_code(ILOpCode.CASTCLASS); _encoder.token(type); si
-        is_instance(type: EntityHandle) is _encoder.op_code(ILOpCode.ISINST); _encoder.token(type); si
+        box(type: EntityHandle) is _token_instruction(ILOpCode.BOX, type); si
+        unbox_any(type: EntityHandle) is _token_instruction(ILOpCode.UNBOX_ANY, type); si
+        cast_class(type: EntityHandle) is _token_instruction(ILOpCode.CASTCLASS, type); si
+        is_instance(type: EntityHandle) is _token_instruction(ILOpCode.ISINST, type); si
 
-        new_array(element_type: EntityHandle) is
-            _encoder.op_code(ILOpCode.NEWARR);
-            _encoder.token(element_type);
-        si
+        new_array(element_type: EntityHandle) is _token_instruction(ILOpCode.NEWARR, element_type); si
 
-        store_element(element_type: EntityHandle) is
-            _encoder.op_code(ILOpCode.STELEM);
-            _encoder.token(element_type);
-        si
+        store_element(element_type: EntityHandle) is _token_instruction(ILOpCode.STELEM, element_type); si
 
-        load_element(element_type: EntityHandle) is
-            _encoder.op_code(ILOpCode.LDELEM);
-            _encoder.token(element_type);
-        si
+        load_element(element_type: EntityHandle) is _token_instruction(ILOpCode.LDELEM, element_type); si
 
-        load_object(type: EntityHandle) is _encoder.op_code(ILOpCode.LDOBJ); _encoder.token(type); si
-        store_object(type: EntityHandle) is _encoder.op_code(ILOpCode.STOBJ); _encoder.token(type); si
+        load_object(type: EntityHandle) is _token_instruction(ILOpCode.LDOBJ, type); si
+        store_object(type: EntityHandle) is _token_instruction(ILOpCode.STOBJ, type); si
 
-        load_function_pointer(method: EntityHandle) is
-            _encoder.op_code(ILOpCode.LDFTN);
-            _encoder.token(method);
-        si
+        load_function_pointer(method: EntityHandle) is _token_instruction(ILOpCode.LDFTN, method); si
 
-        load_virtual_function_pointer(method: EntityHandle) is
-            _encoder.op_code(ILOpCode.LDVIRTFTN);
-            _encoder.token(method);
-        si
+        load_virtual_function_pointer(method: EntityHandle) is _token_instruction(ILOpCode.LDVIRTFTN, method); si
 
-        op(op_code: ILOpCode) is _encoder.op_code(op_code); si
+        op(op_code: ILOpCode) is _record(_mnemonic(op_code)); _encoder.op_code(op_code); si
 
-        ret() is _encoder.op_code(ILOpCode.RET); si
+        ret() is _record("ret"); _encoder.op_code(ILOpCode.RET); si
 
         flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int =>
             assembly_emitter.add_method_body(_encoder, self);

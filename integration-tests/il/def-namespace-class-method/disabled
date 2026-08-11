@@ -1,4 +1,0 @@
-Asserts the text-IL emitter's output, which the binary back end does not
-produce. Kept rather than deleted: the snapshots are the reference for what
-the emitter is expected to produce, and leaving the directories in place
-keeps merges from upstream ghul applying cleanly.
