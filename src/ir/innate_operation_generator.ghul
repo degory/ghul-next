@@ -1,4 +1,5 @@
 namespace IR is
+    use System.Reflection.Metadata.ILOpCode;
     use System.Exception;
 
     use Values.Call;
@@ -83,19 +84,35 @@ namespace IR is
         gen_arithmetic(value: INNATE, block: BLOCK) is
             gen_arguments(value, block);
 
-            let operation = value.op_name;
-
             // FIXME: do we need to convert the inputs or outputs?
-            block.add(Values.INSTRUCTION(operation));
+            block.add(Values.INSTRUCTION(_arithmetic_op_code(value.op_name)));
         si
+
+        // The operation half of the intrinsic's declared name, which is
+        // what the declaring assembly writes in its INTRINSIC_ATTRIBUTE.
+        _arithmetic_op_code(operation: string) -> ILOpCode static =>
+            if operation =~ "add" then ILOpCode.ADD;
+            elif operation =~ "sub" then ILOpCode.SUB;
+            elif operation =~ "mul" then ILOpCode.MUL;
+            elif operation =~ "div" then ILOpCode.DIV;
+            elif operation =~ "rem" then ILOpCode.REM;
+            elif operation =~ "neg" then ILOpCode.NEG;
+            elif operation =~ "not" then ILOpCode.NOT;
+            elif operation =~ "and" then ILOpCode.AND;
+            elif operation =~ "or" then ILOpCode.OR;
+            elif operation =~ "xor" then ILOpCode.XOR;
+            elif operation =~ "shl" then ILOpCode.SHL;
+            elif operation =~ "shr" then ILOpCode.SHR;
+            else throw System.Exception("unexpected arithmetic operation: {operation}");
+            fi;
 
         gen_bool_not(value: INNATE, block: BLOCK) is
             assert value.arguments.count == 1 else "not bool missing arguments";
 
             gen_arguments(value, block);
 
-            block.add(Values.INSTRUCTION("ldc.i4 0"));
-            block.add(Values.INSTRUCTION("ceq"));
+            block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+            block.add(Values.INSTRUCTION(ILOpCode.CEQ));
         si
 
         gen_short_circuit_bool(value: INNATE, block: BLOCK) is
@@ -108,9 +125,9 @@ namespace IR is
 
             // push speculative result:
             if operation =~ "and_then" then
-                block.add(Values.INSTRUCTION("ldc.i4 0"));
+                block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
             else
-                block.add(Values.INSTRUCTION("ldc.i4 1"));
+                block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_1));
             fi
         
             // branch to exit if speculative result is correct based on evaluating left argument:
@@ -121,7 +138,7 @@ namespace IR is
             fi
 
             // speculative result may not be correct, discard it:
-            block.add(Values.INSTRUCTION("pop"));
+            block.add(Values.INSTRUCTION(ILOpCode.POP));
             
             // result is value of right side: 
             gen_argument(value, 1, block);
@@ -137,31 +154,33 @@ namespace IR is
             let actual_operation = value.actual_operation;
 
             let needs_not mut = false;
-            let instruction: string mut;
+            let is_greater_than mut = false;
 
             if actual_operation =~ ">" then
-                instruction = "cgt";
+                is_greater_than = true;
             elif actual_operation =~ ">=" then
-                instruction = "clt";
                 needs_not = true;
             elif actual_operation =~ "<" then
-                instruction = "clt";
+                // less than: the default of both flags
             elif actual_operation =~ "<=" then
-                instruction = "cgt";
+                is_greater_than = true;
                 needs_not = true;
             else
                 throw System.Exception("unexpected compare order operation: {actual_operation}");
             fi
 
-            if is_unsigned then
-                instruction = "{instruction}.un";
-            fi
-                            
-            block.add(Values.INSTRUCTION(instruction));
+            let op_code =
+                if is_greater_than then
+                    if is_unsigned then ILOpCode.CGT_UN else ILOpCode.CGT fi
+                else
+                    if is_unsigned then ILOpCode.CLT_UN else ILOpCode.CLT fi
+                fi;
+
+            block.add(Values.INSTRUCTION(op_code));
 
             if needs_not then
-                block.add(Values.INSTRUCTION("ldc.i4 0"));
-                block.add(Values.INSTRUCTION("ceq"));
+                block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+                block.add(Values.INSTRUCTION(ILOpCode.CEQ));
             fi            
         si        
         
@@ -174,8 +193,8 @@ namespace IR is
                 block.add(Values.CALL_STRING_EQUALITY());
 
                 if value.actual_operation =~ "!~" then
-                    block.add(Values.INSTRUCTION("ldc.i4 0"));
-                    block.add(Values.INSTRUCTION("ceq"));
+                    block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+                    block.add(Values.INSTRUCTION(ILOpCode.CEQ));
                 fi
             else
                 throw System.Exception("unexpected string innate operation: {innate_name}");
@@ -210,11 +229,11 @@ namespace IR is
             block.add(left);
             block.add(right);
 
-            block.add(Values.INSTRUCTION("ceq"));
+            block.add(Values.INSTRUCTION(ILOpCode.CEQ));
 
             if value.actual_operation =~ "!=" then
-                block.add(Values.INSTRUCTION("ldc.i4 0"));
-                block.add(Values.INSTRUCTION("ceq"));
+                block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+                block.add(Values.INSTRUCTION(ILOpCode.CEQ));
             fi                
         si
 
@@ -223,11 +242,11 @@ namespace IR is
 
             gen_arguments(value, block);
 
-            block.add(Values.INSTRUCTION("ceq"));
+            block.add(Values.INSTRUCTION(ILOpCode.CEQ));
 
             if value.actual_operation =~ "!=" then
-                block.add(Values.INSTRUCTION("ldc.i4 0"));
-                block.add(Values.INSTRUCTION("ceq"));
+                block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+                block.add(Values.INSTRUCTION(ILOpCode.CEQ));
             fi                
         si
 
@@ -243,8 +262,8 @@ namespace IR is
         _native_zero(pointer_type: Semantic.Types.Type) -> Value static is
             let block = BLOCK(pointer_type);
 
-            block.add(Values.INSTRUCTION("ldc.i4 0"));
-            block.add(Values.INSTRUCTION("conv.u"));
+            block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+            block.add(Values.INSTRUCTION(ILOpCode.CONV_U));
 
             return block;
         si
@@ -332,8 +351,8 @@ namespace IR is
                 block.add(Values.DECIMAL_CALL(bool_type, "op_Equality", operands));
 
                 if value.actual_operation =~ "!=" then
-                    block.add(Values.INSTRUCTION("ldc.i4 0"));
-                    block.add(Values.INSTRUCTION("ceq"));
+                    block.add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
+                    block.add(Values.INSTRUCTION(ILOpCode.CEQ));
                 fi
 
                 return;

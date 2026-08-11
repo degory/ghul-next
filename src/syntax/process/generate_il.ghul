@@ -1,4 +1,5 @@
 namespace Syntax.Process is
+    use System.Reflection.Metadata.ILOpCode;
     use IO.Std;
 
     use System.Text.StringBuilder;
@@ -1603,8 +1604,8 @@ namespace Syntax.Process is
             // `ret` since we're at the MoveNext outer scope (no
             // open `.try`).
             add(_build_frame_field_store(
-                frame, frame.state_field, Values.INSTRUCTION("ldc.i4.m1")));
-            add(Values.INSTRUCTION("ldc.i4.0"));
+                frame, frame.state_field, Values.INSTRUCTION(ILOpCode.LDC_I4_M1)));
+            add(Values.INSTRUCTION(ILOpCode.LDC_I4_0));
             add(Values.RET());
 
             // If any yield inside an inner `.try` used the
@@ -1613,7 +1614,7 @@ namespace Syntax.Process is
             // L:` from inside a protected region.
             if let yield_return_label = _current_generator_yield_return_label then
                 add(Values.MARK_LABEL(yield_return_label));
-                add(Values.INSTRUCTION("ldc.i4.1"));
+                add(Values.INSTRUCTION(ILOpCode.LDC_I4_1));
                 add(Values.RET());
             fi
 
@@ -1971,7 +1972,7 @@ namespace Syntax.Process is
 
             // Body fell off the end: leave success_label so the
             // trailer fires.
-            add(Values.BRANCH_TO("leave", success_label));
+            add(Values.BRANCH_TO(ILOpCode.LEAVE, success_label));
 
             _current_async_state_machine = prev_async_sm;
             _current_async_success_label = prev_success;
@@ -2268,7 +2269,7 @@ namespace Syntax.Process is
                 holder.block.add(
                     Values.Literal.NUMBER(entry.state, _innate_symbol_lookup.get_int_type(), "i4"));
                 holder.block.add(
-                    Values.BRANCH_TO("beq", entry.cold_resume_label));
+                    Values.BRANCH_TO(ILOpCode.BEQ, entry.cold_resume_label));
             od
         si
 
@@ -3526,7 +3527,7 @@ namespace Syntax.Process is
 
             function.body.walk(self);
 
-            add(Values.BRANCH_TO("leave", success_label));
+            add(Values.BRANCH_TO(ILOpCode.LEAVE, success_label));
 
             _current_async_state_machine = prev_async_sm;
             _current_async_success_label = prev_success;
@@ -3951,7 +3952,7 @@ namespace Syntax.Process is
                     fi
 
                     if !is_void then
-                        add(Values.INSTRUCTION("pop"));
+                        add(Values.INSTRUCTION(ILOpCode.POP));
                     fi
                 fi
             catch e: System.Exception
@@ -4439,7 +4440,7 @@ namespace Syntax.Process is
                     fi
                 fi
 
-                add(Values.BRANCH_TO("leave", success_label));
+                add(Values.BRANCH_TO(ILOpCode.LEAVE, success_label));
                 return;
             fi
 
@@ -4693,9 +4694,9 @@ namespace Syntax.Process is
                 if !_current_generator_yield_return_label? then
                     _current_generator_yield_return_label = LABEL();
                 fi
-                add(Values.BRANCH_TO("leave", _current_generator_yield_return_label!));
+                add(Values.BRANCH_TO(ILOpCode.LEAVE, _current_generator_yield_return_label!));
             else
-                add(Values.INSTRUCTION("ldc.i4.1"));
+                add(Values.INSTRUCTION(ILOpCode.LDC_I4_1));
                 add(Values.RET());
             fi
 
@@ -4710,7 +4711,7 @@ namespace Syntax.Process is
             _emit_state_stamp(
                 frame,
                 frame.state_field,
-                Values.INSTRUCTION("ldc.i4.m1"),
+                Values.INSTRUCTION(ILOpCode.LDC_I4_M1),
                 "'.gen_state'");
         si
 
@@ -4728,7 +4729,7 @@ namespace Syntax.Process is
             let stamped = Values.BLOCK();
 
             stamped.add(value);
-            stamped.add(Values.INSTRUCTION("dup"));
+            stamped.add(Values.INSTRUCTION(ILOpCode.DUP));
             stamped.add(Values.STORE_TEMP(state_local_il, _innate_symbol_lookup.get_int_type()));
 
             add(_build_frame_field_store(frame, state_field, stamped));
@@ -4743,7 +4744,7 @@ namespace Syntax.Process is
                 )
             );
 
-            add(Values.INSTRUCTION("throw"));
+            add(Values.INSTRUCTION(ILOpCode.THROW));
         si
 
         // Build an AWAIT_SUSPEND for `awaited`: allocates a state
@@ -4868,7 +4869,7 @@ namespace Syntax.Process is
                 add(Values.NEW_ASSERT_FAILED_EXCEPTION());
             fi
 
-            add(Values.INSTRUCTION("throw"));
+            add(Values.INSTRUCTION(ILOpCode.THROW));
 
             brancher.label(end);
         si
@@ -5051,7 +5052,7 @@ namespace Syntax.Process is
 
                 brancher.label(try_label.middle);
 
-                add(Values.INSTRUCTION("endfinally"));
+                add(Values.INSTRUCTION(ILOpCode.ENDFINALLY));
                 add(Values.HANDLER_END(dispose_region));
 
                 _loops.leave_loop();
@@ -5327,7 +5328,7 @@ namespace Syntax.Process is
                             expected_type.is_void /\
                             !value.type!.is_void
                         then
-                            add(Values.INSTRUCTION("pop"));
+                            add(Values.INSTRUCTION(ILOpCode.POP));
                         fi
                     fi
                 fi
@@ -5489,7 +5490,7 @@ namespace Syntax.Process is
                             expected_type.is_void /\
                             !value.type!.is_void
                         then
-                            add(Values.INSTRUCTION("pop"));
+                            add(Values.INSTRUCTION(ILOpCode.POP));
                         fi
                     fi
                 fi
@@ -5512,7 +5513,7 @@ namespace Syntax.Process is
                     )
                 );
                 add(Values.NEW_ASSERT_FAILED_EXCEPTION());
-                add(Values.INSTRUCTION("throw"));
+                add(Values.INSTRUCTION(ILOpCode.THROW));
             elif `case.want_value /\ `case.requires_default_fallthrough /\ !has_else then
                 // Open-domain case-expression with a defaultable
                 // expected type and no `else` arm — push default(T)
@@ -5610,7 +5611,7 @@ namespace Syntax.Process is
                     add(_build_frame_field_store(frame, result_field, return_value.load()));
                 fi
 
-                add(Values.BRANCH_TO("leave", _current_async_success_label!));
+                add(Values.BRANCH_TO(ILOpCode.LEAVE, _current_async_success_label!));
             else
                 if return_value? then
                     add(return_value.load());
@@ -5708,7 +5709,7 @@ namespace Syntax.Process is
 
                 brancher.label(label.middle);
 
-                add(Values.INSTRUCTION("endfinally"));
+                add(Values.INSTRUCTION(ILOpCode.ENDFINALLY));
                 add(Values.HANDLER_END(region));
             fi
 
