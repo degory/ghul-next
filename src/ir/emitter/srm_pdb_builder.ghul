@@ -112,15 +112,20 @@ namespace IR.Emitter is
                 if !(document =~ current_document) then
                     // A document-change record: the zero IL-offset
                     // delta that no ordinary record can carry, then the
-                    // document being switched to. The next record after
-                    // it is absolute again.
+                    // document being switched to.
+                    //
+                    // It changes which document the records after it
+                    // belong to and nothing else. The deltas keep
+                    // running from the last real sequence point, so the
+                    // record following it is still a delta rather than
+                    // absolute - resetting the baseline here would
+                    // desynchronise every offset and line after it.
                     buffer.write_compressed_integer(0);
                     buffer.write_compressed_integer(
                         System.Reflection.Metadata.Ecma335.MetadataTokens.get_row_number(
                             cast System.Reflection.Metadata.EntityHandle(document)));
 
                     current_document = document;
-                    previous = null;
                 fi
 
                 let delta_lines = point.end_line - point.start_line;
@@ -161,18 +166,29 @@ namespace IR.Emitter is
 
         // Writes the PDB and hands back the identity the assembly's
         // debug directory has to name for a runtime to pair the two.
+        // The serialized PDB, for a caller that wants the bytes rather
+        // than a file - reading them back through a metadata reader is
+        // how the blob encoding above is tested.
+        serialize(
+            blob: BlobBuilder,
+            type_system_row_counts: System.Collections.Immutable.ImmutableArray[int],
+            entry_point: System.Reflection.Metadata.MethodDefinitionHandle,
+            content_id_provider: (Collections.Iterable[System.Reflection.Metadata.Blob]) -> BlobContentId
+        ) -> BlobContentId =>
+            PortablePdbBuilder(
+                _metadata, type_system_row_counts, entry_point, content_id_provider)
+                .serialize(blob);
+
         write_to(
             path: string,
             type_system_row_counts: System.Collections.Immutable.ImmutableArray[int],
             entry_point: System.Reflection.Metadata.MethodDefinitionHandle,
             content_id_provider: (Collections.Iterable[System.Reflection.Metadata.Blob]) -> BlobContentId
         ) -> BlobContentId is
-            let builder =
-                PortablePdbBuilder(
-                    _metadata, type_system_row_counts, entry_point, content_id_provider);
-
             let blob = BlobBuilder(1024);
-            let content_id = builder.serialize(blob);
+
+            let content_id =
+                serialize(blob, type_system_row_counts, entry_point, content_id_provider);
 
             let stream = IO.File.create(path);
             blob.write_content_to(stream);
