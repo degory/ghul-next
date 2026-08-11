@@ -61,7 +61,14 @@ for PASS in 1 2 3 4 ; do
     # package version would be served from the NuGet cache as whichever
     # arrived first, and the second pass would silently re-test the
     # first.
-    PASS_PACKAGE_VERSION="${VERSION_PREFIX}-bootstrap.$(($(date +%s%N)/1000))"
+    # The last pass's package is the build's output, so it carries the
+    # real package version; the earlier ones only have to be distinct
+    # from each other.
+    if [ "${PASS}" == "4" ] ; then
+        PASS_PACKAGE_VERSION="${PACKAGE_VERSION}"
+    else
+        PASS_PACKAGE_VERSION="${VERSION_PREFIX}-bootstrap.$(($(date +%s%N)/1000))"
+    fi
 
     echo
     echo "    Start pass ${PASS}: ${PREVIOUS} -> ${PACKAGE_VERSION} (package ${PASS_PACKAGE_VERSION})..."
