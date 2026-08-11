@@ -169,7 +169,7 @@ namespace Syntax.Process is
             _unit_variant_constructor = Semantic.UNIT_VARIANT_CONSTRUCTOR(_owner_constraint_specializer, _type_arg_placeholder_registry, function_caller);
             _closure_arg_resolver = Semantic.CLOSURE_ARG_RESOLVER(logger);
             _numeric_literal_classifier = NUMERIC_LITERAL_CLASSIFIER(logger, innate_symbol_lookup);
-            _literals = COMPILE_LITERALS(logger, innate_symbol_lookup, _numeric_literal_classifier);
+            _literals = COMPILE_LITERALS(logger, innate_symbol_lookup, _numeric_literal_classifier, symbol_use_locations);
             _symbol_use_locations = symbol_use_locations;
             _value_converter = value_converter;
             _value_boxer = value_boxer;
@@ -361,17 +361,57 @@ namespace Syntax.Process is
                 return current_instance_context;
             fi
 
+            // `self.x` usually names the same location the bare `x`
+            // does, and where it does the two spellings share one fact
+            // rather than keying their own — a guard written one way is
+            // then seen by a use written the other.
+            //
+            // Only where it does. The bare form resolves by lexical
+            // scope lookup, so a local or parameter of the same name
+            // shadows the member and the two spellings name different
+            // locations — the `init(name: string?)` that assigns
+            // `self.name = name` is the everyday case. Sharing a fact
+            // across that pair would narrow the member on presence
+            // proved of the parameter. So the member is looked up on
+            // the enclosing instance and the two must agree by
+            // identity; where they don't, neither spelling may borrow
+            // the other's fact and `self.x` narrows on nothing.
+            if let self_member: Trees.Expressions.MEMBER = expr /\ isa Trees.Expressions.SELF(self_member.left) then
+                if self_member.is_coalesce \/ self_member.identifier.is_qualified then
+                    return null;
+                fi
+
+                let context = current_instance_context;
+
+                if !context? then
+                    return null;
+                fi
+
+                let target = _narrowing_target_named(self_member.identifier);
+
+                if !target? \/ target != context.find_direct(self_member.identifier.name) then
+                    return null;
+                fi
+
+                return target;
+            fi
+
             if !isa Trees.Expressions.IDENTIFIER(expr) then
                 return null;
             fi
 
-            let identifier_expr = expr;
+            return _narrowing_target_named(expr.identifier);
+        si
 
-            if identifier_expr.identifier.is_qualified then
+        // The symbol an unqualified name narrows on, or null when it
+        // names nothing the flow analysis tracks: a local or field, or
+        // a property whose getter is proven store-free.
+        _narrowing_target_named(identifier: Trees.Identifiers.Identifier) -> Semantic.Symbols.Symbol? is
+            if identifier.is_qualified then
                 return null;
             fi
 
-            let symbol = find(identifier_expr.identifier);
+            let symbol = find(identifier);
 
             if !symbol? then
                 return null;
@@ -416,23 +456,26 @@ namespace Syntax.Process is
                 return null;
             fi
 
-            let root: Semantic.Symbols.Variable? mut = null;
+            let root: Semantic.Symbols.Symbol? mut = null;
             let members = Collections.LIST[Semantic.Symbols.Symbol]();
 
             if isa Trees.Expressions.IDENTIFIER(member.left) then
                 let id = cast Trees.Expressions.IDENTIFIER(member.left);
 
-                if id.identifier.is_qualified then
+                // The root is subject to the same rule as a hop: a
+                // local or field read directly, or a property whose
+                // getter is proven store-free. `try_get_narrowing_target`
+                // is that rule, so a path root is exactly a symbol the
+                // flow analysis already tracks on its own — which is
+                // what makes the fact recorded at `h.name?` the one
+                // read back at every later `h.name`.
+                let symbol = try_get_narrowing_target(id);
+
+                if !symbol? then
                     return null;
                 fi
 
-                let symbol = find(id.identifier);
-
-                if !symbol? \/ !isa Semantic.Symbols.Variable(symbol) then
-                    return null;
-                fi
-
-                root = cast Semantic.Symbols.Variable(symbol);
+                root = symbol;
             else
                 let left_path = try_build_access_path(member.left);
 
@@ -595,36 +638,45 @@ namespace Syntax.Process is
             IoC.CONTAINER.instance.location_stack.pop();
         si
 
+        // Drop every piece of state this visitor carries between walks.
+        // Callers that drive the visitor without going through `apply` —
+        // the incremental body re-walk — must call this themselves,
+        // because the visitor is one per IoC container rather than one
+        // per build.
+        //
+        // Phantom Variables for unbound owner type-args at constructor
+        // sites are cached on this visitor (not the AST), keyed by AST
+        // node reference, so cache entries from a previous pass would
+        // still hit on the same AST nodes after a re-compile, returning
+        // phantoms whose `_lub_map` references Type instances from the
+        // previous build's symbol table (now wiped by clear_symbols).
+        // Body-retry iterations of one function need stable phantoms,
+        // but those happen inside visit(function: FUNCTION), so clearing
+        // before the walk starts is safe.
+        //
+        // The narrowing stack must be empty at a walk boundary — every
+        // push has to be balanced by a release before its owning AST
+        // exits. Reset defensively so a narrowing leaked by an aborted
+        // earlier walk (early return / exception) doesn't poison
+        // subsequent runs — restores symbol types and empties the
+        // environment.
+        reset_between_walks() is
+            _type_arg_placeholder_registry.clear();
+
+            _flow.reset();
+            _if_flow_stack.clear();
+            _loop_kept_stack.clear();
+            _try_flow_stack.clear();
+            _assert_condition_killed_stack.clear();
+        si
+
         apply(root: Trees.Node) is
             assert _pragma_scope_stack.is_balanced;
 
             IR.LABEL.reset_id();
             IR.LABEL.set_pass("E");
 
-            // Phantom Variables for unbound owner type-args at constructor
-            // sites are cached on this visitor (not the AST), keyed by AST
-            // node reference. The visitor instance is long-lived — one per
-            // IoC container, not one per build — so cache entries from a
-            // previous pass would still hit on the same AST nodes after a
-            // re-compile, returning phantoms whose `_lub_map` references
-            // Type instances from the previous build's symbol table (now
-            // wiped by clear_symbols). Body-retry iterations of one
-            // function need stable phantoms, but those happen inside
-            // visit(function: FUNCTION) below this point, so clearing at
-            // the start of apply is safe.
-            _type_arg_placeholder_registry.clear();
-
-            // Narrowing stack must be empty at apply() boundaries —
-            // every push has to be balanced by a release before its
-            // owning AST exits. Reset defensively so a narrowing
-            // leaked by an aborted earlier walk (early return /
-            // exception) doesn't poison subsequent runs — restores
-            // symbol types and empties the environment.
-            _flow.reset();
-            _if_flow_stack.clear();
-            _loop_kept_stack.clear();
-            _try_flow_stack.clear();
-            _assert_condition_killed_stack.clear();
+            reset_between_walks();
 
             root.walk(self);
 
@@ -2606,18 +2658,59 @@ namespace Syntax.Process is
             `await.compile_expressions_state.value = IR.Values.WRAPPER(DUMMY(element_type, `await.location));
         si
 
+        // The `cast` keyword's own span. A CAST's location runs to the
+        // closing parenthesis, and the node keeps no separate span for
+        // the keyword, so it is derived: the location starts at the
+        // keyword, which is four characters wide, and a span's end
+        // column is inclusive.
+        _cast_keyword_location(`cast: Trees.Expressions.CAST) -> Source.LOCATION =>
+            Source.LOCATION(
+                `cast.location.file_name,
+                `cast.location.start_line,
+                `cast.location.start_column,
+                `cast.location.start_line,
+                `cast.location.start_column + 3
+            );
+
         visit(`cast: Trees.Expressions.CAST) is
             `cast.compile_expressions_state.value = null;
 
-            let type mut = `cast.type_expression.type;
+            // `cast(v)` writes no target type and takes the one its
+            // context supplies, the way a bare `_` does. Nothing has
+            // pushed one in on the first walk of a call argument or an
+            // operator operand, so the error here is what tells the
+            // consumer this node is still waiting; the consumer rolls
+            // it back and re-walks once resolution has settled on a
+            // formal type.
+            let type mut =
+                if `cast.type_expression? then
+                    `cast.type_expression.type
+                else
+                    `cast.expected_type
+                fi;
 
             if !type? then
                 `cast.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), `cast.location);
-                _logger.error(`cast.type_expression.location, "cast has no type");
+
+                if `cast.type_expression? then
+                    _logger.error(`cast.type_expression.location, "cast has no type");
+                else
+                    _logger.error(`cast.location, "cannot infer the type to cast to here");
+                fi
+
                 return;
             fi
 
-            `cast.type_expression.check_is_not_reference(_logger, "cannot cast to a reference type");
+            if `cast.type_expression? then
+                `cast.type_expression.check_is_not_reference(_logger, "cannot cast to a reference type");
+            else
+                // The target type is written nowhere, so hover over the
+                // keyword is where the reader sees what it resolved to.
+                // Recorded over the keyword alone rather than the whole
+                // expression, so hovering the value being converted
+                // still describes the value.
+                _symbol_use_locations.add_inferred_type_hover(_cast_keyword_location(`cast), type);
+            fi
 
             let right_value = `cast.right.value;
 
@@ -2791,6 +2884,9 @@ namespace Syntax.Process is
                 _logger.exception(binary.location, ex, "exception compiling binary operator (called from {System.Diagnostics.StackTrace().to_string().replace_line_endings(" ")})");
             yrt
         si
+
+        pre(index: Trees.Expressions.INDEX) -> bool =>
+            _operators.pre_index(index);
 
         visit(index: Trees.Expressions.INDEX) is
             try
