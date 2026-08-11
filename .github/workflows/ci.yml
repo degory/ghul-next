@@ -476,19 +476,7 @@ jobs:
   # the emission surface to be complete rather than merely correct.
   runtime_tests:
     needs: [version, bootstrap]
-    # Disabled until the back end emits everything this one needs. A job
-    # that always fails costs runner minutes and makes every other
-    # result read as suspect. Delete the 'if: false' to re-enable.
-    #
-    # This one and examples_tests are the last to recover: they need
-    # their consumer repositories to build against the result, not just
-    # this repository's own tests to pass.
-    #
-    # Self-hosting is verified by the bootstrap job, which gates every
-    # one of these.
-    if: false
     name: Run runtime tests
-    continue-on-error: true
 
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
 
