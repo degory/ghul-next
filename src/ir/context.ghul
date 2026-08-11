@@ -161,6 +161,19 @@ namespace IR is
                 return;
             fi
 
+            // The binary back end records the position against the
+            // instruction offset the body has reached, which is only
+            // meaningful while one is open. Unlike the text path there
+            // is no run of directives to keep sparse: a repeated
+            // position at the same offset replaces its predecessor, and
+            // at a later offset it is a distinct point that a debugger
+            // and a coverage tool both want.
+            if let body = current_srm_body_emitter then
+                body.mark_sequence_point(location);
+
+                return;
+            fi
+
             // Emit an absolute path so the resulting Portable PDB's
             // Document records match what an IDE will send in a
             // breakpoint request (which is the file's absolute path).
