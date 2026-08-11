@@ -273,6 +273,60 @@ jobs:
         name: ghul-analysis-protocol-package
         path: ./analysis-protocol/nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
 
+  # The compiler compiles itself, and the compiler that produces does the
+  # same, and the two agree byte for byte. Upstream split this out of the
+  # build when the back end was replaced, because a half-migrated emitter
+  # could not self-host and a job that always fails makes every other
+  # result read as suspect. It can be a gate again.
+  #
+  # Not folded into `build`: this packs and installs four times over, and
+  # every test job needs the artefacts `build` publishes long before this
+  # has finished.
+  bootstrap:
+    needs: [version]
+    name: Bootstrap compiler
+
+    # Four sequential compiler passes, and the compiler does not
+    # parallelise its source walk, so cores past the second buy nothing.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'ubicloud-standard-2' }}
+
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        cache: true
+        cache-dependency-path: |
+          **/Directory.Packages.props
+          **/.config/dotnet-tools.json
+
+    - name: Add GHCR package source
+      run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
+
+    - name: Restore local .NET tools
+      run: dotnet tool restore
+
+    - name: Install the bootstrap compiler
+      run: |
+        for attempt in 1 2 3 4 5; do
+          if dotnet tool update --local ghul.compiler --version ${{ needs.version.outputs.compiler }}; then
+            exit 0
+          fi
+          echo "install attempt ${attempt} failed; retrying in 15s..."
+          sleep 15
+        done
+        exit 1
+
+    - name: Bootstrap
+      env:
+        CI: true
+        PACKAGE_VERSION: ${{ needs.version.outputs.package }}
+      run: ./build/bootstrap.sh
+
   # parse and semantic compile nothing -- every test in them either suppresses
   # code generation or expects the build to fail -- so this stays green while
   # the IL back end is being replaced. The groups that do emit are run by
