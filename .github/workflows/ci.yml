@@ -367,23 +367,17 @@ jobs:
   # until the ported surface catches up, one group at a time.
   codegen_tests:
     needs: [version, bootstrap]
-    # Disabled until the binary back end can build a working compiler.
-    # A job that always fails costs runner minutes and makes every other
+    # Disabled until the back end emits everything this one needs. A job
+    # that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
     #
-    # codegen_tests and cross_assembly_tests need only the back end to
-    # emit correctly, so they recover first. runtime_tests and
-    # examples_tests additionally need their consumer repositories to
-    # build against the result, so they recover last.
+    # codegen_tests and cross_assembly_tests need only correct emission,
+    # so they recover first; runtime_tests and examples_tests also need
+    # their consumer repositories to build against the result, so they
+    # recover last.
     #
-    # analysis_tests is the exception and does not depend on the back
-    # end at all: it drives --analyse, which emits nothing, and fails
-    # only because analysis-tests.ghulproj rebuilds the protocol library
-    # from source. Referencing the published package instead would let
-    # it pass now.
-    #
-    # Self-hosting is checked by none of these - see the build job - so
-    # restoring it is separate work rather than the end of this list.
+    # Self-hosting is verified by the bootstrap job, which gates every
+    # one of these.
     if: false
     name: Run codegen tests
     continue-on-error: true
@@ -445,32 +439,13 @@ jobs:
         name: codegen-test-results
         path: test-results.txt
 
-  # Drives --analyse, which emits nothing, but its fixtures build the
-  # analysis-protocol library with the freshly built compiler, so it
-  # needs the emission surface after all. Reported but not gating, same
-  # as codegen_tests.
+  # Drives --analyse, which emits nothing. It still needs the emission
+  # surface, because its fixtures build the analysis-protocol library
+  # with the freshly built compiler - which is why it could not run
+  # while that library came out empty.
   analysis_tests:
     needs: [version, bootstrap]
-    # Disabled until the binary back end can build a working compiler.
-    # A job that always fails costs runner minutes and makes every other
-    # result read as suspect. Delete the 'if: false' to re-enable.
-    #
-    # codegen_tests and cross_assembly_tests need only the back end to
-    # emit correctly, so they recover first. runtime_tests and
-    # examples_tests additionally need their consumer repositories to
-    # build against the result, so they recover last.
-    #
-    # analysis_tests is the exception and does not depend on the back
-    # end at all: it drives --analyse, which emits nothing, and fails
-    # only because analysis-tests.ghulproj rebuilds the protocol library
-    # from source. Referencing the published package instead would let
-    # it pass now.
-    #
-    # Self-hosting is checked by none of these - see the build job - so
-    # restoring it is separate work rather than the end of this list.
-    if: false
     name: Run analysis tests
-    continue-on-error: true
 
     # xunit-parallelised; each test spawns the bootstrapped compiler as an
     # analysis-mode subprocess and chats over IPC. Measured: 8 vCPU → 42s,
@@ -590,23 +565,17 @@ jobs:
   # the emission surface. Reported but not gating, same as codegen_tests.
   runtime_tests:
     needs: [version, bootstrap]
-    # Disabled until the binary back end can build a working compiler.
-    # A job that always fails costs runner minutes and makes every other
+    # Disabled until the back end emits everything this one needs. A job
+    # that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
     #
-    # codegen_tests and cross_assembly_tests need only the back end to
-    # emit correctly, so they recover first. runtime_tests and
-    # examples_tests additionally need their consumer repositories to
-    # build against the result, so they recover last.
+    # codegen_tests and cross_assembly_tests need only correct emission,
+    # so they recover first; runtime_tests and examples_tests also need
+    # their consumer repositories to build against the result, so they
+    # recover last.
     #
-    # analysis_tests is the exception and does not depend on the back
-    # end at all: it drives --analyse, which emits nothing, and fails
-    # only because analysis-tests.ghulproj rebuilds the protocol library
-    # from source. Referencing the published package instead would let
-    # it pass now.
-    #
-    # Self-hosting is checked by none of these - see the build job - so
-    # restoring it is separate work rather than the end of this list.
+    # Self-hosting is verified by the bootstrap job, which gates every
+    # one of these.
     if: false
     name: Run runtime tests
     continue-on-error: true
@@ -696,23 +665,17 @@ jobs:
   # the emission surface. Reported but not gating, same as codegen_tests.
   examples_tests:
     needs: [version, bootstrap]
-    # Disabled until the binary back end can build a working compiler.
-    # A job that always fails costs runner minutes and makes every other
+    # Disabled until the back end emits everything this one needs. A job
+    # that always fails costs runner minutes and makes every other
     # result read as suspect. Delete the 'if: false' to re-enable.
     #
-    # codegen_tests and cross_assembly_tests need only the back end to
-    # emit correctly, so they recover first. runtime_tests and
-    # examples_tests additionally need their consumer repositories to
-    # build against the result, so they recover last.
+    # codegen_tests and cross_assembly_tests need only correct emission,
+    # so they recover first; runtime_tests and examples_tests also need
+    # their consumer repositories to build against the result, so they
+    # recover last.
     #
-    # analysis_tests is the exception and does not depend on the back
-    # end at all: it drives --analyse, which emits nothing, and fails
-    # only because analysis-tests.ghulproj rebuilds the protocol library
-    # from source. Referencing the published package instead would let
-    # it pass now.
-    #
-    # Self-hosting is checked by none of these - see the build job - so
-    # restoring it is separate work rather than the end of this list.
+    # Self-hosting is verified by the bootstrap job, which gates every
+    # one of these.
     if: false
     name: Run examples tests
     continue-on-error: true
