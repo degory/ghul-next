@@ -251,7 +251,7 @@ namespace Semantic.Symbols is
         unspecialized_arguments: Collections.List[Type]? public;
         unspecialized_return_type: Type? public;
 
-        // Parallel to generic_argument_names: kind / `new()` / type-bound
+        // Parallel to generic_argument_names: kind / `init` / type-bound
         // constraints per method-level type parameter. Populated at
         // import for .NET methods, whose parameter symbols are not
         // declared into the function's scope and so can't be reached
@@ -348,7 +348,21 @@ namespace Semantic.Symbols is
         is_workspace_visible: bool => !name.starts_with('_');
         is_recursive: bool => false; // only applicable if a closure
 
-        short_description: string => "{name}{generic_argument_descriptions}({short_argument_descriptions}) -> {return_type!.short_description}";
+        // An indexer's accessors carry the CLR-required names `get_Item`
+        // and `set_Item`, which are not spellable in ghūl source. Rendered
+        // as a plain call they read as a member the language does not
+        // have, so they take the declaration's own shape instead - the
+        // same shape `to_string` gives them, with short type descriptions.
+        short_description: string =>
+            if is_indexer_accessor then
+                render_indexer_shape(
+                    get_short_argument_description(0),
+                    indexer_value_type!.short_description
+                );
+            else
+                "{name}{generic_argument_descriptions}({short_argument_descriptions}) -> {return_type!.short_description}";
+            fi;
+
         search_description: string => short_description;
 
         // Prefixes the description's trailing kind comment when the
@@ -655,7 +669,7 @@ namespace Semantic.Symbols is
 
             assert args.count == arguments.count else "expected to bind {arguments.count} arguments in {self} but only {args} supplied";
 
-            let results = Types.GENERIC_ARGUMENT_BIND_RESULTS();
+            let results = Types.GENERIC_ARGUMENT_BIND_RESULTS(_bindable_type_arguments());
 
             let all_ok = true;
 
@@ -687,6 +701,27 @@ namespace Semantic.Symbols is
             fi
 
             return results;
+        si
+
+        // The type arguments a call to this function may pin: its own,
+        // plus the declaring type's when those are still open. A static
+        // generic method reached through its declaring class can have
+        // both inferred from one argument list; reached through a
+        // constructed type the declaring half is already supplied, and
+        // the only type variables left in the formals belong to whoever
+        // wrote the call.
+        _bindable_type_arguments() -> Collections.List[Types.Type] is
+            let result = Collections.LIST[Types.Type](generic_arguments);
+
+            if let owner_classy = cast Classy?(owner) then
+                for name in owner_classy.argument_names do
+                    if let argument = owner_classy.find_direct(name) /\ argument.type? then
+                        result.add(argument.type!);
+                    fi
+                od
+            fi
+
+            return result;
         si
 
         try_bind_owner_generic_arguments(location: Source.LOCATION, args: Collections.List[Type]) -> Types.GENERIC_ARGUMENT_BIND_RESULTS? is
@@ -976,6 +1011,18 @@ namespace Semantic.Symbols is
                 return;
             fi
 
+            // The equality and order operators are exempt: an absent
+            // operand is answered by the null checks the operator's
+            // own lowering writes around the call, so a body declared
+            // non-optional is only handed present values however the
+            // overridden member spells its parameter. That makes the
+            // non-optional spelling honest for an implementation, and
+            // lets one implementation shape satisfy Ghul.Equatable
+            // and Ghul.Comparable however their type argument renders.
+            if name =~ "=~" \/ name =~ "<>" then
+                return;
+            fi
+
             for i in 0..arguments.count do
                 // An optional type variable is exempt: an unconstrained
                 // type parameter cannot be spelled optional in source, so
@@ -1070,6 +1117,31 @@ namespace Semantic.Symbols is
             return result.to_string();
         si
 
+        is_indexer_accessor: bool => name =~ "get_Item" \/ name =~ "set_Item";
+
+        // The element type an indexer reads or writes: the return type of
+        // the read accessor, and the value parameter of the write one,
+        // whose own return type is void.
+        indexer_value_type: Type? =>
+            if name =~ "set_Item" then
+                if arguments.count > 1 then arguments[1] else null fi;
+            else
+                return_type;
+            fi;
+
+        // `OWNER[index: I]: E`, with `= value` on the write accessor. The
+        // caller supplies both renderings so the long and short forms
+        // differ only in how their types are described.
+        render_indexer_shape(index_description: string, value_description: string) -> string is
+            let result = "{_display_owner_name}[{index_description}]: {value_description}";
+
+            if name =~ "set_Item" /\ argument_names.count > 1 then
+                return "{result} = {argument_names[1]}";
+            fi
+
+            return result;
+        si
+
         _display_owner_name: string is
             let o = owner;
 
@@ -1100,28 +1172,14 @@ namespace Semantic.Symbols is
                         .append(return_type)
                         .append(" = ")
                         .append(argument_names[0]);
-                elif name =~ "get_Item" then
+                elif is_indexer_accessor then
                     result
-                        .append(_display_owner_name)
-                        .append("[")
-                        .append(argument_names[0])
-                        .append(": ")
-                        .append(arguments[0])
-                        .append("]: ")
-
-                        .append(return_type);
-                elif name =~ "set_Item" then
-                    result
-                        .append(_display_owner_name)
-                        .append("[")
-                        .append(argument_names[0])
-                        .append(": ")
-                        .append(arguments[0])
-                        .append("]: ")
-
-                        .append(return_type)
-                        .append(" = ")
-                        .append(argument_names[1]);
+                        .append(
+                            render_indexer_shape(
+                                "{argument_names[0]}: {arguments[0]}",
+                                "{indexer_value_type}"
+                            )
+                        );
                 else
                     result
                         .append(IoC.CONTAINER.instance.name_display.name_for(self))

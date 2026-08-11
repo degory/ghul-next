@@ -108,6 +108,13 @@ namespace Driver is
                     System.Environment.exit(0);
                 fi
 
+                if USAGE.is_requested(arguments) then
+                    Std.out.write(USAGE.text);
+                    Std.out.flush();
+
+                    System.Environment.exit(0);
+                fi
+
                 container = IoC.CONTAINER.instance;
 
                 paths = container.path_config;
@@ -294,6 +301,8 @@ namespace Driver is
                     flags.no_analysis_heap_watchdog = true;
                 elif s =~ "--incremental-analysis" then
                     flags.want_incremental_analysis = true;
+                elif s =~ "--no-incremental-analysis" then
+                    flags.want_incremental_analysis = false;
                 elif s =~ "--analysis-idle-timeout" then
                     let seconds_string = get_next_argument(args_iterator);
 
