@@ -1440,6 +1440,8 @@ namespace Semantic.Symbols is
     si
 
     class GLOBAL_FUNCTION: Function is
+        is_public_readable: bool => !emit_assembly;
+
         describe(context: DESCRIBE_CONTEXT) -> SignaturePart =>
             _describe_function(context, true);
 

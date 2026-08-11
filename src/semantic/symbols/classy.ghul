@@ -16,6 +16,16 @@ namespace Semantic.Symbols is
     use Types.Type;
 
     class Classy: ScopedWithEnclosingScope, ClosureContext is
+        // Whether the type is visible outside its declaring assembly.
+        // Mirrors gen_access: an underscore-prefixed type under the
+        // private or protected policy is assembly-internal.
+        is_public_readable: bool => val
+            let policy = IoC.CONTAINER.instance.build_flags.underscore_access;
+
+            !(name.starts_with('_') /\
+                (policy == Compiler.UnderscoreAccess.PRIVATE \/ policy == Compiler.UnderscoreAccess.PROTECTED))
+        lav;
+
         _ancestors: Collections.LIST[Type];
         _implementors: Collections.LIST[Symbol]?;
         _enclosing_symbols: Collections.MAP[string,Symbol];

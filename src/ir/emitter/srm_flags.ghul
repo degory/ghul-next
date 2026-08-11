@@ -27,6 +27,10 @@ namespace IR.Emitter is
         type_attributes(type: Classy) -> TypeAttributes static is
             let flags mut = _PUBLIC_TYPE;
 
+            if !type.is_public_readable then
+                flags = 0;
+            fi
+
             if type.is_trait then
                 return cast TypeAttributes(flags | _INTERFACE | _ABSTRACT_TYPE);
             fi
