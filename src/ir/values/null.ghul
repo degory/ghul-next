@@ -14,13 +14,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldnull();
-
-                return;
-            fi
-
-            context.write_line("ldnull");
         si
 
         to_string() -> string =>

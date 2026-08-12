@@ -13,13 +13,8 @@ namespace IR.Values.Store is
             gen(from, context);
             gen(value, context);
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.stfld(context.resolve_field_target(cast Semantic.Symbols.Field(symbol)));
-
-                return;
-            fi
-
-            context.write_line("stfld {symbol.get_il_reference()}");
         si            
 
         to_string() -> string =>

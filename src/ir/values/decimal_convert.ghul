@@ -18,14 +18,9 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.call(
                     context.resolve_decimal_method(method_name, parameter_types, type));
-
-                return;
-            fi
-
-            context.write_line("call {type.get_il_type()} {DECIMAL_IL}::{method_name}({_parameter_il})");
         si
 
         DECIMAL_IL: string static => "valuetype ['System.Runtime']'System'.'Decimal'";

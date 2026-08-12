@@ -26,13 +26,8 @@ namespace IR.Values is
 
         gen(context: IR.CONTEXT) is
             value.gen(context);
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.load_object(context.resolve_type_token(type));
-
-                return;
-            fi
-
-            context.write_line("ldobj {type.get_il_type()}");
         si
 
         gen_address(context: IR.CONTEXT) is

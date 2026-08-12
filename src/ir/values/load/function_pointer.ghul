@@ -38,7 +38,7 @@ namespace IR.Values.Load is
         gen(context: IR.CONTEXT) is
             let opcode = if is_virtual then "ldvirtftn" else "ldftn" fi;
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 let target = context.resolve_call_target(cast Semantic.Symbols.Function(symbol));
 
                 if is_virtual then
@@ -46,11 +46,6 @@ namespace IR.Values.Load is
                 else
                     body.load_function_pointer(target);
                 fi
-
-                return;
-            fi
-
-            context.write_line("{opcode} {symbol.get_il_reference()} /* function: {symbol} */");
         si
 
         to_string() -> string =>
