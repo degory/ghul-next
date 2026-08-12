@@ -21,8 +21,8 @@ namespace IR.UnitTests is
             let context = IR.CONTEXT(null, null);
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
-            context.srm_assembly_emitter =
-                IR.Emitter.SRM_ASSEMBLY_EMITTER("test", "test", "0:0:0:0", true);
+            context.install_srm_assembly_emitter(
+                IR.Emitter.SRM_ASSEMBLY_EMITTER("test", "test", "0:0:0:0", true));
 
             context.current_srm_body_emitter = body;
 
@@ -53,8 +53,8 @@ namespace IR.UnitTests is
             // A value naming a type or a member resolves a token through
             // the assembly emitter, so one has to be here even for a
             // value that names nothing.
-            context.srm_assembly_emitter =
-                IR.Emitter.SRM_ASSEMBLY_EMITTER("test", "test", "0:0:0:0", true);
+            context.install_srm_assembly_emitter(
+                IR.Emitter.SRM_ASSEMBLY_EMITTER("test", "test", "0:0:0:0", true));
 
             context.current_srm_body_emitter = body;
 
