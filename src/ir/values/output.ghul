@@ -13,17 +13,13 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            // The binary back end records the offset range the marked
-            // statement emits, rather than writing the instructions to a
-            // file. The range leaves the method as a custom attribute the
-            // IL test runner reads; `enter_file` is the text path.
+            // Records the offset range the marked statement emits. The
+            // range leaves the method as a custom attribute the IL test
+            // runner reads. Outside a body there is no range to record:
+            // a pragma on a declaration marks nothing this can measure.
             if let body = context.current_srm_body_emitter then
                 body.begin_il_output(path, context.next_il_output_sequence());
-
-                return;
             fi
-
-            context.enter_file(path, false);
         si
 
         to_string() -> string =>
@@ -44,11 +40,7 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             if let body = context.current_srm_body_emitter then
                 body.end_il_output();
-
-                return;
             fi
-
-            context.leave_file(path);
         si
 
         to_string() -> string =>

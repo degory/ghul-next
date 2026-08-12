@@ -24,6 +24,15 @@ namespace IR.Emitter is
         SET_STATE_MACHINE,
     si
 
+    // The non-generic framework members an iterable or iterator type
+    // has to answer for, which its generic ones derive from. Neither
+    // is a declaration the symbol table holds, so like `FrameMember`
+    // each is named by which member it is.
+    enum BoilerplateMember is
+        ENUMERABLE_GET_ENUMERATOR,
+        ENUMERATOR_GET_CURRENT,
+    si
+
     // Every metadata identity the emitter has assigned to a symbol, one
     // map per table.
     //
