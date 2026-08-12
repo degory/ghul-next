@@ -1000,28 +1000,22 @@ namespace Syntax.Process is
         si
 
         // Emit the static cache field backing a memoized stateless
-        // delegate. A static/global anonymous function caches on the
-        // enclosing namespace's `$globals` class, emitted in its own
-        // `$globals` wrapper (ilasm merges them); a stateless instance-
-        // context delegate caches on its enclosing class, whose block is
-        // already open at the call site, so the field is emitted directly.
-        // Keyed on the load site having actually referenced the field, so
-        // definition and frozen load-site IL can't disagree.
+        // delegate. A static or global anonymous function caches on the
+        // enclosing namespace's globals carrier and a stateless
+        // instance-context one on its enclosing class; the field names
+        // its own owner, so both are emitted the same way.
+        //
+        // Keyed on the load site having actually referenced the field,
+        // so definition and frozen load-site IL can't disagree.
         gen_delegate_cache_field(closure: Semantic.Symbols.Closure) is
             if !closure.has_delegate_cache_field then
                 return;
             fi
 
-            let `field = closure.delegate_cache_field;
-
             let field_definition = StringBuilder();
-            `field.gen_definition_header(field_definition);
+            closure.delegate_cache_field.gen_definition_header(field_definition);
 
-            if let owner_namespace: Semantic.Symbols.NAMESPACE = `field.owner then
-                _context.write_line(field_definition);
-            else
-                _context.write_line(field_definition);
-            fi
+            _context.write_line(field_definition);
         si
 
         gen_closures(closures: Collections.Iterable[Semantic.Symbols.Closure]?) is
