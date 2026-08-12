@@ -834,10 +834,8 @@ namespace Semantic.Symbols is
                 fi
             od
 
-            // Closure loading invokes IR.Value.gen eagerly via freeze
-            // to capture IL text under transient context. The
-            // iterative-inference body-retry loop may reach this
-            // point during an early iter where the FRAME's
+            // The iterative-inference body-retry loop may reach
+            // closure loading during an early iter where the FRAME's
             // declare_constructor defensive-defaulted a not-yet-typed
             // field to Types.ERROR — gen_type throws on that.
             // Treat the exception as failed speculation: return a

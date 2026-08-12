@@ -1394,8 +1394,8 @@ namespace Syntax.Process is
             // populating it later (generate-il) would be too late.
             //
             // Also install the function-T → class-T gen_type override
-            // so that any closure that freezes inside the body — and
-            // any IR.Values inside that freeze that ref a function-T
+            // so that any closure captured inside the body — and
+            // any IR.Values it captures that ref a function-T
             // symbol — emits `!N` (class-level on the state machine)
             // rather than `!!N` (method-level, which has no meaning
             // inside MoveNext). The override is uninstalled after the
@@ -3290,7 +3290,7 @@ namespace Syntax.Process is
 
             // Generator: register the new local on the state-machine
             // frame so a closure later in the body that captures it
-            // freezes IL referencing the frame field rather than a
+            // references the frame field rather than a
             // CLR-local slot that doesn't exist inside MoveNext.
             // No-op outside a generator function; idempotent on the
             // field (declare_local_field returns the existing field
