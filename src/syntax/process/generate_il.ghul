@@ -569,41 +569,7 @@ namespace Syntax.Process is
         // name, so the attribute is emitted on the first block only.
         _globals_carriers_marked: Collections.SET[string];
 
-        // Open/close a `.class 'NS'.'$globals' { ... }` wrapper around a single
-        // global function/property/variable definition. Multiple wrappers for
-        // the same class get merged by ilasm (partial class definitions).
-        gen_globals_class_open(`namespace: Semantic.Symbols.NAMESPACE) is
-            // The binary back end derives the carrier and its members
-            // from the namespace itself, so a global member needs no
-            // wrapper opened around it here.
-            if _context.srm_assembly_emitter? then
-                return;
-            fi
 
-            let header = System.Text.StringBuilder();
-            header.append(".class public abstract auto ansi sealed ");
-            `namespace.gen_globals_class_reference(header, null);
-            header.append(" extends [System.Runtime]System.Object");
-
-            println(header);
-            println("{{");
-            _context.indent();
-
-            if !_globals_carriers_marked.contains(`namespace.qualified_name) then
-                _globals_carriers_marked.add(`namespace.qualified_name);
-
-                println(".custom instance void ['ghul-runtime']{Semantic.DotNet.GLOBALS_CARRIER.attribute_name}::.ctor() = ( 01 00 00 00 )");
-            fi
-        si
-
-        gen_globals_class_close() is
-            if _context.srm_assembly_emitter? then
-                return;
-            fi
-
-            _context.outdent();
-            println("}}");
-        si
 
         pre(`namespace: Definitions.NAMESPACE) -> bool => super.pre(`namespace);
 
@@ -1098,9 +1064,7 @@ namespace Syntax.Process is
             `field.gen_definition_header(field_definition);
 
             if let owner_namespace: Semantic.Symbols.NAMESPACE = `field.owner then
-                gen_globals_class_open(owner_namespace);
                 _context.write_line(field_definition);
-                gen_globals_class_close();
             else
                 _context.write_line(field_definition);
             fi
@@ -1183,7 +1147,6 @@ namespace Syntax.Process is
             fi
 
             if let global_function: Semantic.Symbols.GLOBAL_FUNCTION = symbol then
-                gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(global_function.owner)!);
             fi
 
             println_comment("define {symbol.description}");
@@ -1448,7 +1411,6 @@ namespace Syntax.Process is
             println("}}");
 
             if isa Semantic.Symbols.GLOBAL_FUNCTION(symbol) then
-                gen_globals_class_close();
             fi
         si
 
@@ -1483,7 +1445,6 @@ namespace Syntax.Process is
             let owner_is_global = isa Semantic.Symbols.GLOBAL_FUNCTION(symbol);
 
             if owner_is_global then
-                gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(symbol.owner)!);
             fi
 
             // --- Outer user-facing method ---
@@ -1539,7 +1500,6 @@ namespace Syntax.Process is
             fi
 
             if owner_is_global then
-                gen_globals_class_close();
             fi
 
             // --- Walk the body into MoveNext's block ---
@@ -1820,7 +1780,6 @@ namespace Syntax.Process is
 
             if !emit_outer_binary then
                 if owner_is_global then
-                    gen_globals_class_open(cast Semantic.Symbols.NAMESPACE?(symbol.owner)!);
                 fi
 
                 // --- Outer method ---
@@ -1910,7 +1869,6 @@ namespace Syntax.Process is
                 println("}}");
 
                 if owner_is_global then
-                    gen_globals_class_close();
                 fi
             fi
 
@@ -3061,7 +3019,6 @@ namespace Syntax.Process is
             fi
 
             if globals_namespace? then
-                gen_globals_class_open(globals_namespace);
             fi
 
             let buffer = System.Text.StringBuilder();
@@ -3138,7 +3095,6 @@ namespace Syntax.Process is
             println(buffer.to_string());
 
             if globals_namespace? then
-                gen_globals_class_close();
             fi
 
             return true;
@@ -4042,13 +3998,11 @@ namespace Syntax.Process is
                     current_block.add(buffer.to_string());
                 else
                     if globals_namespace? then
-                        gen_globals_class_open(globals_namespace);
                     fi
 
                     println(buffer.to_string());
 
                     if globals_namespace? then
-                        gen_globals_class_close();
                     fi
                 fi
             fi
