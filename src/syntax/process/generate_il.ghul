@@ -613,24 +613,6 @@ namespace Syntax.Process is
             return false;
         si
 
-        // Every attribute a function definition carries, in the one
-        // order ILASM accepts: a `.custom` binds to the target named by
-        // the most recent `.param [N]` directive, so each method-level
-        // attribute has to be written before any per-slot directive or
-        // it silently lands on that parameter instead of on the method.
-        gen_function_attributes(symbol: Semantic.Symbols.Symbol) is
-            gen_purity_attributes(symbol);
-            gen_custom_attributes(symbol);
-
-            gen_tuple_element_name_attributes(symbol);
-            gen_nullability_attributes(symbol);
-            gen_purity_param_attributes(symbol);
-
-            if let function: Semantic.Symbols.Function = symbol then
-                function.gen_argument_custom_attributes(_context);
-            fi
-        si
-
         // Emit a `.custom` directive for each attribute pragma resolved
         // onto this symbol. The caller has already opened the type / method
         // and indented, so the directive lands inside it.
@@ -1105,11 +1087,10 @@ namespace Syntax.Process is
             // gen-generator-function path so the rest of generate_il
             // doesn't need to know.
             //
-            // Both branches come before the binary back end's own,
+            // Both branches come before ordinary function emission,
             // because a state machine is a shape rather than a body:
-            // the same expansion has to happen whichever back end
-            // then emits the pieces, and each piece chooses its own
-            // path further down.
+            // the expansion has to happen before any of the pieces it
+            // produces can be emitted.
             let state_machine = Semantic.Symbols.state_machine_for(cast Semantic.Symbols.Function?(symbol)!);
 
             if state_machine? then
@@ -1148,9 +1129,7 @@ namespace Syntax.Process is
             // Entry-point detection is a semantic question, not a
             // naming rule the emitter can reapply: it accepts a global
             // function or a static method, checks the signature, and
-            // reports a second candidate. The text path reaches this
-            // through `gen_body_header`, which the binary path does not
-            // emit.
+            // reports a second candidate.
             symbol.gen_entrypoint(_context);
 
             if _entrypoint_pragma_pending then
@@ -1166,119 +1145,7 @@ namespace Syntax.Process is
             return false;
         si
 
-        // Emit TupleElementNamesAttribute on the return and on any
-        // parameter whose type is a flat named tuple, so a C# or ghūl
-        // consumer recovers the element names — the ValueTuple type
-        // alone carries none.
-        gen_tuple_element_name_attributes(symbol: Semantic.Symbols.Symbol) is
-            let function = cast Semantic.Symbols.Function?(symbol);
-
-            if !function? then
-                return;
-            fi
-
-            gen_tuple_element_name_attribute(function.return_type!, 0);
-
-            let arguments = function.arguments;
-
-            for i in 0..arguments.count do
-                gen_tuple_element_name_attribute(arguments[i], i + 1);
-            od
-        si
-
-        gen_tuple_element_name_attribute(type: Semantic.Types.Type, parameter_index: int) is
-            let line = Semantic.DotNet.TUPLE_ELEMENT_NAMES.gen_attribute_line_for_type(type);
-
-            if !line? then
-                return;
-            fi
-
-            _context.write_line(".param [{parameter_index}]");
-            _context.write_line(line);
-        si
-
-        // Emit `NullableAttribute` on the return slot and on any
-        // parameter whose tree carries a reference-`?` position, so
-        // the annotation survives cross-assembly reflection. The CLR
-        // has no native carrier for reference nullability — `Foo`
-        // and `Foo?` are the same IL type — so the marker rides on a
-        // per-slot custom attribute. ILASM's `.param [N]` attaches
-        // the attribute to parameter `N`; `[0]` is the return. The
-        // attribute's argument is a single byte for a one-position
-        // slot, or a byte[] walking the type tree pre-order for
-        // nested cases (`List[string?]` -> `[1, 2]`).
-        gen_nullability_attributes(symbol: Semantic.Symbols.Symbol) is
-            let function = cast Semantic.Symbols.Function?(symbol);
-
-            if !function? then
-                return;
-            fi
-
-            gen_nullability_param_attribute(function.return_type!, 0);
-
-            let arguments = function.arguments;
-
-            for i in 0..arguments.count do
-                gen_nullability_param_attribute(arguments[i], i + 1);
-            od
-        si
-
-        gen_nullability_param_attribute(type: Semantic.Types.Type, parameter_index: int) is
-            let line = Semantic.DotNet.NULLABILITY.gen_attribute_line_for_type(type);
-
-            if !line? then
-                return;
-            fi
-
-            _context.write_line(".param [{parameter_index}]");
-            _context.write_line("  {line}");
-        si
-
-        // Purity round-trip: the marker on the method carries the
-        // declared-pure contract to importing assemblies; the marker
-        // on a parameter or return slot marks that slot's top-level
-        // function type pure. Nested pure function types do not
-        // round-trip — a slot whose pureness sits inside a generic
-        // argument imports as the plain shape, which is conservative
-        // on both sides.
-        gen_purity_attributes(symbol: Semantic.Symbols.Symbol) is
-            let function = cast Semantic.Symbols.Function?(symbol);
-
-            if !function? then
-                return;
-            fi
-
-            if function.is_declared_pure then
-                _context.write_line(".custom instance void ['ghul-runtime']Ghul.Internal.PURE_ATTRIBUTE::.ctor() = ( 01 00 00 00 )");
-            fi
-        si
-
-        gen_purity_param_attributes(symbol: Semantic.Symbols.Symbol) is
-            let function = cast Semantic.Symbols.Function?(symbol);
-
-            if !function? then
-                return;
-            fi
-
-            gen_pure_param_attribute(function.return_type, 0);
-
-            let arguments = function.arguments;
-
-            for i in 0..arguments.count do
-                gen_pure_param_attribute(arguments[i], i + 1);
-            od
-        si
-
-        gen_pure_param_attribute(type: Semantic.Types.Type?, parameter_index: int) is
-            if !type? \/ !type.is_pure_function then
-                return;
-            fi
-
-            _context.write_line(".param [{parameter_index}]");
-            _context.write_line(".custom instance void ['ghul-runtime']Ghul.Internal.PURE_ATTRIBUTE::.ctor() = ( 01 00 00 00 )");
-        si
-
-        // SRM counterpart of the tail of `visit(function)` below.
+        // The tail of `visit(function)` below.
         _visit_function_srm(function: Definitions.FUNCTION, symbol: Semantic.Symbols.Function) is
             let body_emitter = _context.current_srm_body_emitter!;
             let assembly_emitter = _context.srm_assembly_emitter;
@@ -1287,7 +1154,7 @@ namespace Syntax.Process is
             leave_block();
 
             // A non-void function ends with a default value loaded
-            // ahead of the trailing `ret`, matching the text path. The
+            // ahead of the trailing `ret`. The
             // `ret` is unreachable whenever every path already
             // returned, but unreachable is not the same as unverified:
             // a method containing a protected region is checked whole,
@@ -1588,35 +1455,6 @@ namespace Syntax.Process is
             finally
                 _context.current_srm_body_emitter = enclosing;
             yrt
-        si
-
-        _build_specialized_ctor_reference(
-            frame: Semantic.Symbols.Classy,
-            default_ctor: Semantic.Symbols.Method,
-            construction_type_args: Collections.List[Semantic.Types.Type]?,
-            location: Source.LOCATION,
-            error_context: string
-        ) -> string is
-            let ctor_reference: string? mut = null;
-
-            try
-                if let specialized_frame_type = _specialized_frame_type(frame, construction_type_args, location) then
-                    let specialized_ctor_symbol = specialized_frame_type.find_member("init");
-
-                    if let function: Semantic.Symbols.Function = specialized_ctor_symbol then
-                        ctor_reference = function.get_il_reference();
-                    fi
-                fi
-
-                if !ctor_reference? then
-                    ctor_reference = default_ctor.get_il_reference();
-                fi
-            catch e: System.Exception
-                _logger.exception(location, e, error_context);
-                ctor_reference = "/* error */";
-            yrt
-
-            return ctor_reference!;
         si
 
         // The frame type as it must be named in IL: constructed over the
@@ -2258,116 +2096,6 @@ namespace Syntax.Process is
             yrt
         si
 
-        _gen_async_state_machine_ctor(frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME) is
-            let ctor_buf = StringBuilder();
-            frame.constructor.gen_definition_header(ctor_buf);
-            println(ctor_buf);
-
-            println("{{");
-            _context.indent();
-            _context.write_line(".maxstack 8");
-            _context.write_line("ldarg.0");
-            _context.write_line("call instance void ['System.Runtime']'System'.'Object'::'.ctor'()");
-
-            let arg_names = frame.constructor.argument_names;
-            let i mut = 0;
-
-            let outer_self_field = frame.outer_self_field;
-            if outer_self_field? then
-                _context.write_line("ldarg.0");
-                _context.write_line("ldarg '{arg_names[i]}'");
-                _context.write_line("stfld {outer_self_field.get_il_reference()}");
-                i = i + 1;
-            fi
-
-            for arg_field in frame.argument_fields do
-                _context.write_line("ldarg.0");
-                _context.write_line("ldarg '{arg_names[i]}'");
-                _context.write_line("stfld {arg_field.get_il_reference()}");
-                i = i + 1;
-            od
-
-            _context.write_line("ret");
-            _context.outdent();
-            println("}}");
-        si
-
-        _gen_async_move_next(
-            async_state_machine: Semantic.Symbols.ASYNC_STATE_MACHINE,
-            move_next_block: Values.BLOCK,
-            success_label: IR.LABEL,
-            end_label: IR.LABEL
-        ) is
-            let frame = async_state_machine.frame;
-
-            assert frame? else "async state machine has no frame at IL emission";
-
-            let builder_field = frame.builder_field!;
-
-            println(".method public final hidebysig newslot virtual instance default void 'MoveNext'() cil managed");
-            println("{{");
-            _context.indent();
-            _context.write_line(".override class ['System.Runtime']System.Runtime.CompilerServices.IAsyncStateMachine::MoveNext");
-
-            // Wrap the move_next_block in a try/catch that routes
-            // exceptions through builder.SetException. The success
-            // fall-through path (leave success_label) calls
-            // builder.SetResult and falls through to end_label/ret.
-            _context.write_line(".try {{");
-            _context.indent();
-
-            _context.reset_line_tracking();
-            move_next_block.gen(_context);
-
-            _context.outdent();
-            _context.write_line("}}");
-
-            let exception_il = "class ['System.Runtime']System.Exception";
-            _context.write_line("catch {exception_il} {{");
-            _context.indent();
-            _context.write_line(".locals init ({exception_il} '.exception')");
-            _context.write_line("stloc '.exception'");
-            _context.write_line("ldarg.0");
-            _context.write_line("ldc.i4.m1");
-            _context.write_line("stfld {frame.state_field.get_il_reference()}");
-            _context.write_line("ldarg.0");
-            _context.write_line("ldflda {builder_field.get_il_reference()}");
-            _context.write_line("ldloc '.exception'");
-            let builder_il = builder_field.type!.get_il_type();
-            _context.write_line("call instance void {builder_il}::'SetException'({exception_il})");
-            _context.write_line("leave {end_label}");
-            _context.outdent();
-            _context.write_line("}}");
-
-            // Success: state = -1; builder.SetResult(<result>).
-            //
-            // `SetResult(T)` on `AsyncTaskMethodBuilder<T>` takes
-            // class-T; the methodref's arg type slot must be `!0`
-            // (open class-T), not the substituted concrete T. The
-            // non-generic `AsyncTaskMethodBuilder`'s SetResult takes
-            // no value-async result and has no class-T issue.
-            _context.write_line("{success_label}:");
-            _context.write_line("ldarg.0");
-            _context.write_line("ldc.i4.m1");
-            _context.write_line("stfld {frame.state_field.get_il_reference()}");
-            _context.write_line("ldarg.0");
-            _context.write_line("ldflda {builder_field.get_il_reference()}");
-            let result_field = frame.result_field;
-            if result_field? then
-                _context.write_line("ldarg.0");
-                _context.write_line("ldfld {result_field.get_il_reference()}");
-                _context.write_line("call instance void {builder_il}::'SetResult'(!0)");
-            else
-                _context.write_line("call instance void {builder_il}::'SetResult'()");
-            fi
-
-            _context.write_line("{end_label}:");
-            _context.write_line("ret");
-
-            _context.outdent();
-            println("}}");
-        si
-
         _emit_state_machine_class(state_machine: Semantic.Symbols.STATE_MACHINE, move_next_block: Values.BLOCK) is
             let frame = state_machine.frame;
 
@@ -2489,8 +2217,7 @@ namespace Syntax.Process is
                 get_enumerator.flush(assembly_emitter));
 
             // Dispose — a no-op. A generator abandoned mid-flight does
-            // not run the user's finally bodies; the text path has the
-            // same gap and it is recorded there.
+            // not run the user's finally bodies.
             let dispose = IR.Emitter.SRM_METHOD_BODY_EMITTER();
             dispose.ret();
             handles.set_frame_member_body(
@@ -2756,10 +2483,10 @@ namespace Syntax.Process is
             fi
         si
 
-        // The attribute a `@test` pragma stands for. On the text path it
-        // is a fixed template; on the binary path the row needs a parent
-        // handle, which is the enclosing method's or the enclosing
-        // type's depending on which the pragma was written against.
+        // The attribute a `@test` pragma stands for. Its row needs a
+        // parent handle, which is the enclosing method's or the
+        // enclosing type's depending on which the pragma was written
+        // against.
         _TEST_FRAMEWORK_ASSEMBLY: string static =>
             "Microsoft.VisualStudio.TestPlatform.TestFramework";
 
@@ -2774,9 +2501,9 @@ namespace Syntax.Process is
             if on_method then
                 // `@test_method` reaches here whatever it was written
                 // against, so there may be no enclosing function to hang
-                // the attribute on. The text path emitted its template
-                // regardless; here there is nothing to name as the row's
-                // parent, so it is left off rather than faulting.
+                // the attribute on. There is then nothing to name as
+                // the row's parent, so it is left off rather than
+                // faulting.
                 let function = current_function;
 
                 if !function? then
