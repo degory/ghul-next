@@ -16,6 +16,19 @@ namespace IR.Emitter is
         end_column: int
     );
 
+    // A run of instructions an `@IL.output` pragma marks. The binary back
+    // end records one per marked statement and carries them out of the
+    // method as a custom attribute, which the IL test runner reads back to
+    // slice the disassembly to just the statement's instructions. The
+    // sequence number is compilation-global, so a test marking statements
+    // in more than one method can rebuild their source order.
+    class SRM_IL_OUTPUT_RANGE(
+        path: string,
+        start_offset: int,
+        end_offset: int,
+        sequence: int
+    );
+
     // Builds the portable PDB that sits beside the emitted assembly.
     //
     // A PDB is its own metadata file with its own tables, so this holds

@@ -9,9 +9,9 @@ namespace IR is
         _next_id: int static;
         _name: string =>
             if suffix > 0 then
-                "'.{prefix}.{id}.{suffix}'"
+                ".{prefix}.{id}.{suffix}"
             else
-                "'.{prefix}.{id}'"
+                ".{prefix}.{id}"
             fi;
 
         id: int;

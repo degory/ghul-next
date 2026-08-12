@@ -2032,49 +2032,15 @@ namespace Semantic.Symbols is
         gen_constructor(context: IR.CONTEXT, symbol_loader: SYMBOL_LOADER) is
             let internal = LOCATION.internal;
 
-            // The binary path encodes the constructor into a body of its
-            // own. Without one its row carries no code at all, which is
+            // The constructor is encoded into a body of its own.
+            // Without one its row carries no code at all, which is
             // not a constructor a runtime will accept: the image is
             // rejected outright, before any type in it is loaded.
-            if let assembly_emitter = context.srm_assembly_emitter then
-                let enclosing = context.current_srm_body_emitter;
-                let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            let assembly_emitter = context.srm_assembly_emitter;
+            let enclosing = context.current_srm_body_emitter;
+            let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
-                context.current_srm_body_emitter = body_emitter;
-
-                try
-                    for c in _captures |> filter(c => c.name !~ "$recurse") do
-                        let argument = LOCAL_ARGUMENT(internal, _constructor!, c.name);
-                        argument.set_type(c.type!);
-
-                        c.store(
-                            internal,
-                            IR.Values.Load.REFERENCE_SELF(self),
-                            argument.load(LOCATION.internal, null, symbol_loader),
-                            symbol_loader,
-                            true
-                        ).gen(context);
-                    od
-                catch ex: System.Exception
-                    IoC.CONTAINER.instance.logger.exception(
-                        location, ex, "error generating closure frame constructor");
-                yrt
-
-                body_emitter.ret();
-
-                assembly_emitter!.handles.set_body_offset(
-                    _constructor!, body_emitter.flush(assembly_emitter!));
-
-                context.current_srm_body_emitter = enclosing;
-
-                return;
-            fi
-
-            _constructor!.gen_definition_header(context);
-
-            context.write_line("{{");
-
-            context.indent();
+            context.current_srm_body_emitter = body_emitter;
 
             try
                 for c in _captures |> filter(c => c.name !~ "$recurse") do
@@ -2082,21 +2048,27 @@ namespace Semantic.Symbols is
                     argument.set_type(c.type!);
 
                     c.store(
-                        internal, 
-                        IR.Values.Load.REFERENCE_SELF(self), 
+                        internal,
+                        IR.Values.Load.REFERENCE_SELF(self),
                         argument.load(LOCATION.internal, null, symbol_loader),
                         symbol_loader,
                         true
                     ).gen(context);
                 od
             catch ex: System.Exception
-                IoC.CONTAINER.instance.logger.exception(location, ex, "error generating closure frame constructor");
-            yrt            
-            
-            context.write_line("ret");
+                IoC.CONTAINER.instance.logger.exception(
+                    location, ex, "error generating closure frame constructor");
+            yrt
 
-            context.outdent();
-            context.write_line("}}");
+            body_emitter.ret();
+
+            assembly_emitter.handles.set_body_offset(
+                _constructor!, body_emitter.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(
+                _constructor!, body_emitter.il_outputs);
+
+            context.current_srm_body_emitter = enclosing;
+
         si
 
         gen_closure(context: IR.CONTEXT) is
@@ -2129,8 +2101,7 @@ namespace Semantic.Symbols is
                         IR.Values.NEW(specialized_self.type, ctor, actual_arguments)
                     else
                         IR.Values.NEW(type!, _constructor!, actual_arguments)
-                    fi
-                        .freeze();
+                    fi;
             catch ex: System.Exception
                 CONTAINER.instance.logger.exception(self.location, ex, "trying to generate frame instance");
             yrt
@@ -2157,8 +2128,9 @@ namespace Semantic.Symbols is
         // The number it denotes, absent when `value` is not an integer
         // in int32's range. `value` is the source token verbatim, so it
         // can carry digit grouping, a radix prefix and a type suffix,
-        // none of which a consumer can emit: ilasm rejects
-        // `int32(200l)`.
+        // none of which a consumer can emit: an enum member's value has
+        // to reach metadata as a number, not as the text that was
+        // written for it.
         //
         // Absent rather than zero, because zero is a legitimate enum
         // value. A reflected member of an enum wider than int32 arrives

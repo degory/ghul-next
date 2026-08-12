@@ -147,32 +147,38 @@ namespace IR.Emitter is
                     next_method = next_method + 1;
                 od
 
-                next_method = next_method + _boilerplate_count(type);
+                next_method = next_method + _boilerplate_members(type).count;
             od
         si
 
-        // An iterable or iterator type satisfies the two non-generic
+        // An iterable or iterator type satisfies the non-generic
         // framework interfaces its generic ones derive from with a
         // member apiece. Neither is a declaration the symbol table
-        // holds, so both passes count them here, last in the method run.
-        _boilerplate_count(type: SRM_EMITTED_TYPE) -> int is
+        // holds, so both passes take them from here, last in the
+        // method run.
+        //
+        // One list, read by both passes, in one order — the same
+        // discipline `FRAME_MEMBERS` keeps, and for the same reason: a
+        // member run written in a different order than it was numbered
+        // reparents members onto the wrong type and still loads.
+        _boilerplate_members(type: SRM_EMITTED_TYPE) -> Collections.List[BoilerplateMember] static is
+            let result = Collections.LIST[BoilerplateMember]();
+
             let declared = type.declared;
 
             if !declared? then
-                return 0;
+                return result;
             fi
 
-            let count mut = 0;
-
             if declared.is_derived_from_iterable_trait then
-                count = count + 1;
+                result.add(BoilerplateMember.ENUMERABLE_GET_ENUMERATOR);
             fi
 
             if declared.is_derived_from_iterator_trait then
-                count = count + 1;
+                result.add(BoilerplateMember.ENUMERATOR_GET_CURRENT);
             fi
 
-            return count;
+            return result;
         si
 
         // The members a state-machine frame carries that no symbol
@@ -772,6 +778,20 @@ namespace IR.Emitter is
                 _write_attributes(cast EntityHandle(handle), attributes);
             fi
 
+            // `@IL.output` ranges captured while this body was emitted, if
+            // any. The attribute is synthetic - referenced by name only, and
+            // never resolved - so it need not exist in any referenced
+            // assembly; the test runner reads the raw blob without resolving
+            // the constructor.
+            if let outputs = _handles.il_outputs(method) then
+                _attach(
+                    cast EntityHandle(handle),
+                    "ghul-runtime",
+                    IL_OUTPUT_ATTRIBUTE_NAME,
+                    _il_output_ranges_constructor_types(),
+                    SRM_ATTRIBUTE_BLOB_ENCODER.encode_il_output_ranges(outputs));
+            fi
+
             if let entry_point = _assembly.entry_point_function then
                 if entry_point == method then
                     _assembly.set_entry_point(handle);
@@ -786,6 +806,9 @@ namespace IR.Emitter is
 
         TUPLE_ELEMENT_NAMES_ATTRIBUTE_NAME: string static =>
             "System.Runtime.CompilerServices.TupleElementNamesAttribute";
+
+        IL_OUTPUT_ATTRIBUTE_NAME: string static =>
+            "Ghul.Internal.IL_OUTPUT_ATTRIBUTE";
 
         // What a return or parameter slot carries beyond its type: the
         // reference nullability the CLR has no way to express, the
@@ -876,6 +899,23 @@ namespace IR.Emitter is
             let types = Collections.LIST[Semantic.Types.Type]();
 
             types.add(lookup.get_array_type(lookup.get_string_type()));
+
+            return types;
+        si
+
+        // `IL_OUTPUT_ATTRIBUTE(string[], int32[], int32[], int32[])`:
+        // paths, starts, ends, sequences.
+        _il_output_ranges_constructor_types() -> Collections.LIST[Semantic.Types.Type] is
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let types = Collections.LIST[Semantic.Types.Type]();
+
+            let string_array = lookup.get_array_type(lookup.get_string_type());
+            let int_array = lookup.get_array_type(lookup.get_int_type());
+
+            types.add(string_array);
+            types.add(int_array);
+            types.add(int_array);
+            types.add(int_array);
 
             return types;
         si
@@ -1051,44 +1091,40 @@ namespace IR.Emitter is
         _write_boilerplate(type: SRM_EMITTED_TYPE) -> Collections.List[SRM_BOUND_METHOD] is
             let result = Collections.LIST[SRM_BOUND_METHOD]();
 
-            let declared = type.declared;
+            for member in _boilerplate_members(type) do
+                case member
+                when BoilerplateMember.ENUMERABLE_GET_ENUMERATOR then
+                    let `interface =
+                        _assembly.add_type_reference_by_name(
+                            "System.Runtime", "System.Collections", "IEnumerator");
 
-            if !declared? then
-                return result;
-            fi
+                    let signature =
+                        _signatures.nullary_instance_signature(cast EntityHandle(`interface));
 
-            if declared.is_derived_from_iterable_trait then
-                let `interface =
-                    _assembly.add_type_reference_by_name(
-                        "System.Runtime", "System.Collections", "IEnumerator");
+                    result.add(
+                        _write_explicit_implementation(
+                            "System.Collections.IEnumerable.GetEnumerator",
+                            signature,
+                            false,
+                            "System.Collections",
+                            "IEnumerable",
+                            "GetEnumerator",
+                            signature));
 
-                let signature =
-                    _signatures.nullary_instance_signature(cast EntityHandle(`interface));
+                when BoilerplateMember.ENUMERATOR_GET_CURRENT then
+                    let signature = _signatures.nullary_instance_signature_returning_object();
 
-                result.add(
-                    _write_explicit_implementation(
-                        "System.Collections.IEnumerable.GetEnumerator",
-                        signature,
-                        false,
-                        "System.Collections",
-                        "IEnumerable",
-                        "GetEnumerator",
-                        signature));
-            fi
-
-            if declared.is_derived_from_iterator_trait then
-                let signature = _signatures.nullary_instance_signature_returning_object();
-
-                result.add(
-                    _write_explicit_implementation(
-                        "System.Collections.IEnumerator.get_Current",
-                        signature,
-                        true,
-                        "System.Collections",
-                        "IEnumerator",
-                        "get_Current",
-                        signature));
-            fi
+                    result.add(
+                        _write_explicit_implementation(
+                            "System.Collections.IEnumerator.get_Current",
+                            signature,
+                            true,
+                            "System.Collections",
+                            "IEnumerator",
+                            "get_Current",
+                            signature));
+                esac
+            od
 
             return result;
         si
@@ -1138,9 +1174,8 @@ namespace IR.Emitter is
         // The traits a type declares, in declaration order, each named
         // by a handle the InterfaceImpl row can carry.
         //
-        // `ancestors` mixes the superclass in with the traits, so it is
-        // filtered the same way the text back end's `implements` clause
-        // filters it.
+        // `ancestors` mixes the superclass in with the traits, so the
+        // superclass is filtered back out here.
         _interfaces(type: Classy) -> Collections.List[EntityHandle] is
             let result = Collections.LIST[EntityHandle]();
 

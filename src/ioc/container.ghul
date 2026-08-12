@@ -106,7 +106,6 @@ namespace IoC is
         brancher: IR.BRANCHER;
         innate_operation_generator: IR.INNATE_OPERATION_GENERATOR;
         local_id_generator: IR.LOCAL_ID_GENERATOR;
-        boilerplate_generator: IR.BOILERPLATE_GENERATOR;
 
         name_display: Semantic.NAME_DISPLAY;
 
@@ -164,7 +163,6 @@ namespace IoC is
             brancher = IR.BRANCHER();
             innate_operation_generator = IR.INNATE_OPERATION_GENERATOR(logger, value_boxer, brancher);
             local_id_generator = IR.LOCAL_ID_GENERATOR();
-            boilerplate_generator = IR.BOILERPLATE_GENERATOR(ir_context, path_config);
 
             name_display = Semantic.NAME_DISPLAY();
 
@@ -481,7 +479,7 @@ namespace IoC is
                 type_details_lookup
             );
 
-            referenced_assemblies = Semantic.DotNet.REFERENCED_ASSEMBLIES(boilerplate_generator, assemblies);
+            referenced_assemblies = Semantic.DotNet.REFERENCED_ASSEMBLIES(assemblies);
 
             innate_symbol_lookup = Semantic.Lookups.LAZY_INNATE_SYMBOL_LOOKUP(
                 () =>
@@ -678,7 +676,6 @@ namespace IoC is
                     ir_context,
                     block_stack,
                     brancher,
-                    boilerplate_generator,
                     value_boxer,
                     build_flags,
                     composite_spill_state

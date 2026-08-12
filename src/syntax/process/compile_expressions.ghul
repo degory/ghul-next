@@ -927,8 +927,8 @@ namespace Syntax.Process is
 
             let id = _next_fused_local_id();
 
-            let iterator_il_name = "'.fc_iter.{id}'";
-            let element_il_name = "'.fc_element.{id}'";
+            let iterator_il_name = ".fc_iter.{id}";
+            let element_il_name = ".fc_element.{id}";
 
             let source_read_iterator = plan.source_read_iterator;
 
@@ -955,7 +955,7 @@ namespace Syntax.Process is
 
             let built = _build_consumer_stages(plan, element_il_name, element_type);
 
-            let result_il_name = "'.fc_result.{id}'";
+            let result_il_name = ".fc_result.{id}";
 
             let fused = IR.Values.FUSED_CONSUMER(
                 call.value!.type!,
@@ -984,7 +984,7 @@ namespace Syntax.Process is
                 let function = call.arguments.expressions[arg_offset].value!;
                 let func_type = function.type!;
 
-                let arg_il_name = "'.fc_arg.{id}'";
+                let arg_il_name = ".fc_arg.{id}";
 
                 let result_type =
                     if func_type.is_action then
@@ -1007,7 +1007,7 @@ namespace Syntax.Process is
                 let accumulator = call.arguments.expressions[arg_offset + 1].value!;
                 let func_type = accumulator.type!;
 
-                let arg_il_name = "'.fc_arg.{id}'";
+                let arg_il_name = ".fc_arg.{id}";
                 let running_type = call.value!.type!;
 
                 let call_arguments = Collections.LIST[IR.Values.Value]();
@@ -1108,7 +1108,7 @@ namespace Syntax.Process is
                 if stage.is_countdown then
                     // take/skip: a running counter, no delegate and no
                     // output local - the element passes through unchanged.
-                    let counter_il_name = "'.fc_countdown.{_next_fused_local_id()}'";
+                    let counter_il_name = ".fc_countdown.{_next_fused_local_id()}";
 
                     ops.add(IR.Values.FUSED_CONSUMER_STAGE(stage.is_take, stage.is_skip, counter_il_name, stage.argument!.value!));
 
@@ -1120,7 +1120,7 @@ namespace Syntax.Process is
                 let delegate = stage.argument!.value!;
                 let func_type = delegate.type!;
 
-                let delegate_il_name = "'.fc_stage.{_next_fused_local_id()}'";
+                let delegate_il_name = ".fc_stage.{_next_fused_local_id()}";
 
                 let result_type =
                     if func_type.is_action then
@@ -1138,7 +1138,7 @@ namespace Syntax.Process is
                 if stage.is_filter then
                     ops.add(IR.Values.FUSED_CONSUMER_STAGE(true, delegate_il_name, func_type, delegate, apply, "", null));
                 else
-                    ops.add(IR.Values.FUSED_CONSUMER_STAGE(false, delegate_il_name, func_type, delegate, apply, "'.fc_map.{_next_fused_local_id()}'", result_type));
+                    ops.add(IR.Values.FUSED_CONSUMER_STAGE(false, delegate_il_name, func_type, delegate, apply, ".fc_map.{_next_fused_local_id()}", result_type));
 
                     current_il_name = ops[ops.count - 1].output_il_name;
                     current_type = result_type;
@@ -1303,7 +1303,7 @@ namespace Syntax.Process is
                 return;
             fi
 
-            local.il_name_override = "'.fused_param.{_next_fused_local_id()}'";
+            local.il_name_override = ".fused_param.{_next_fused_local_id()}";
 
             (cast Semantic.Symbols.Variable(local)).define();
             (cast Semantic.Types.SettableTyped(local)).set_type(param_type);
@@ -1438,16 +1438,16 @@ namespace Syntax.Process is
 
             // Generator / async: realise the state-machine frame's
             // argument fields and `_outer_self` field before the body
-            // walks. A closure inside the body freezes captured loads
-            // via `Value.freeze()` at compile-expressions time, and
+            // walks. A closure inside the body captures loaded values
+            // at compile-expressions time, and
             // the captured `Load.LOCAL_ARGUMENT.gen` only redirects
             // through `ldarg.0; ldfld _arg_<name>` when
             // `state_machine_field` is populated on the symbol —
             // populating it later (generate-il) would be too late.
             //
             // Also install the function-T → class-T gen_type override
-            // so that any closure that freezes inside the body — and
-            // any IR.Values inside that freeze that ref a function-T
+            // so that any closure captured inside the body — and
+            // any IR.Values it captures that ref a function-T
             // symbol — emits `!N` (class-level on the state machine)
             // rather than `!!N` (method-level, which has no meaning
             // inside MoveNext). The override is uninstalled after the
@@ -3386,7 +3386,7 @@ namespace Syntax.Process is
 
             // Generator: register the new local on the state-machine
             // frame so a closure later in the body that captures it
-            // freezes IL referencing the frame field rather than a
+            // references the frame field rather than a
             // CLR-local slot that doesn't exist inside MoveNext.
             // No-op outside a generator function; idempotent on the
             // field (declare_local_field returns the existing field

@@ -27,11 +27,8 @@ namespace IR.Values.Call is
                 gen(a, context);
             od
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.call(context.resolve_call_target(function));
-            else
-                context.write_line("call {function.get_il_reference()}");
-            fi
         si
 
         to_string() -> string =>

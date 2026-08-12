@@ -38,9 +38,8 @@ namespace IR.Values.Literal is
             else false
             esac;
 
-        // The constant written out. Wanted by the text back end, which
-        // renders attribute arguments as assembler source, and as a key
-        // for comparing case-arm constants.
+        // The constant written out, used to render an attribute
+        // argument and as a key for comparing case-arm constants.
         rendered: string =>
             case constant
             when i4: CONSTANT.I4 then "{i4.value}"

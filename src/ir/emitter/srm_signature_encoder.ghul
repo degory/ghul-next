@@ -414,10 +414,9 @@ namespace IR.Emitter is
         //
         // The format carries byref as a flag on the slot rather than as
         // part of the type, so a `T ref` marks its parameter, return or
-        // local and encodes the pointee in its own place — the same
-        // lowering the text back end performs by writing `&` after it.
-        // Encoding the reference type itself instead names a value type
-        // the runtime will not accept where a managed pointer belongs.
+        // local and encodes the pointee in its own place. Encoding the
+        // reference type itself instead names a value type the runtime
+        // will not accept where a managed pointer belongs.
         pointee(type: Semantic.Types.Type?) -> Semantic.Types.Type? static =>
             if let reference: Semantic.Types.REFERENCE = type then
                 reference.arguments[0]
@@ -574,12 +573,6 @@ namespace IR.Emitter is
             fi
         si
 
-        // il_name_override carries the name already quoted for ilasm, so
-        // a segment colliding with an IL keyword arrives as 'System'.'String'.
-        // Metadata stores the bare name; leaving the quotes in produces a
-        // type reference that resolves to nothing.
-        unquote(value: string) -> string static => value.replace("'", "");
-
         // A primitive's il_name_override is the assembler keyword, which
         // is what a signature needs and what a reference must never
         // carry: there is no type called `int32`. Named here so that a
@@ -638,7 +631,7 @@ namespace IR.Emitter is
             return reference_for_clr_name(
                 symbol,
                 assembly_name,
-                unquote(symbol.il_name_override ?? symbol.qualified_name));
+                symbol.il_name_override ?? symbol.qualified_name);
         si
 
         // One CLR type name to one reference row, for both places that

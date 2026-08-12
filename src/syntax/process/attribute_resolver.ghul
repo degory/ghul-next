@@ -7,10 +7,15 @@ namespace Syntax.Process is
     use System.Text.StringBuilder;
 
     // Resolves an attribute pragma — a pragma whose name is not a built-in
-    // compiler pragma — to a .NET attribute type and constructor, formats
-    // its arguments into the ilasm textual custom-attribute form, and
-    // attaches the resolved CUSTOM_ATTRIBUTE to the target symbol so the
-    // IL generator can emit a `.custom` directive.
+    // compiler pragma — to a .NET attribute type and constructor, and
+    // attaches the resolved CUSTOM_ATTRIBUTE to the target symbol, from
+    // which the emitter encodes the attribute's value blob.
+    //
+    // The `format_*` half renders the arguments as assembler source. The
+    // rendering itself is unused (see CUSTOM_ATTRIBUTE), but an argument
+    // shape it cannot render makes it answer null, and that is what
+    // rejects the attribute — so it is the argument validation, spelled
+    // as a renderer.
     class ATTRIBUTE_RESOLVER is
         _logger: Logger;
         _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup;

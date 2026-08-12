@@ -15,20 +15,20 @@ namespace Semantic is
         location: Source.LOCATION
     );
 
-    // A resolved attribute application: the constructor it selected, and
-    // its arguments in the two forms the two back ends need.
+    // A resolved attribute application: the constructor it selected and
+    // its arguments.
     //
-    // `arguments_text` is the ilasm textual body, which the assembler
-    // turns into a value blob; `positional` and `named` are the same
-    // arguments unrendered, which the binary back end encodes into that
-    // blob itself. Neither is derived from the other - a back end that
-    // read the text back would be taking a rendering as data, and would
-    // silently disagree with the other the first time the rendering
-    // changed.
-    //
+    // `positional` and `named` are what the value blob is encoded from.
     // `positional` is the completed list, one entry per constructor
     // parameter: a trailing parameter the call site omitted carries the
     // default the resolver filled in for it.
+    //
+    // `arguments_text` renders the same arguments as assembler source.
+    // Nothing reads it - the blob is encoded from the arguments
+    // themselves, since reading a rendering back would be taking
+    // presentation for fact. It survives because ATTRIBUTE_RESOLVER
+    // fails to produce it for an argument shape it cannot render, and
+    // that failure is what rejects the attribute.
     class CUSTOM_ATTRIBUTE(
         constructor: Symbols.Function,
         arguments_text: string,

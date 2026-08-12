@@ -7,12 +7,11 @@ namespace IR.Emitter is
     use Semantic.Symbols.Function;
     use Semantic.Symbols.Field;
 
-    // The metadata flag words for a definition, derived from the same
-    // symbol predicates the text back end's `gen_access` / `gen_flags`
-    // read. Kept together here, and out of the symbol classes, so the
-    // two back ends stay independently replaceable.
+    // The metadata flag words for a definition, derived from the
+    // symbol's own predicates. Kept together here, and out of the
+    // symbol classes, so what a symbol means and how it is encoded
+    // stay separable.
     //
-    // Deliberately mirrors the text path rather than improving on it.
     // Instance methods are emitted virtual without newslot, so a
     // same-named member in a subclass overrides by name and signature,
     // which is the dispatch behaviour ghūl source already relies on.
@@ -155,13 +154,10 @@ namespace IR.Emitter is
             cast MethodAttributes(
                 _PRIVATE_METHOD | _HIDE_BY_SIG | _STATIC | _SPECIAL_NAME | _RT_SPECIAL_NAME);
 
-        // il_name_override arrives quoted for ilasm ('.ctor'); metadata
-        // stores the bare name, and the quotes would become part of it.
-        method_name(method: Function) -> string static =>
-            method.il_bare_name.replace("'", "");
+        method_name(method: Function) -> string static => method.il_name;
 
         property_name(property: Semantic.Symbols.Property) -> string static =>
-            property.il_bare_name.replace("'", "");
+            property.il_name;
 
         _COVARIANT: int static => 1;
         _CONTRAVARIANT: int static => 2;

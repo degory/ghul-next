@@ -135,24 +135,6 @@ namespace IR.Values is
             fi
         si
 
-        // Captures this value's IL now, so that a later emission of it
-        // produces the same instructions wherever it ends up. The text
-        // back end does that by generating into a throwaway buffer and
-        // keeping the text.
-        //
-        // The binary back end needs no equivalent and cannot use this
-        // one: instructions are encoded into the body being built, and
-        // text captured here would have nowhere to go. Emitting the
-        // value where it lands gives the same result, because nothing
-        // about it depends on when it is encoded.
-        // A snapshot of a value's IL, for the closure-capture mechanism.
-        // The text back end rendered the value to IL text here; the
-        // binary back end carries values as IR until generate-il encodes
-        // them, so there is nothing to freeze — the value is its own
-        // snapshot.
-        freeze() -> Value =>
-            self;
-
         init() is
             _ambient_location = IoC.CONTAINER.instance.location_stack.current;
         si
