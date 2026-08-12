@@ -146,6 +146,41 @@ namespace IR.Emitter is
             return buffer.to_array();
         si
 
+        // The four parallel arrays an `@IL.output` ranges attribute carries:
+        // the pragma's file name, the start and end instruction offsets, and
+        // the source-order sequence - one entry per marked statement. Each
+        // array carries its own length prefix, as every fixed array argument
+        // does, and the trailing zero is the named-arguments count.
+        encode_il_output_ranges(ranges: List[SRM_IL_OUTPUT_RANGE]) -> ubyte[] static is
+            let buffer = BlobBuilder(64);
+
+            buffer.write_u_int16(1us);
+
+            buffer.write_int32(ranges.count);
+            for range in ranges do
+                buffer.write_serialized_string(range.path);
+            od
+
+            buffer.write_int32(ranges.count);
+            for range in ranges do
+                buffer.write_int32(range.start_offset);
+            od
+
+            buffer.write_int32(ranges.count);
+            for range in ranges do
+                buffer.write_int32(range.end_offset);
+            od
+
+            buffer.write_int32(ranges.count);
+            for range in ranges do
+                buffer.write_int32(range.sequence);
+            od
+
+            buffer.write_u_int16(0us);
+
+            return buffer.to_array();
+        si
+
         _write_named(
             buffer: BlobBuilder,
             argument: Semantic.NAMED_ATTRIBUTE_ARGUMENT

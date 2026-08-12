@@ -1394,6 +1394,7 @@ namespace Syntax.Process is
             body_emitter.ret();
 
             assembly_emitter.handles.set_body_offset(symbol, body_emitter.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(symbol, body_emitter.il_outputs);
 
             _context.current_srm_body_emitter = null;
 
@@ -1692,6 +1693,7 @@ namespace Syntax.Process is
             body.ret();
 
             assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(symbol, body.il_outputs);
         si
 
         // The frame constructor as it must be named from outside: on the
@@ -1756,6 +1758,7 @@ namespace Syntax.Process is
                 body.ret();
 
                 assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(symbol, body.il_outputs);
             finally
                 _context.current_srm_body_emitter = enclosing;
             yrt
@@ -2536,6 +2539,8 @@ namespace Syntax.Process is
 
                 assembly_emitter.handles.set_body_offset(
                     frame.constructor, body.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(
+                    frame.constructor, body.il_outputs);
             finally
                 _context.current_srm_body_emitter = enclosing;
             yrt
@@ -2790,6 +2795,8 @@ namespace Syntax.Process is
 
             assembly_emitter.handles.set_body_offset(
                 frame.constructor, body.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(
+                frame.constructor, body.il_outputs);
         si
 
         _gen_state_machine_ctor(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
@@ -3381,6 +3388,8 @@ namespace Syntax.Process is
 
                 assembly_emitter.handles.set_body_offset(
                     closure, body_emitter.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(
+                    closure, body_emitter.il_outputs);
 
                 _context.current_srm_body_emitter = enclosing;
 
@@ -3599,6 +3608,8 @@ namespace Syntax.Process is
 
                     assembly_emitter.handles.set_body_offset(
                         closure, body.flush(assembly_emitter));
+                    assembly_emitter.handles.set_il_outputs(
+                        closure, body.il_outputs);
                 finally
                     _context.current_srm_body_emitter = enclosing;
                 yrt

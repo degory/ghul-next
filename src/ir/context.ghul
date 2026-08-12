@@ -138,6 +138,11 @@ namespace IR is
         _last_line_line: int;
         _last_line_column: int;
 
+        // Compilation-global counter assigning each `@IL.output` region a
+        // sequence number, so the runner can rebuild source order across
+        // methods. Bumped once per region, at its start.
+        _il_output_sequence: int;
+
         init(
             logger: Logging.Logger,
             entry_point_name: string
@@ -292,6 +297,17 @@ namespace IR is
         si
 
         enter_file(path: string, want_comments: bool) is
+            // A binary build records `@IL.output` ranges as a method
+            // attribute rather than diverting instructions to a file, and
+            // the ranges are captured in the ENTER_FILE/LEAVE_FILE values
+            // before this is ever reached. The declaration-level pragma
+            // path calls this directly though, and creating an empty file
+            // there would suppress the runner's disassembly, so a binary
+            // build does nothing.
+            if srm_assembly_emitter? then
+                return;
+            fi
+
             let writer: IO.TextWriter mut;
 
             if _seen.contains(path) then
@@ -300,20 +316,30 @@ namespace IR is
                 writer = File.create_text(path);
                 _seen.add(path);
             fi
-            
+
             _outputs.push(FILE_ASSEMBLER_OUTPUT(path, writer, want_comments));
         si
 
         leave_file(path: string) is
+            if srm_assembly_emitter? then
+                return;
+            fi
+
             assert
                 _outputs.count > 0 /\
                 isa FILE_ASSEMBLER_OUTPUT(current_output) /\
                 cast FILE_ASSEMBLER_OUTPUT(current_output).path =~ path
             else
                 "IL output context stack corrupt";
-            
+
             current_output.close();
             _outputs.pop();
+        si
+
+        next_il_output_sequence() -> int is
+            _il_output_sequence = _il_output_sequence + 1;
+
+            return _il_output_sequence;
         si
         
         enter_buffer(want_comments: bool) is

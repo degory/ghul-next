@@ -1,1 +1,1 @@
---dotnet --entry named_entry_point
+--dotnet --entry named_entry_point --library
