@@ -1015,7 +1015,7 @@ namespace Syntax.Process is
         // structure walk, which cannot encode a body; the body is
         // deposited here, in the pass that encodes every other body.
         _gen_unit_variant_singleton_srm(variant: Semantic.Symbols.VARIANT) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let handles = assembly_emitter.handles;
 
             let instance = handles.unit_variant_instance(variant);
@@ -1385,7 +1385,7 @@ namespace Syntax.Process is
         // SRM counterpart of the tail of `visit(function)` below.
         _visit_function_srm(function: Definitions.FUNCTION, symbol: Semantic.Symbols.Function) is
             let body_emitter = _context.current_srm_body_emitter!;
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
 
             current_block.gen(_context);
             leave_block();
@@ -1681,7 +1681,7 @@ namespace Syntax.Process is
             frame: Semantic.Symbols.STATE_MACHINE_FRAME,
             state_machine: Semantic.Symbols.STATE_MACHINE
         ) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
             // An instance generator hands `this` to the frame's
@@ -1759,7 +1759,7 @@ namespace Syntax.Process is
             symbol: Semantic.Symbols.Function,
             launch: IR.Values.ASYNC_METHOD_LAUNCH
         ) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let enclosing = _context.current_srm_body_emitter;
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
@@ -2429,7 +2429,7 @@ namespace Syntax.Process is
             member: IR.Emitter.FrameMember,
             emit: () -> void
         ) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let enclosing = _context.current_srm_body_emitter;
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
@@ -2520,7 +2520,7 @@ namespace Syntax.Process is
         // it. The builder is not among them — the outer method creates
         // it and stores it after the newobj.
         _gen_async_state_machine_ctor_srm(frame: Semantic.Symbols.ASYNC_STATE_MACHINE_FRAME) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let enclosing = _context.current_srm_body_emitter;
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
@@ -2756,7 +2756,7 @@ namespace Syntax.Process is
             member: IR.Emitter.FrameMember,
             block: Values.BLOCK
         ) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let previous = _context.current_srm_body_emitter;
 
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
@@ -2776,7 +2776,7 @@ namespace Syntax.Process is
         // it. It is a declared symbol with a row of its own, so its body
         // is deposited the same way any other method's is.
         _gen_state_machine_ctor_srm(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
             body.ldarg(0);
@@ -2868,7 +2868,7 @@ namespace Syntax.Process is
         // GetEnumerator returns self, Dispose does nothing, Reset zeroes
         // the state, and ToString joins the pipe.
         _gen_state_machine_accessors_srm(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
-            let assembly_emitter = _context.srm_assembly_emitter!;
+            let assembly_emitter = _context.srm_assembly_emitter;
             let handles = assembly_emitter.handles;
 
             // get_Current — read the current field.
@@ -3275,7 +3275,7 @@ namespace Syntax.Process is
                 return;
             fi
 
-            let handles = _context.srm_assembly_emitter!.handles;
+            let handles = _context.srm_assembly_emitter.handles;
 
             let parent: System.Reflection.Metadata.EntityHandle mut;
 

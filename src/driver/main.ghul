@@ -426,7 +426,7 @@ namespace Driver is
                     module_version,
                     flags.want_library);
 
-                container.ir_context.srm_assembly_emitter = emitter;
+                container.ir_context.install_srm_assembly_emitter(emitter);
             fi
         si
 
@@ -460,7 +460,7 @@ namespace Driver is
                 return 0;
             fi
 
-            container.ir_context.srm_assembly_emitter!.write_to(output_file);
+            container.ir_context.srm_assembly_emitter.write_to(output_file);
 
             let result mut = 0;
 
