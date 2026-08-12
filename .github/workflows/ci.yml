@@ -472,8 +472,6 @@ jobs:
         name: cross-assembly-test-results
         path: cross-assembly-test-results.txt
 
-  # Builds ghul-runtime against the freshly built compiler, so it needs
-  # the emission surface to be complete rather than merely correct.
   bare_invocation_test:
     needs: [version, bootstrap]
     name: Run bare invocation test
@@ -534,6 +532,8 @@ jobs:
         dotnet ghul-compiler --help > help.txt
         grep -q "usage: ghul-compiler" help.txt
 
+  # Builds ghul-runtime against the freshly built compiler, so it needs
+  # the emission surface to be complete rather than merely correct.
   runtime_tests:
     needs: [version, bootstrap]
     name: Run runtime tests
