@@ -189,10 +189,9 @@ namespace IR.Values is
         // loop. The logic is where the complexity is, and a duplicate of
         // it would be the thing that drifts.
         //
-        // The text path names its locals and labels; the binary path
-        // keeps the same names, because SRM_METHOD_BODY_EMITTER maps a
-        // name to a slot and to a label handle, forward references
-        // included.
+        // The loop names its locals and labels rather than numbering
+        // them, because SRM_METHOD_BODY_EMITTER maps a name to a slot
+        // and to a label handle, forward references included.
         _declare(context: IR.CONTEXT, name: string, type: Semantic.Types.Type) is
             let body = context.current_srm_body_emitter!;
                 body.declare_local(name, type);

@@ -3,15 +3,12 @@ namespace IR.Values is
 
     // Declares one CLR local.
     //
-    // The text back end writes a `.locals init` directive naming the
-    // local and leaves the slot numbering to ilasm. Metadata has no
-    // directive: a body header points at a StandAloneSig listing the
-    // local types in slot order, and every load and store addresses a
-    // slot by index. Both need the same declaration, so it is a value
-    // in the block rather than raw text one back end can read and the
-    // other cannot.
+    // A body header points at a StandAloneSig listing the local types
+    // in slot order, and every load and store addresses a slot by
+    // index, so a declaration has to reach the emitter as data rather
+    // than as anything textual.
     //
-    // Being in the block also gets the ordering right for free: a
+    // Being in the block gets the ordering right for free: a
     // declaration is emitted before the loads that follow it, so the
     // slot exists by the time one is encoded.
     class DECLARE_LOCAL: Value is
@@ -54,10 +51,9 @@ namespace IR.Values is
         to_string() -> string => "store-temp:[{type}]({name})";
     si
 
-    // Returns from the enclosing method. Raw text in the text back end,
-    // and a value here for the same reason as DECLARE_LOCAL: the binary
-    // path cannot read text, and silently dropping an instruction
-    // produces a body that fails verification with nothing to point at.
+    // Returns from the enclosing method. A value for the same reason
+    // as DECLARE_LOCAL: silently dropping an instruction produces a
+    // body that fails verification with nothing to point at.
     class RET: Value is
         init() is
             super.init();

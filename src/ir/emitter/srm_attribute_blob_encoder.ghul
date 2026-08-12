@@ -7,11 +7,10 @@ namespace IR.Emitter is
 
     // Encodes a custom attribute's value blob: ECMA-335 II.23.3.
     //
-    // The text back end renders the same information as ilasm source and
-    // lets the assembler produce the bytes. Nothing here reads that
-    // rendering - both back ends encode from the resolved arguments the
-    // attribute carries, so the two cannot drift by one reading what the
-    // other wrote.
+    // The bytes are encoded from the resolved arguments the attribute
+    // carries, never from any rendering of them: a rendering read back
+    // as data would be taking presentation for fact, and would drift
+    // the first time the rendering changed.
     //
     // Every fixed argument is encoded against its parameter's declared
     // type rather than against the value's own, because the blob has no
@@ -493,9 +492,9 @@ namespace IR.Emitter is
             // not carry — so a `typeof` of one would name a type that
             // does not exist in the assembly it claims to be in.
             //
-            // The IL quoting has to come off: this name is parsed by the
-            // reflection type resolver rather than read by ilasm, and
-            // the resolver takes `'System'.'AttributeTargets'` literally.
+            // The IL quoting has to come off: this name is parsed by
+            // the reflection type resolver, which takes
+            // `'System'.'AttributeTargets'` literally.
             let name =
                 SRM_SIGNATURE_ENCODER.unquote(
                     _strip_assembly_prefix(type.get_il_class_name().trim()));

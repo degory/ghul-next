@@ -135,13 +135,6 @@ namespace IR.Values is
             fi
         si
 
-        // Captures this value's IL now, so that a later emission of it
-        // produces the same instructions wherever it ends up. The text
-        // back end does that by generating into a throwaway buffer and
-        // keeping the text.
-        //
-        // The binary back end needs no equivalent and cannot use this
-        // one: instructions are encoded into the body being built, and
         init() is
             _ambient_location = IoC.CONTAINER.instance.location_stack.current;
         si

@@ -102,13 +102,11 @@ namespace Syntax.Process is
         spill_field: Semantic.Symbols.Field? public;
 
         // Capture-mode cross-try state. The TEMP and label must be
-        // allocated BEFORE the body walk so the `.locals init`
-        // appears in value_block's IL stream OUTSIDE any inner
-        // `.try` the body opens — ilasm scopes locals declared
-        // inside `.try {}` to that block, so a load at the post-
-        // body join site can't find them. VAL_BLOCK.pre pre-
-        // allocates both eagerly when value_block has a non-void
-        // result type and is not spilling.
+        // allocated BEFORE the body walk, so the declaration is
+        // encoded ahead of the load at the post-body join site
+        // rather than somewhere inside the body. VAL_BLOCK.pre
+        // pre-allocates both eagerly when value_block has a
+        // non-void result type and is not spilling.
         //
         // A val-targeted `return E` inside an inner `.try` can't
         // `br end_label` (invalid IL across a protected region)
@@ -638,11 +636,12 @@ namespace Syntax.Process is
             emit_pending_state_machines();
         si
 
-        // A `partial` block emits its members inside a fresh `.class Target { … }`
-        // wrapper; ilasm merges same-named class blocks into one type. The class
-        // header (extends/implements/attributes) is the primary definition's job,
-        // so this only re-opens the type for its members; closures declared here
-        // are emitted by visit(partial), after their bodies are walked.
+        // A `partial` block contributes members to a type declared
+        // elsewhere; the member order collects them onto that type's one
+        // row. The class header (extends/implements/attributes) is the primary
+        // definition's job, so this only walks the block's members; closures
+        // declared here are emitted by visit(partial), after their bodies are
+        // walked.
         pre(`partial: Definitions.PARTIAL) -> bool is
             let symbol = cast Semantic.Symbols.Classy?(symbol_for(`partial))!;
 
@@ -682,10 +681,10 @@ namespace Syntax.Process is
             emit_pending_state_machines();
         si
 
-        // An `impl` block emits its members inside a fresh `.class Target { … }`
-        // wrapper, exactly like `partial`; ilasm merges same-named class blocks.
-        // The interface the target now implements is carried on the target
-        // symbol, so its `implements` clause is emitted by the primary definition.
+        // An `impl` block contributes members to its target exactly as
+        // `partial` does. The interface the target now implements is carried on
+        // the target symbol, so the InterfaceImpl row is written from the
+        // primary definition.
         pre(`impl: Definitions.IMPL) -> bool is
             let symbol = cast Semantic.Symbols.Classy?(symbol_for(`impl))!;
 
@@ -2284,85 +2283,6 @@ namespace Syntax.Process is
         si
 
         pre(property: Definitions.PROPERTY) -> bool is
-            let symbol = symbol_for(property);
-
-            if !symbol? then
-                return true;
-            fi
-
-            let buffer = System.Text.StringBuilder();
-            symbol.gen_definition_header(buffer);
-
-            // Attribute directives that must associate with the
-            // just-emitted declaration: NullableAttribute for a slot whose
-            // tree carries a reference-`?` position, plus any attribute
-            // pragmas resolved onto the symbol. Two emission shapes hit
-            // this path:
-            //  - `.property ... { .get .set }` — splice the .custom
-            //    inside the braces (where C# puts it, and where ILASM
-            //    associates it).
-            //  - `.field ... 'name'` (declare_symbols collapsed a
-            //    `_name: T;` declaration to a Variable) — append the
-            //    .custom on a following line; ILASM associates a
-            //    `.custom` immediately after a `.field` with it.
-            let attribute_lines = Collections.LIST[string]();
-
-            let slot_type: Semantic.Types.Type? mut = null;
-
-            if let property_symbol: Semantic.Symbols.Property = symbol then
-                slot_type = property_symbol.type;
-            else
-                if let variable_symbol: Semantic.Symbols.Variable = symbol then
-                    slot_type = variable_symbol.type;
-                fi
-            fi
-
-            if let type = slot_type then
-                let nullable_line = Semantic.DotNet.NULLABILITY.gen_attribute_line_for_type(type);
-
-                if nullable_line? then
-                    attribute_lines.add(nullable_line);
-                fi
-
-                let tuple_names_line = Semantic.DotNet.TUPLE_ELEMENT_NAMES.gen_attribute_line_for_type(type);
-
-                if tuple_names_line? then
-                    attribute_lines.add(tuple_names_line);
-                fi
-            fi
-
-            if symbol.custom_attributes? then
-                for attribute in symbol.custom_attributes do
-                    attribute_lines.add(attribute.gen_il_line());
-                od
-            fi
-
-            if attribute_lines.count > 0 then
-                if isa Semantic.Symbols.Property(symbol) then
-                    let rendered = buffer.to_string();
-                    let close = rendered.last_index_of('}');
-
-                    if close >= 0 then
-                        buffer.clear();
-                        buffer.append(rendered.substring(0, close));
-
-                        for line in attribute_lines do
-                            buffer.append(' ');
-                            buffer.append(line);
-                        od
-
-                        buffer.append(" }}");
-                    fi
-                else
-                    for line in attribute_lines do
-                        buffer.append('\n');
-                        buffer.append(line);
-                    od
-                fi
-            fi
-
-            println(buffer.to_string());
-
             return true;
         si
        
@@ -2862,12 +2782,11 @@ namespace Syntax.Process is
                 frame_il.spill_field = spiller.spill_field;
 
                 // Eagerly allocate the capture-mode cross-try TEMP
-                // so its `.locals init` appears at the head of
-                // value_block's IL stream, before any inner `.try`
-                // the body might open. ilasm scopes locals
-                // declared inside `.try {}` to that block; lazy
-                // allocation mid-body would leave the post-body
-                // ldloc without a visible declaration. The TEMP is
+                // so its declaration is encoded at the head of
+                // value_block rather than somewhere inside the
+                // body: lazy allocation mid-body would leave the
+                // post-body load of it reaching a slot that has
+                // not been declared yet. The TEMP is
                 // unused (and the join block un-emitted) when no
                 // val-targeted return crosses an inner try — set
                 // `cross_try_used` then drives the post-body
@@ -3162,51 +3081,13 @@ namespace Syntax.Process is
             // A local's declaration is a value in the block: metadata
             // has no `.locals init` directive, and the slot it
             // allocates has to be in place before any load of the
-            // same name is encoded.
+            // same name is encoded. A declaration at namespace or
+            // class scope is a field, whose row the structure walk
+            // writes, so nothing is emitted for one here.
             if _block_context.is_in_block then
                 for name in variable.names do
                     _declare_local(find(name));
                 od
-
-                return false;
-            fi
-
-            let buffer = System.Text.StringBuilder();
-
-            for name in variable.names do
-                let symbol = find(name);
-
-                if !symbol? then
-                    continue;
-                fi
-
-                symbol.gen_definition_header(buffer);
-
-                // For a field whose tree carries a reference-`?`
-                // position, attach NullableAttribute to the just-
-                // emitted .field directive so reflection recovers the
-                // annotation. ILASM associates a `.custom` line that
-                // immediately follows a `.field` with that field; the
-                // leading `\n` keeps the directive on its own line.
-                // Local variables and parameters don't reach here
-                // (the AST node is only used at namespace/class scope
-                // for field-shaped declarations).
-                let field_symbol = cast Semantic.Symbols.Field?(symbol);
-
-                if field_symbol? then
-                    let line = Semantic.DotNet.NULLABILITY.gen_attribute_line_for_type(field_symbol.type!);
-
-                    if line? then
-                        buffer.append('\n');
-                        buffer.append(line);
-                    fi
-                fi
-            od
-
-            // A declaration inside a block returned above, so anything
-            // reaching here is at namespace or class scope.
-            if buffer.length > 0 then
-                println(buffer.to_string());
             fi
 
             return false;

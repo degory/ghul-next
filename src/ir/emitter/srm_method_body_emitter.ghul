@@ -13,14 +13,11 @@ namespace IR.Emitter is
     // assembly emitter's method body stream and returns the body offset
     // that AddMethodDefinition takes directly (not a handle).
     //
-    // Locals are addressed by name here, as they are in the text back
-    // end, even though the encoded instructions address them by slot
-    // index. The text path writes `.locals init (int32 'result.0')` and
-    // `ldloc 'result.0'`, and leaves the numbering to ilasm; those names
-    // are generated all over generate-il and the IR values. Keeping the
-    // same name-shaped calls means each value's binary branch reads like
-    // its text branch, and the slot numbering lives in one place rather
-    // than being threaded through every site that invents a local.
+    // Locals are addressed by name here even though the encoded
+    // instructions address them by slot index. Names like `result.0`
+    // are invented all over generate-il and the IR values, so taking
+    // them as given keeps the slot numbering in one place rather than
+    // threading it through every site that declares a local.
     class SRM_METHOD_BODY_EMITTER is
         _encoder: InstructionEncoder;
 
@@ -41,11 +38,10 @@ namespace IR.Emitter is
         // marked.
         _labels: Collections.MAP[string, LabelHandle];
 
-        // Protected-region boundaries. The text back end delimits a
-        // region by nesting braces, so its start and end are wherever
-        // the writer happens to be; SRM instead takes four labels per
-        // region, so each boundary has to be marked as the walk passes
-        // it and held until both ends are known. These labels have no
+        // Protected-region boundaries. SRM takes four labels per
+        // region rather than a nesting, so each boundary has to be
+        // marked as the walk passes it and held until both ends are
+        // known. These labels have no
         // IR.LABEL behind them - nothing branches to them - so they
         // are numbered here rather than sharing `_labels`.
         _region_labels: Collections.LIST[LabelHandle];
@@ -139,11 +135,10 @@ namespace IR.Emitter is
             _encoder.branch(op_code, _label(label));
         si
 
-        // Declaring the same name twice is not an error: the text path
-        // emits a `.locals init` per declaration site and lets ilasm
-        // merge repeats, and at least one value declares its temp on
-        // both arms of a branch. The first declaration wins, so the
-        // slot a later load resolves to is the one already in use.
+        // Declaring the same name twice is not an error: at least one
+        // value declares its temp on both arms of a branch. The first
+        // declaration wins, so the slot a later load resolves to is
+        // the one already in use.
         declare_local(name: string, type: Type) -> int is
             if _local_slots.contains_key(name) then
                 return _local_slots[name];
@@ -254,8 +249,7 @@ namespace IR.Emitter is
         ret() is _encoder.op_code(ILOpCode.RET); si
 
         // Note that the instructions emitted from here on belong to a
-        // new source position. Called per statement, from the one place
-        // the text back end wrote a `.line` directive.
+        // new source position. Called once per statement.
         mark_sequence_point(location: Source.LOCATION) is
             if !_sequence_points? then
                 _sequence_points = Collections.LIST[SRM_SEQUENCE_POINT]();
@@ -287,10 +281,9 @@ namespace IR.Emitter is
         si
 
         // An `@IL.output` pragma opens a region whose emitted instructions
-        // the IL test runner extracts. The binary back end records the
-        // byte-offset range rather than writing the instructions anywhere;
-        // the ranges leave with the method as a custom attribute written
-        // by SRM_STRUCTURE_WALK._write_method.
+        // the IL test runner extracts. Only the byte-offset range is
+        // recorded here; the ranges leave with the method as a custom
+        // attribute written by SRM_STRUCTURE_WALK._write_method.
         begin_il_output(path: string, sequence: int) is
             _il_output_stack.add((path, _encoder.offset, sequence));
         si

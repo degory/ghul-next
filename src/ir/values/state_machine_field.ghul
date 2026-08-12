@@ -7,8 +7,8 @@ namespace IR.Values is
     // state-machine frame (`ldarg.0; ldfld/stfld <field>`). Returns
     // that field's IL reference, or null for an ordinary local that
     // keeps its CLR slot.
-    // The same field as a symbol, for the binary back end: a metadata
-    // token is built from the field rather than from its spelling.
+    // The same field as a symbol, so a metadata token is built from the
+    // field rather than from its spelling.
     state_machine_field_for(symbol: Symbol?) -> Semantic.Symbols.Field? is
         if let variable: Variable = symbol then
             return variable.state_machine_field;

@@ -145,11 +145,11 @@ namespace Compiler is
                             .write_rows();
                     fi
 
-                    // An executable build with no `.entrypoint` emitted would
-                    // otherwise reach ilasm, which fails with the cryptic "No
-                    // entry point declared for executable". Surface it as a
-                    // located compiler error instead; `finish_build` aborts
-                    // on `any_errors` before ilasm runs. Library builds
+                    // An executable build that named no entry point would
+                    // otherwise be written out and fail only when something
+                    // tried to run it. Surface it as a located compiler
+                    // error instead; `finish_build` aborts on `any_errors`
+                    // before the image is written. Library builds
                     // (`--library`) legitimately have no entry point. Gated
                     // on no prior errors so it doesn't pile onto a build
                     // already failing for another reason (an error-aborted

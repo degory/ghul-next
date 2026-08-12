@@ -8,9 +8,9 @@ namespace Semantic.Symbols is
     // used, and at a different index. A closure that captures type
     // arguments moves them the same way.
     //
-    // A position rather than rendered text, because both back ends need
-    // the same answer in different forms: ilasm reads `!0` / `!!0`, and
-    // metadata encodes a VAR or an MVAR carrying the index.
+    // A position rather than rendered text, because metadata encodes a
+    // VAR or an MVAR carrying the index, and reading the index back out
+    // of a rendering would be taking presentation for fact.
     class TYPE_PARAMETER_POSITION is
         is_class_level: bool;
         index: int;

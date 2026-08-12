@@ -2032,8 +2032,8 @@ namespace Semantic.Symbols is
         gen_constructor(context: IR.CONTEXT, symbol_loader: SYMBOL_LOADER) is
             let internal = LOCATION.internal;
 
-            // The binary path encodes the constructor into a body of its
-            // own. Without one its row carries no code at all, which is
+            // The constructor is encoded into a body of its own.
+            // Without one its row carries no code at all, which is
             // not a constructor a runtime will accept: the image is
             // rejected outright, before any type in it is loaded.
             let assembly_emitter = context.srm_assembly_emitter;
@@ -2128,8 +2128,9 @@ namespace Semantic.Symbols is
         // The number it denotes, absent when `value` is not an integer
         // in int32's range. `value` is the source token verbatim, so it
         // can carry digit grouping, a radix prefix and a type suffix,
-        // none of which a consumer can emit: ilasm rejects
-        // `int32(200l)`.
+        // none of which a consumer can emit: an enum member's value has
+        // to reach metadata as a number, not as the text that was
+        // written for it.
         //
         // Absent rather than zero, because zero is a legitimate enum
         // value. A reflected member of an enum wider than int32 arrives

@@ -192,8 +192,8 @@ namespace Syntax.Process is
         // type. Comparing as a ulong using each type's unsigned max
         // preserves the standard "literal fits in N unsigned bits,
         // unary minus negates separately" convention. Without this,
-        // oversize literals reach IL emission and ilasm rejects the
-        // `ldc.i4 <bignum>` with an opaque syntax error (issue #580).
+        // oversize literals reach IL emission, where the constant no
+        // longer fits the instruction it is loaded by (issue #580).
         fits(location: LOCATION, value_string: string, type: Type) -> bool is
             let (ok, parsed) = parse_magnitude(value_string);
 
