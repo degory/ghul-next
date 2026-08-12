@@ -3174,19 +3174,17 @@ namespace Syntax.Process is
                 if is_enter then
                     _il_output_depth = _il_output_depth + 1;
 
+                    // Only a statement inside a body has instructions to
+                    // measure; a pragma on a declaration marks nothing.
                     if _block_context.is_in_block then
                         current_block.add(Values.ENTER_FILE(file_name));
-                    else
-                        _context.enter_file(file_name, false);
                     fi
                 else
                     _il_output_depth = _il_output_depth - 1;
 
                     if _block_context.is_in_block then
                         current_block.add(Values.LEAVE_FILE(file_name));
-                    else
-                        _context.leave_file(file_name);
-                    fi                        
+                    fi
                 fi
             elif name =~ "IL.entrypoint" \/ name =~ "entry" then
                 if is_enter then
