@@ -32,19 +32,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.new_object(context.resolve_range_constructor(type));
-
-                return;
-            fi
-
-            let buffer = System.Text.StringBuilder();
-
-            buffer.append("newobj instance void ");
-            type.gen_type(buffer);
-            buffer.append("::'.ctor'(int32,int32)");
-
-            context.write_line(buffer);
         si
 
         to_string() -> string => "new-range:[{type}]()";
@@ -89,13 +78,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.mark_label(label);
-
-                return;
-            fi
-
-            context.write_line("{label}:");
         si
 
         to_string() -> string => "{label}:";

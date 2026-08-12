@@ -23,13 +23,8 @@ namespace IR.Values.Load is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldarg(_index);
-
-                return;
-            fi
-
-            context.write_line(_il_name);
         si
 
         to_string() -> string => "load-argument-slot:({_index})";

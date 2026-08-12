@@ -801,10 +801,10 @@ namespace Semantic.Symbols is
             owner = frame_instance.type!.symbol;
 
             map_type_arguments();
-            let function = IR.Values.Load.FUNCTION_POINTER(self).freeze();
+            let function = IR.Values.Load.FUNCTION_POINTER(self);
             unmap_type_arguments();
 
-            let result = IR.Values.Load.DELEGATE(constructed_delegate_type, function, frame_instance_copier()).freeze();
+            let result = IR.Values.Load.DELEGATE(constructed_delegate_type, function, frame_instance_copier());
 
             let result_copier = result.get_temp_copier(block, "closure");
 
@@ -814,7 +814,7 @@ namespace Semantic.Symbols is
                 let ff = frame_instance_copier();
                 let rr = result_copier();
                 map_type_arguments();
-                block.add(rec_member_symbol.store(location, ff, rr, loader, true).freeze());
+                block.add(rec_member_symbol.store(location, ff, rr, loader, true));
                 unmap_type_arguments();
             fi
 
@@ -834,10 +834,8 @@ namespace Semantic.Symbols is
                 fi
             od
 
-            // Closure loading invokes IR.Value.gen eagerly via freeze
-            // to capture IL text under transient context. The
-            // iterative-inference body-retry loop may reach this
-            // point during an early iter where the FRAME's
+            // The iterative-inference body-retry loop may reach
+            // closure loading during an early iter where the FRAME's
             // declare_constructor defensive-defaulted a not-yet-typed
             // field to Types.ERROR — gen_type throws on that.
             // Treat the exception as failed speculation: return a
@@ -865,8 +863,8 @@ namespace Semantic.Symbols is
 
             owner = frame_instance.type!.symbol;
 
-            let function = IR.Values.Load.FUNCTION_POINTER(self).freeze();
-            let result = IR.Values.Load.DELEGATE(constructed_delegate_type, function, frame_instance_copier()).freeze();
+            let function = IR.Values.Load.FUNCTION_POINTER(self);
+            let result = IR.Values.Load.DELEGATE(constructed_delegate_type, function, frame_instance_copier());
 
             let result_copier = result.get_temp_copier(block, "closure");
 
@@ -910,7 +908,7 @@ namespace Semantic.Symbols is
 
             let specialized_lambda = specialize_function(args_map, null);
 
-            let function_pointer = IR.Values.Load.FUNCTION_POINTER(specialized_lambda).freeze();
+            let function_pointer = IR.Values.Load.FUNCTION_POINTER(specialized_lambda);
             let delegate = IR.Values.Load.DELEGATE(delegate_target_type ?? specialized_lambda.type!, function_pointer, IR.Values.NULL(Types.NULL()));
             
             unmap_type_arguments();

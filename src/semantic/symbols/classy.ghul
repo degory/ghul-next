@@ -2129,8 +2129,7 @@ namespace Semantic.Symbols is
                         IR.Values.NEW(specialized_self.type, ctor, actual_arguments)
                     else
                         IR.Values.NEW(type!, _constructor!, actual_arguments)
-                    fi
-                        .freeze();
+                    fi;
             catch ex: System.Exception
                 CONTAINER.instance.logger.exception(self.location, ex, "trying to generate frame instance");
             yrt
