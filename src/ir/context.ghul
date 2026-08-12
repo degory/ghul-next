@@ -192,13 +192,11 @@ namespace IR is
                 return;
             fi
 
-            // The binary back end records the position against the
-            // instruction offset the body has reached, which is only
-            // meaningful while one is open. Unlike the text path there
-            // is no run of directives to keep sparse: a repeated
-            // position at the same offset replaces its predecessor, and
-            // at a later offset it is a distinct point that a debugger
-            // and a coverage tool both want.
+            // A position is recorded against the instruction offset the
+            // body has reached, which is only meaningful while one is
+            // open. A repeated position at the same offset replaces its
+            // predecessor; at a later offset it is a distinct point
+            // that a debugger and a coverage tool both want.
             if let body = current_srm_body_emitter then
                 body.mark_sequence_point(location);
 
@@ -273,8 +271,8 @@ namespace IR is
 
             // `.maxstack` is a body-header field that
             // MethodBodyStreamEncoder takes as an argument rather than
-            // an instruction, and `.line` is a debug sequence point the
-            // binary path does not emit yet. Neither is a dropped
+            // an instruction, and `.line` is a debug sequence point
+            // that is not emitted yet. Neither is a dropped
             // instruction.
             if text.starts_with(".maxstack") \/ text.starts_with(".line") \/ text.starts_with("//") then
                 return;
@@ -356,10 +354,9 @@ namespace IR is
         // built from the function's actual argument and return types.
         // The CLR parameter index of a named argument.
         //
-        // The text back end addresses arguments by name and lets ilasm
-        // resolve them against the method's declared parameters;
-        // metadata has only positions. An instance method's slot 0 is
-        // the receiver, so a declared argument sits one further along.
+        // Arguments are addressed by name up to here, and metadata has
+        // only positions. An instance method's slot 0 is the receiver,
+        // so a declared argument sits one further along.
         resolve_argument_index(symbol: Semantic.Symbols.Symbol) -> int is
             let function = cast Semantic.Symbols.Function?(symbol.owner);
 
@@ -1160,10 +1157,11 @@ namespace IR is
             fi
 
             // il_name_override on an imported type is the CLR-side
-            // dotted full name (see symbol_factory.ghul's get_il_name),
-            // unlike qualified_name which is the ghūl-mapped spelling
-            // (e.g. "IO.Std" for System.Console). It arrives quoted
-            // for ilasm, which metadata must not carry.
+            // dotted full name, unlike qualified_name which is the
+            // ghūl-mapped spelling (e.g. "IO.Std" for System.Console).
+            // `get_il_name` in symbol_factory.ghul quotes each segment
+            // as it builds the name, and metadata must not carry the
+            // quotes.
             let il_name =
                 Emitter.SRM_SIGNATURE_ENCODER.unquote(
                     owner_classy.il_name_override ?? owner_classy.qualified_name);

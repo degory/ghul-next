@@ -12,9 +12,9 @@ namespace IR.Values.Load is
         _index: int;
         _il_name: string;
 
-        // `il_name` is what the text back end writes — `ldarg.0` for
-        // the receiver, `ldarg '<name>'` for a declared argument —
-        // and is carried so both back ends emit the same argument.
+        // `il_name` names the argument the slot loads — the receiver,
+        // or a declared argument by name — alongside the index the
+        // instruction is actually encoded from.
         init(index: int, il_name: string) is
             super.init();
 

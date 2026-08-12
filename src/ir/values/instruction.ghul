@@ -41,12 +41,11 @@ namespace IR.Values is
 
     // The stack-depth bound a method body reserves.
     //
-    // ilasm needs the directive written; metadata carries the bound in
-    // the body header instead, and the emitter reserves the same depth
-    // for every body it writes. So this is a directive on one path and
-    // nothing at all on the other — which is still a value rather than
-    // planted text, because a state-machine body is built once and
-    // emitted by whichever back end is running.
+    // Metadata carries the bound in the body header rather than as an
+    // instruction, and the emitter reserves the same depth for every
+    // body it writes, so nothing is encoded where this value sits. It
+    // stays a value rather than being dropped from the block because
+    // the walk that builds the block does not know that.
     class MAX_STACK: Value is
         depth: int;
 

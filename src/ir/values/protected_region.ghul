@@ -5,13 +5,12 @@ namespace IR.Values is
     // to it — a `try` with three catches is three regions over a single
     // extent.
     //
-    // The two back ends delimit a region in incompatible ways. ilasm
-    // takes nesting: `.try { … } catch T { … }`, with each block's
-    // extent implied by where its braces fall. SRM takes four labels
-    // and the handler's type, added to the body's control-flow builder
-    // once every one of them is known. So the boundaries have to be
-    // recorded as the walk passes them and held somewhere until each
-    // region closes, which is what this and PROTECTED_REGION are for.
+    // SRM delimits a region by four labels and the handler's type,
+    // added to the body's control-flow builder once every one of them
+    // is known — rather than by a nesting whose extents fall out of
+    // the walk. So the boundaries have to be recorded as the walk
+    // passes them and held somewhere until each region closes, which
+    // is what this and PROTECTED_REGION are for.
     class TRY_EXTENT is
         start: int public;
         end: int public;
@@ -61,7 +60,7 @@ namespace IR.Values is
 
         is_catch: bool => catch_type? \/ catch_type_name?;
 
-        // How ilasm names the caught type.
+        // The caught type as it reads in this value's description.
         catch_type_il: string =>
             if let type = catch_type then
                 type.get_il_type();

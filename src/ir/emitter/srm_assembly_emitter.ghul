@@ -61,7 +61,7 @@ namespace IR.Emitter is
         // What an assembly-level attribute hangs off.
         assembly_handle: EntityHandle;
 
-        // `version` is the colon-separated ilasm .ver format ("0:0:0:0")
+        // `version` is the colon-separated four-part form ("0:0:0:0")
         // module_version is already built in, so parsing here avoids a
         // second version representation at the call site.
         init(module_name: string, assembly_name: string, version: string, want_library: bool) is
@@ -117,9 +117,8 @@ namespace IR.Emitter is
                         _,
                         _));
 
-            // Boilerplate reference every assembly needs (base type of the
-            // globals carrier); the text path hardcoded the same version
-            // in lib/dotnet/il/header-top.il.
+            // Reference every assembly needs, for the base type of the
+            // globals carrier.
             add_assembly_reference("System.Runtime", "8:0:0:0");
         si
 
@@ -399,15 +398,14 @@ namespace IR.Emitter is
                     _[System.Reflection.Metadata.StandaloneSignatureHandle]
                 fi;
 
-            // The text path declares `.maxstack 64` on every body it
-            // emits rather than computing a bound, so the binary path
-            // reserves the same depth.
+            // A fixed stack depth is reserved for every body rather
+            // than a bound being computed per body.
             //
-            // `.locals init` likewise: the text path emits it on every
-            // declaration, and a method that both has locals and
-            // contains a protected region is rejected outright by the
-            // runtime without it — an InvalidProgramException naming
-            // the method, with nothing in the body to point at.
+            // Locals are always initialized: a method that both has
+            // locals and contains a protected region is rejected
+            // outright by the runtime otherwise — an
+            // InvalidProgramException naming the method, with nothing
+            // in the body to point at.
             return
                 _body_stream.add_method_body(
                     encoder,
@@ -596,8 +594,7 @@ namespace IR.Emitter is
 
         // The value blob of an attribute applied with no arguments: the
         // two-byte prolog every attribute blob opens with, then a
-        // named-argument count of zero. `01 00 00 00`, which is what the
-        // text emitter writes out by hand at each marker site.
+        // named-argument count of zero.
         NO_ARGUMENT_ATTRIBUTE_VALUE: ubyte[] static => [1ub, 0ub, 0ub, 0ub];
 
         add_type_definition(

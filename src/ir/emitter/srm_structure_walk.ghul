@@ -1174,9 +1174,8 @@ namespace IR.Emitter is
         // The traits a type declares, in declaration order, each named
         // by a handle the InterfaceImpl row can carry.
         //
-        // `ancestors` mixes the superclass in with the traits, so it is
-        // filtered the same way the text back end's `implements` clause
-        // filters it.
+        // `ancestors` mixes the superclass in with the traits, so the
+        // superclass is filtered back out here.
         _interfaces(type: Classy) -> Collections.List[EntityHandle] is
             let result = Collections.LIST[EntityHandle]();
 
