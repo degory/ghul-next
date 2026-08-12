@@ -417,17 +417,23 @@ namespace Driver is
 
             if flags.want_assembler then
                 container.value_boxer.want_boxing = true;
+            fi
 
-                let module_name = Path.get_file_name_without_extension(output_file_name_generator.result) ?? "module";
+            // Installed whether or not this build emits. A pass's own
+            // prologue runs before the pass decides it has nothing to do,
+            // so a build that only analyses still reaches code holding an
+            // emitter - and an emitter nothing writes to costs a few
+            // fields, where making every holder test for one costs a
+            // branch at every use and a dead path behind each.
+            let module_name =
+                Path.get_file_name_without_extension(output_file_name_generator.result) ?? "module";
 
-                let emitter = IR.Emitter.SRM_ASSEMBLY_EMITTER(
+            container.ir_context.install_srm_assembly_emitter(
+                IR.Emitter.SRM_ASSEMBLY_EMITTER(
                     "{module_name}.{if flags.want_library then "dll" else "exe" fi}",
                     module_name,
                     module_version,
-                    flags.want_library);
-
-                container.ir_context.install_srm_assembly_emitter(emitter);
-            fi
+                    flags.want_library));
         si
 
         finish_build() -> int is

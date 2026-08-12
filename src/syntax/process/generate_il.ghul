@@ -284,7 +284,6 @@ namespace Syntax.Process is
 
         _context: CONTEXT;
         _brancher: BRANCHER;
-        _boilerplate_generator: BOILERPLATE_GENERATOR;
         _boxer: VALUE_BOXER;
         _loops: LOOP_LABEL_STACK;
         _block_context: BlockContext;
@@ -386,7 +385,6 @@ namespace Syntax.Process is
             context: CONTEXT,
             block_context: BlockContext,
             brancher: BRANCHER,
-            boilerplate_generator: BOILERPLATE_GENERATOR,
             boxer: VALUE_BOXER,
             build_flags: Compiler.GLOBAL_BUILD_FLAGS,
             composite_spill_state: COMPOSITE_SPILL_STORE
@@ -407,7 +405,6 @@ namespace Syntax.Process is
             _context = context;
             _block_context = block_context;
             _brancher = brancher;
-            _boilerplate_generator = boilerplate_generator;
             _boxer = boxer;
             _build_flags = build_flags;
             self.composite_spill_state = composite_spill_state;
@@ -688,8 +685,6 @@ namespace Syntax.Process is
 
             gen_delegates(closures);
 
-            gen_ienumerable_boilerplate(symbol);
-            gen_ienumerator_boilerplate(symbol);
 
             _context.outdent();
             println("}}");
@@ -849,8 +844,6 @@ namespace Syntax.Process is
 
             let closures = symbol.get_closures();
 
-            gen_ienumerable_boilerplate(symbol);
-            gen_ienumerator_boilerplate(symbol);
             gen_anon_functions(closures);
 
             _context.outdent();
@@ -893,8 +886,6 @@ namespace Syntax.Process is
 
             _context.indent();
 
-            gen_ienumerable_boilerplate(symbol);
-            gen_ienumerator_boilerplate(symbol);
 
             _context.outdent();
             println("}}");
@@ -961,8 +952,6 @@ namespace Syntax.Process is
 
             let closures = symbol.get_closures();
 
-            gen_ienumerable_boilerplate(symbol);
-            gen_ienumerator_boilerplate(symbol);
             gen_unit_variant_singleton(symbol);
             gen_anon_functions(closures);
 
@@ -1039,21 +1028,7 @@ namespace Syntax.Process is
             handles.set_unit_variant_initializer_body(variant, body.flush(assembly_emitter));
         si
 
-        gen_ienumerable_boilerplate(symbol: Semantic.Symbols.Classy) is
-            if symbol.is_derived_from_iterable_trait then
-                // FIXME: check if class implements these methods and don't emit them if they're not needed:
-
-                _boilerplate_generator.gen("ienumerable-boilerplate");
-            fi            
-        si
         
-        gen_ienumerator_boilerplate(symbol: Semantic.Symbols.Classy) is            
-            if symbol.is_derived_from_iterator_trait then
-                // FIXME: check if class implements these methods and don't emit them if they're not needed:
-
-                _boilerplate_generator.gen("ienumerator-boilerplate");
-            fi
-        si
 
         gen_delegates(closures: Collections.Iterable[Semantic.Symbols.Closure]?) is
             if !closures? then
@@ -2411,8 +2386,6 @@ namespace Syntax.Process is
             // exceptions route through builder.SetException.
             _gen_async_move_next(async_state_machine, move_next_block, success_label, end_label);
 
-            // SetStateMachine — trivial no-op for class-based SM.
-            _boilerplate_generator.gen("async-set-state-machine");
 
             _context.outdent();
             println("}}");
@@ -2737,8 +2710,6 @@ namespace Syntax.Process is
             // Other Iterator[T] / IDisposable members.
             _gen_state_machine_accessors(frame);
 
-            gen_ienumerable_boilerplate(frame);
-            gen_ienumerator_boilerplate(frame);
 
             _context.outdent();
             println("}}");
@@ -3268,13 +3239,6 @@ namespace Syntax.Process is
             "Microsoft.VisualStudio.TestTools.UnitTesting";
 
         _gen_test_attribute(on_method: bool) is
-            if !_context.srm_assembly_emitter? then
-                _boilerplate_generator.gen(
-                    if on_method then "test-method" else "test-class" fi);
-
-                return;
-            fi
-
             let handles = _context.srm_assembly_emitter.handles;
 
             let parent: System.Reflection.Metadata.EntityHandle mut;

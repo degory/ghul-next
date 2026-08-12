@@ -118,24 +118,19 @@ namespace Compiler is
                 () -> void is
                     let srm_emitter = container.ir_context.srm_assembly_emitter;
 
-                    if srm_emitter? then
-                        container.referenced_assemblies.gen(srm_emitter);
+                    container.referenced_assemblies.gen(srm_emitter);
 
-                        // Not at the point the emitter is constructed:
-                        // the constructor signature these reference is
-                        // built from the string type, which the symbol
-                        // table does not hold until the reflected
-                        // assemblies have been read.
-                        container.assembly_info.gen(srm_emitter);
+                    // Not at the point the emitter is constructed: the
+                    // constructor signature these reference is built from
+                    // the string type, which the symbol table does not
+                    // hold until the reflected assemblies have been read.
+                    container.assembly_info.gen(srm_emitter);
 
-                        // Assign every definition its metadata row before
-                        // any body is encoded, so a body can name a target
-                        // whose row is not written yet.
-                        IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
-                            .number(container.symbol_table.global_scope);
-                    else
-                        container.referenced_assemblies.gen();
-                    fi
+                    // Assign every definition its metadata row before any
+                    // body is encoded, so a body can name a target whose
+                    // row is not written yet.
+                    IR.Emitter.SRM_STRUCTURE_WALK(srm_emitter)
+                        .number(container.symbol_table.global_scope);
                 si,
                 (source_file) -> bool => generate_il_pass(source_file),
                 () -> void is
