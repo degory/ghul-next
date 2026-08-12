@@ -147,32 +147,38 @@ namespace IR.Emitter is
                     next_method = next_method + 1;
                 od
 
-                next_method = next_method + _boilerplate_count(type);
+                next_method = next_method + _boilerplate_members(type).count;
             od
         si
 
-        // An iterable or iterator type satisfies the two non-generic
+        // An iterable or iterator type satisfies the non-generic
         // framework interfaces its generic ones derive from with a
         // member apiece. Neither is a declaration the symbol table
-        // holds, so both passes count them here, last in the method run.
-        _boilerplate_count(type: SRM_EMITTED_TYPE) -> int is
+        // holds, so both passes take them from here, last in the
+        // method run.
+        //
+        // One list, read by both passes, in one order — the same
+        // discipline `FRAME_MEMBERS` keeps, and for the same reason: a
+        // member run written in a different order than it was numbered
+        // reparents members onto the wrong type and still loads.
+        _boilerplate_members(type: SRM_EMITTED_TYPE) -> Collections.List[BoilerplateMember] static is
+            let result = Collections.LIST[BoilerplateMember]();
+
             let declared = type.declared;
 
             if !declared? then
-                return 0;
+                return result;
             fi
 
-            let count mut = 0;
-
             if declared.is_derived_from_iterable_trait then
-                count = count + 1;
+                result.add(BoilerplateMember.ENUMERABLE_GET_ENUMERATOR);
             fi
 
             if declared.is_derived_from_iterator_trait then
-                count = count + 1;
+                result.add(BoilerplateMember.ENUMERATOR_GET_CURRENT);
             fi
 
-            return count;
+            return result;
         si
 
         // The members a state-machine frame carries that no symbol
@@ -1085,44 +1091,40 @@ namespace IR.Emitter is
         _write_boilerplate(type: SRM_EMITTED_TYPE) -> Collections.List[SRM_BOUND_METHOD] is
             let result = Collections.LIST[SRM_BOUND_METHOD]();
 
-            let declared = type.declared;
+            for member in _boilerplate_members(type) do
+                case member
+                when BoilerplateMember.ENUMERABLE_GET_ENUMERATOR then
+                    let `interface =
+                        _assembly.add_type_reference_by_name(
+                            "System.Runtime", "System.Collections", "IEnumerator");
 
-            if !declared? then
-                return result;
-            fi
+                    let signature =
+                        _signatures.nullary_instance_signature(cast EntityHandle(`interface));
 
-            if declared.is_derived_from_iterable_trait then
-                let `interface =
-                    _assembly.add_type_reference_by_name(
-                        "System.Runtime", "System.Collections", "IEnumerator");
+                    result.add(
+                        _write_explicit_implementation(
+                            "System.Collections.IEnumerable.GetEnumerator",
+                            signature,
+                            false,
+                            "System.Collections",
+                            "IEnumerable",
+                            "GetEnumerator",
+                            signature));
 
-                let signature =
-                    _signatures.nullary_instance_signature(cast EntityHandle(`interface));
+                when BoilerplateMember.ENUMERATOR_GET_CURRENT then
+                    let signature = _signatures.nullary_instance_signature_returning_object();
 
-                result.add(
-                    _write_explicit_implementation(
-                        "System.Collections.IEnumerable.GetEnumerator",
-                        signature,
-                        false,
-                        "System.Collections",
-                        "IEnumerable",
-                        "GetEnumerator",
-                        signature));
-            fi
-
-            if declared.is_derived_from_iterator_trait then
-                let signature = _signatures.nullary_instance_signature_returning_object();
-
-                result.add(
-                    _write_explicit_implementation(
-                        "System.Collections.IEnumerator.get_Current",
-                        signature,
-                        true,
-                        "System.Collections",
-                        "IEnumerator",
-                        "get_Current",
-                        signature));
-            fi
+                    result.add(
+                        _write_explicit_implementation(
+                            "System.Collections.IEnumerator.get_Current",
+                            signature,
+                            true,
+                            "System.Collections",
+                            "IEnumerator",
+                            "get_Current",
+                            signature));
+                esac
+            od
 
             return result;
         si
