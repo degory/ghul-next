@@ -83,8 +83,8 @@ namespace IR.Values is
 
         gen(context: IR.CONTEXT) is
             let body = context.current_srm_body_emitter!;
-                body.declare_local("'.default'", type);
-                body.ldloc("'.default'");
+                body.declare_local(".default", type);
+                body.ldloc(".default");
         si
 
         to_string() -> string => "default-return:[{type}]()";

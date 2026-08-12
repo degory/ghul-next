@@ -70,7 +70,7 @@ namespace IR.Values is
         // The CLR local MoveNext caches the state in. Written by the
         // same name the entry sequence declared it under, so the two
         // name one slot.
-        _STATE_LOCAL: string static => "'.async_state'";
+        _STATE_LOCAL: string static => ".async_state";
 
         gen(context: IR.CONTEXT) is
             let body = context.current_srm_body_emitter!;
