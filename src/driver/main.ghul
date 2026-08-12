@@ -419,21 +419,10 @@ namespace Driver is
                 container.value_boxer.want_boxing = true;
             fi
 
-            // Installed whether or not this build emits. A pass's own
-            // prologue runs before the pass decides it has nothing to do,
-            // so a build that only analyses still reaches code holding an
-            // emitter - and an emitter nothing writes to costs a few
-            // fields, where making every holder test for one costs a
-            // branch at every use and a dead path behind each.
             let module_name =
                 Path.get_file_name_without_extension(output_file_name_generator.result) ?? "module";
 
-            container.ir_context.install_srm_assembly_emitter(
-                IR.Emitter.SRM_ASSEMBLY_EMITTER(
-                    "{module_name}.{if flags.want_library then "dll" else "exe" fi}",
-                    module_name,
-                    module_version,
-                    flags.want_library));
+            install_assembly_emitter(module_name);
         si
 
         finish_build() -> int is
@@ -525,7 +514,26 @@ namespace Driver is
             compiler.parse_and_queue(path, reader, flags.want_compile_up_to_expressions, flags.want_compile_expressions, is_internal_file);
         si
 
+        // Every mode that runs the passes needs an emitter, whether or not
+        // it writes an assembly: a pass's prologue runs before the pass
+        // decides it has nothing to emit, so analysis reaches one too. It
+        // is installed from here rather than built with the context,
+        // because the emitter is reached through the container the
+        // context is being built into.
+        install_assembly_emitter(module_name: string) is
+            container.ir_context.install_srm_assembly_emitter(
+                IR.Emitter.SRM_ASSEMBLY_EMITTER(
+                    "{module_name}.{if flags.want_library then "dll" else "exe" fi}",
+                    module_name,
+                    module_version,
+                    flags.want_library));
+        si
+
         analyse() is
+            // Analysis names no output, and writes none: this emitter is
+            // what the passes hold, not something they fill.
+            install_assembly_emitter("module");
+
             analyse_files = LIST();
 
             container.watchdog.heap_check_disabled = flags.no_analysis_heap_watchdog;
