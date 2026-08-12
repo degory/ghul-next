@@ -15,7 +15,7 @@ namespace IR.Values.Literal is
 
         gen(context: IR.CONTEXT) is
             let body = context.current_srm_body_emitter!;
-                body.ldstr(context.srm_assembly_emitter!, value);
+                body.ldstr(context.srm_assembly_emitter, value);
         si
 
         get_hex_bytes(value: string) -> string static is

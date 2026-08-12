@@ -116,11 +116,55 @@ namespace IR is
 
         // Binary emission state, carried here so that a value's `gen`
         // can reach the method body it is being emitted into without
-        // every caller threading it through. The assembly emitter is
-        // set by the driver when a build targets an assembly; the body
-        // emitter tracks the method the IL visitor currently has open,
-        // and is null outside one.
-        srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER? public;
+        // every caller threading it through.
+        //
+        // The assembly emitter is installed by the driver before any
+        // pass that emits runs, and every emitting pass requires one, so
+        // it reads as non-optional: a build that reaches emission
+        // without one is a wiring error rather than a state to branch
+        // on, and fails here rather than silently emitting nothing.
+        //
+        // The body emitter is genuinely optional - it tracks the method
+        // the IL visitor currently has open, and is null outside one.
+        _srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER?;
+
+        // What the emitter was installed as, so a rebuild can make
+        // another one like it. Analysis compiles the project again on
+        // every edit and query miss, and an emitter accumulates a
+        // reference and specification cache per compile: kept across
+        // rebuilds it grows for as long as the editor session lasts.
+        _srm_module_name: string?;
+        _srm_module_version: string?;
+        _srm_want_library: bool;
+
+        srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER =>
+            _srm_assembly_emitter!;
+
+        install_srm_assembly_emitter(
+            module_name: string,
+            module_version: string,
+            want_library: bool
+        ) is
+            _srm_module_name = module_name;
+            _srm_module_version = module_version;
+            _srm_want_library = want_library;
+
+            reset_srm_assembly_emitter();
+        si
+
+        // Called wherever the symbol table is abandoned: the handles the
+        // old emitter holds name symbols that no longer exist.
+        reset_srm_assembly_emitter() is
+            if let module_name = _srm_module_name then
+                _srm_assembly_emitter =
+                    Emitter.SRM_ASSEMBLY_EMITTER(
+                        "{module_name}.{if _srm_want_library then "dll" else "exe" fi}",
+                        module_name,
+                        _srm_module_version!,
+                        _srm_want_library);
+            fi
+        si
+
         current_srm_body_emitter: Emitter.SRM_METHOD_BODY_EMITTER? public;
 
         // Reads `--debug` off the shared build-flags singleton so
@@ -405,7 +449,7 @@ namespace IR is
         resolve_unit_variant_instance(
             variant: Semantic.Scope
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             // A specialization holds the open definition rather than
             // being one, and only the definition has a row.
@@ -479,11 +523,11 @@ namespace IR is
             name: string
         ) -> System.Reflection.Metadata.EntityHandle =>
             cast System.Reflection.Metadata.EntityHandle(
-                srm_assembly_emitter!.add_type_reference_by_name(
+                srm_assembly_emitter.add_type_reference_by_name(
                     assembly_name, namespace_name, name));
 
         resolve_type_token(type: Semantic.Types.Type) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             // A constructed generic has no row of its own, and neither
             // does a type parameter or a primitive: all three are
@@ -525,7 +569,7 @@ namespace IR is
             argument_count: int,
             is_action: bool
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -544,7 +588,7 @@ namespace IR is
             type: Semantic.Types.Type,
             argument_count: int
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -560,7 +604,7 @@ namespace IR is
         // in this compilation names, so both are built from their known
         // shapes rather than read off a declaration.
         resolve_string_concat() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -582,7 +626,7 @@ namespace IR is
         // operator rather than to an instruction, so it needs a member
         // reference like any other imported static.
         resolve_string_equality() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -601,7 +645,7 @@ namespace IR is
         si
 
         resolve_assert_failed_constructor() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -627,7 +671,7 @@ namespace IR is
         resolve_pipe_join(
             pipe_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -658,7 +702,7 @@ namespace IR is
             builder_type: Semantic.Types.Type,
             open_builder_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -674,7 +718,7 @@ namespace IR is
             builder_type: Semantic.Types.Type,
             open_task_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -693,7 +737,7 @@ namespace IR is
             builder_type: Semantic.Types.Type,
             state_machine_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let reference =
                 emitter.add_named_member_reference(
@@ -724,7 +768,7 @@ namespace IR is
             awaited_type: Semantic.Types.Type,
             open_awaiter_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -741,7 +785,7 @@ namespace IR is
         resolve_awaiter_is_completed(
             awaiter_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -759,7 +803,7 @@ namespace IR is
             awaiter_type: Semantic.Types.Type,
             has_result: bool
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let signatures = Emitter.SRM_SIGNATURE_ENCODER(emitter);
 
             let signature =
@@ -785,7 +829,7 @@ namespace IR is
             awaiter_type: Semantic.Types.Type,
             state_machine_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let reference =
                 emitter.add_named_member_reference(
@@ -812,7 +856,7 @@ namespace IR is
         // Neither the method nor either of the types it mentions is
         // declared by any symbol in the compilation.
         resolve_get_type_from_handle() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let system_type =
                 emitter.add_type_reference_by_name("System.Runtime", "System", "Type");
@@ -856,7 +900,7 @@ namespace IR is
             namespace_name: string,
             simple_name: string
         ) is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let attribute_type =
                 emitter.add_type_reference_by_name(
@@ -883,7 +927,7 @@ namespace IR is
             builder_type: Semantic.Types.Type,
             has_result: bool
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let signatures = Emitter.SRM_SIGNATURE_ENCODER(emitter);
 
             // `generic_constructor_signature(1)` is instance-void of one
@@ -911,7 +955,7 @@ namespace IR is
             builder_type: Semantic.Types.Type,
             exception_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
 
@@ -933,7 +977,7 @@ namespace IR is
         // does not chain to a declared superclass calls first. Named
         // here because no symbol in the compilation declares it.
         resolve_object_constructor() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_constructor_reference(
@@ -948,7 +992,7 @@ namespace IR is
         // reason as `Object`'s: no symbol in the compilation declares
         // it.
         resolve_decimal_constructor() -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -975,7 +1019,7 @@ namespace IR is
             parameter_types: Collections.List[Semantic.Types.Type],
             return_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             return cast System.Reflection.Metadata.EntityHandle(
                 emitter.add_named_member_reference(
@@ -990,7 +1034,7 @@ namespace IR is
         resolve_range_constructor(
             range_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -1012,7 +1056,7 @@ namespace IR is
         resolve_delegate_constructor(
             delegate_type: Semantic.Types.Type
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
             let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
 
             let arguments = Collections.LIST[Semantic.Types.Type]();
@@ -1032,7 +1076,7 @@ namespace IR is
         // defines is named by its own FieldDef row, whose number the
         // numbering pass has already fixed.
         resolve_field_target(`field: Semantic.Symbols.Field) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             if let definition = emitter.handles.field_definition(`field) then
                 if !_owner_is_generic(`field) then
@@ -1097,7 +1141,7 @@ namespace IR is
         _member_owner_handle(
             member: Semantic.Symbols.Symbol
         ) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             let owner = _owning_scope(member);
 
@@ -1203,13 +1247,13 @@ namespace IR is
             assert assembly_name.length > 0 else
                 "'{owner.qualified_name}' names no assembly to reference it through";
 
-            srm_assembly_emitter!.add_assembly_reference(assembly_name, "8:0:0:0");
+            srm_assembly_emitter.add_assembly_reference(assembly_name, "8:0:0:0");
 
             return assembly_name;
         si
 
         resolve_call_target(function: Semantic.Symbols.Function) -> System.Reflection.Metadata.EntityHandle is
-            let emitter = srm_assembly_emitter!;
+            let emitter = srm_assembly_emitter;
 
             // A target this assembly defines is called through its own
             // MethodDef row. The row does not exist yet — the numbering

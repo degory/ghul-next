@@ -1224,14 +1224,10 @@ namespace Semantic.Symbols is
 
             context.seen_entrypoint = true;
 
-            // The binary back end marks the entry point by handle once
-            // the method's row is written, so it records the function
-            // rather than emitting anything here.
-            if let emitter = context.srm_assembly_emitter then
-                emitter.entry_point_function = self;
-            else
-                context.write_line(".entrypoint");
-            fi
+            // The entry point is marked by handle once the method's row
+            // is written, so this records the function rather than
+            // emitting anything here.
+            context.srm_assembly_emitter.entry_point_function = self;
         si
 
         gen_owner_reference(buffer: StringBuilder) is

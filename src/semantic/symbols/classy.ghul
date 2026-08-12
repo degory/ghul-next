@@ -2036,47 +2036,11 @@ namespace Semantic.Symbols is
             // own. Without one its row carries no code at all, which is
             // not a constructor a runtime will accept: the image is
             // rejected outright, before any type in it is loaded.
-            if let assembly_emitter = context.srm_assembly_emitter then
-                let enclosing = context.current_srm_body_emitter;
-                let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
+            let assembly_emitter = context.srm_assembly_emitter;
+            let enclosing = context.current_srm_body_emitter;
+            let body_emitter = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
-                context.current_srm_body_emitter = body_emitter;
-
-                try
-                    for c in _captures |> filter(c => c.name !~ "$recurse") do
-                        let argument = LOCAL_ARGUMENT(internal, _constructor!, c.name);
-                        argument.set_type(c.type!);
-
-                        c.store(
-                            internal,
-                            IR.Values.Load.REFERENCE_SELF(self),
-                            argument.load(LOCATION.internal, null, symbol_loader),
-                            symbol_loader,
-                            true
-                        ).gen(context);
-                    od
-                catch ex: System.Exception
-                    IoC.CONTAINER.instance.logger.exception(
-                        location, ex, "error generating closure frame constructor");
-                yrt
-
-                body_emitter.ret();
-
-                assembly_emitter!.handles.set_body_offset(
-                    _constructor!, body_emitter.flush(assembly_emitter!));
-                assembly_emitter!.handles.set_il_outputs(
-                    _constructor!, body_emitter.il_outputs);
-
-                context.current_srm_body_emitter = enclosing;
-
-                return;
-            fi
-
-            _constructor!.gen_definition_header(context);
-
-            context.write_line("{{");
-
-            context.indent();
+            context.current_srm_body_emitter = body_emitter;
 
             try
                 for c in _captures |> filter(c => c.name !~ "$recurse") do
@@ -2084,21 +2048,27 @@ namespace Semantic.Symbols is
                     argument.set_type(c.type!);
 
                     c.store(
-                        internal, 
-                        IR.Values.Load.REFERENCE_SELF(self), 
+                        internal,
+                        IR.Values.Load.REFERENCE_SELF(self),
                         argument.load(LOCATION.internal, null, symbol_loader),
                         symbol_loader,
                         true
                     ).gen(context);
                 od
             catch ex: System.Exception
-                IoC.CONTAINER.instance.logger.exception(location, ex, "error generating closure frame constructor");
-            yrt            
-            
-            context.write_line("ret");
+                IoC.CONTAINER.instance.logger.exception(
+                    location, ex, "error generating closure frame constructor");
+            yrt
 
-            context.outdent();
-            context.write_line("}}");
+            body_emitter.ret();
+
+            assembly_emitter.handles.set_body_offset(
+                _constructor!, body_emitter.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(
+                _constructor!, body_emitter.il_outputs);
+
+            context.current_srm_body_emitter = enclosing;
+
         si
 
         gen_closure(context: IR.CONTEXT) is
