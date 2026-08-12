@@ -16,18 +16,4 @@ namespace IR.Values is
 
         return null;
     si
-
-    state_machine_field_reference(symbol: Symbol?) -> string? is
-        let variable = cast Variable?(symbol);
-
-        if variable? then
-            let `field = variable.state_machine_field;
-
-            if `field? then
-                return `field.get_il_reference();
-            fi
-        fi
-
-        return null;
-    si
 si
