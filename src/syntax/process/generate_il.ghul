@@ -392,8 +392,6 @@ namespace Syntax.Process is
         is
             super.init(logger, symbol_table, namespaces);
 
-            _globals_carriers_marked = Collections.SET[string]();
-
             _logger = logger;
             _symbol_table = symbol_table;
             _symbol_loader = symbol_loader;
@@ -563,13 +561,6 @@ namespace Syntax.Process is
 
             println("{{");
         si
-
-        // Namespaces whose carrier has already carried the marker attribute in
-        // this compilation. ilasm merges the repeated `.class` blocks for one
-        // name, so the attribute is emitted on the first block only.
-        _globals_carriers_marked: Collections.SET[string];
-
-
 
         pre(`namespace: Definitions.NAMESPACE) -> bool => super.pre(`namespace);
 
@@ -1233,19 +1224,11 @@ namespace Syntax.Process is
             // newobj reference and the state-machine class itself.
             frame.declare();
 
-            let owner_is_global = isa Semantic.Symbols.GLOBAL_FUNCTION(symbol);
-
-            if owner_is_global then
-            fi
-
             // --- Outer user-facing method ---
             //
             // Forward this method's own arguments, construct the
             // frame, return it.
             _emit_generator_outer_method_srm(symbol, frame, state_machine);
-
-            if owner_is_global then
-            fi
 
             // --- Walk the body into MoveNext's block ---
             //
@@ -2313,22 +2296,6 @@ namespace Syntax.Process is
                 return true;
             fi
 
-            // Property AST node carries either a Property symbol or a Variable
-            // symbol (declare_symbols collapses `_name: T;` to a variable). Both
-            // need wrapping when at namespace scope.
-            let globals_namespace: Semantic.Symbols.NAMESPACE? mut = null;
-
-            if let global_property: Semantic.Symbols.GLOBAL_PROPERTY = symbol then
-                globals_namespace = cast Semantic.Symbols.NAMESPACE?(global_property.owner)!;
-            else
-                if let global_variable: Semantic.Symbols.GLOBAL_VARIABLE = symbol then
-                    globals_namespace = cast Semantic.Symbols.NAMESPACE?(global_variable.owner)!;
-                fi
-            fi
-
-            if globals_namespace? then
-            fi
-
             let buffer = System.Text.StringBuilder();
             symbol.gen_definition_header(buffer);
 
@@ -2401,9 +2368,6 @@ namespace Syntax.Process is
             fi
 
             println(buffer.to_string());
-
-            if globals_namespace? then
-            fi
 
             return true;
         si
@@ -3214,19 +3178,12 @@ namespace Syntax.Process is
             fi
 
             let buffer = System.Text.StringBuilder();
-            let globals_namespace: Semantic.Symbols.NAMESPACE? mut = null;
 
             for name in variable.names do
                 let symbol = find(name);
 
                 if !symbol? then
                     continue;
-                fi
-
-                let global_variable = cast Semantic.Symbols.GLOBAL_VARIABLE?(symbol);
-
-                if global_variable? /\ !globals_namespace? then
-                    globals_namespace = cast Semantic.Symbols.NAMESPACE?(global_variable.owner)!;
                 fi
 
                 symbol.gen_definition_header(buffer);
@@ -3252,19 +3209,12 @@ namespace Syntax.Process is
                 fi
             od
 
+            // A declaration inside a block returned above, so anything
+            // reaching here is at namespace or class scope.
             if buffer.length > 0 then
-                if _block_context.is_in_block then
-                    current_block.add(buffer.to_string());
-                else
-                    if globals_namespace? then
-                    fi
-
-                    println(buffer.to_string());
-
-                    if globals_namespace? then
-                    fi
-                fi
+                println(buffer.to_string());
             fi
+
             return false;
         si
         
