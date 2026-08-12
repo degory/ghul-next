@@ -772,6 +772,20 @@ namespace IR.Emitter is
                 _write_attributes(cast EntityHandle(handle), attributes);
             fi
 
+            // `@IL.output` ranges captured while this body was emitted, if
+            // any. The attribute is synthetic - referenced by name only, and
+            // never resolved - so it need not exist in any referenced
+            // assembly; the test runner reads the raw blob without resolving
+            // the constructor.
+            if let outputs = _handles.il_outputs(method) then
+                _attach(
+                    cast EntityHandle(handle),
+                    "ghul-runtime",
+                    IL_OUTPUT_ATTRIBUTE_NAME,
+                    _il_output_ranges_constructor_types(),
+                    SRM_ATTRIBUTE_BLOB_ENCODER.encode_il_output_ranges(outputs));
+            fi
+
             if let entry_point = _assembly.entry_point_function then
                 if entry_point == method then
                     _assembly.set_entry_point(handle);
@@ -786,6 +800,9 @@ namespace IR.Emitter is
 
         TUPLE_ELEMENT_NAMES_ATTRIBUTE_NAME: string static =>
             "System.Runtime.CompilerServices.TupleElementNamesAttribute";
+
+        IL_OUTPUT_ATTRIBUTE_NAME: string static =>
+            "Ghul.Internal.IL_OUTPUT_ATTRIBUTE";
 
         // What a return or parameter slot carries beyond its type: the
         // reference nullability the CLR has no way to express, the
@@ -876,6 +893,23 @@ namespace IR.Emitter is
             let types = Collections.LIST[Semantic.Types.Type]();
 
             types.add(lookup.get_array_type(lookup.get_string_type()));
+
+            return types;
+        si
+
+        // `IL_OUTPUT_ATTRIBUTE(string[], int32[], int32[], int32[])`:
+        // paths, starts, ends, sequences.
+        _il_output_ranges_constructor_types() -> Collections.LIST[Semantic.Types.Type] is
+            let lookup = IoC.CONTAINER.instance.innate_symbol_lookup;
+            let types = Collections.LIST[Semantic.Types.Type]();
+
+            let string_array = lookup.get_array_type(lookup.get_string_type());
+            let int_array = lookup.get_array_type(lookup.get_int_type());
+
+            types.add(string_array);
+            types.add(int_array);
+            types.add(int_array);
+            types.add(int_array);
 
             return types;
         si

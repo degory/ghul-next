@@ -103,27 +103,38 @@ an existing test clearly needs a feature tag that doesn't exist yet. Don't go
 looking for mistagged tests outside of what you're already touching — this is
 opportunistic upkeep, not a project.
 
-## The text-IL snapshot tests
+## The IL snapshot tests
 
 Tests under `il/` carrying an `il.expected` snapshot assert the shape of what
 the compiler emits. Originally these captured the text-IL emitter's output;
-this repository is replacing that emitter with direct binary emission, so the
-snapshots are being recaptured from the emitted assembly disassembled by ildasm.
+this repository replaced that emitter with direct binary emission, so the
+snapshots are recaptured from the emitted assembly disassembled by ildasm
+(Microsoft's own, so the snapshot reads what the runtime reads rather than what
+the compiler's encoder thinks it wrote).
 
 A re-enabled test builds as a library (`--library`), the emitted assembly is
-disassembled by ildasm, and the result is compared to `il.expected`. An `il.item`
-file scopes the dump to one type or member so the snapshot is about the construct
-under test rather than the whole assembly. Re-enable a test by dropping the
-`@IL.output` pragma from its source, switching `--assembler` to `--library`,
-adding `il.item` if scoping is needed, and recapturing the snapshot.
+disassembled by ildasm, and the result is compared to `il.expected`. The scope
+of the dump is chosen by the test:
 
-74 of the group's 86 tests are still disabled. The 12 that are not split into
-two kinds: 10 type-level tests that scope to a whole type declaration by name,
-and 2 that assert something not dependent on the back end at all
-(`boolean-literals` checks runtime output, `def-namespace-minimal` checks that
-a build fails). The remaining 74 are statement- or expression-level and need
-finer scoping than a type name, which requires the compiler to emit each
-`@IL.output` pragma's source span.
+- A whole type or member, via an `il.item` file naming it
+  (`Namespace.TYPE` or `Namespace.TYPE::member`). This suits type-level tests.
+- The individual statements an `@IL.output("il.out")` pragma marks. The binary
+  back end records each marked statement's instruction byte-offset range and
+  carries it out of the assembly as a synthetic method attribute; the runner
+  reads that, disassembles each method, and keeps only the instructions whose
+  offset falls in a marked range, laying them out in source order. This suits
+  statement- and expression-level tests, and lets one test cover many constructs
+  the way the text emitter's per-pragma output did.
+
+Re-enable a statement-level test by switching its `--assembler` flag to
+`--library` (leaving the `@IL.output` pragmas in place), removing its `disabled`
+file, and recapturing `il.expected` via `tasks/capture.sh`. The recaptured
+snapshot is ildasm's rendering, so locals are slot-indexed (`ldloc.1`) where the
+old text-IL snapshots named them (`ldloc 'x.1'`).
+
+Most of the group's 86 tests are still disabled; the mechanism above is proven
+on representative statement- and expression-level cases (arithmetic operators,
+numeric casts), and re-enabling the rest is mechanical.
 
 Disabled rather than deleted for two reasons: the snapshots record what the
 emitter is expected to produce, which is the reference the binary back end is

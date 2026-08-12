@@ -54,6 +54,11 @@ namespace IR.Emitter is
         // a build that was not asked for debug information.
         _sequence_points: Collections.LIST[SRM_SEQUENCE_POINT]?;
 
+        // Open `@IL.output` regions awaiting their end offset (a stack so
+        // nested regions close innermost-first), and the completed ranges.
+        _il_output_stack: Collections.LIST[(string, int, int)];
+        _il_outputs: Collections.LIST[SRM_IL_OUTPUT_RANGE]?;
+
         init() is
             _encoder = InstructionEncoder(BlobBuilder(32), ControlFlowBuilder());
 
@@ -61,6 +66,7 @@ namespace IR.Emitter is
             _local_types = Collections.LIST[Type]();
             _labels = Collections.MAP[string, LabelHandle]();
             _region_labels = Collections.LIST[LabelHandle]();
+            _il_output_stack = Collections.LIST[(string, int, int)]();
         si
 
         // Marks the current position and returns a handle on it that
@@ -279,6 +285,30 @@ namespace IR.Emitter is
                     // LOCATION's is not.
                     location.end_column + 1));
         si
+
+        // An `@IL.output` pragma opens a region whose emitted instructions
+        // the IL test runner extracts. The binary back end records the
+        // byte-offset range rather than writing the instructions anywhere;
+        // the ranges leave with the method as a custom attribute written
+        // by SRM_STRUCTURE_WALK._write_method.
+        begin_il_output(path: string, sequence: int) is
+            _il_output_stack.add((path, _encoder.offset, sequence));
+        si
+
+        end_il_output() is
+            let top = _il_output_stack[_il_output_stack.count - 1];
+
+            _il_output_stack.remove_at(_il_output_stack.count - 1);
+
+            if !_il_outputs? then
+                _il_outputs = Collections.LIST[SRM_IL_OUTPUT_RANGE]();
+            fi
+
+            _il_outputs!.add(
+                SRM_IL_OUTPUT_RANGE(top.`0, top.`1, _encoder.offset, top.`2));
+        si
+
+        il_outputs: Collections.List[SRM_IL_OUTPUT_RANGE]? => _il_outputs;
 
         flush(assembly_emitter: SRM_ASSEMBLY_EMITTER) -> int is
             let offset = assembly_emitter.add_method_body(_encoder, self);

@@ -1,13 +1,5 @@
-.locals init (bool  '.need_return.0.1')
-.try {
-leave L_0
-}
-finally {
-L_1:
+leave      IL_0006
 endfinally
-}
-L_0:
-ldloc '.need_return.0.1'
-brfalse L_2
+ldloc.0
+brfalse    IL_000d
 ret
-L_2:

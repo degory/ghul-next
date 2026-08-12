@@ -296,6 +296,11 @@ namespace Syntax.Process is
         _try_extents: Collections.STACK[Values.TRY_EXTENT];
 
         _il_output_depth: int;
+
+        // Set by an `@entry` pragma, and cleared by the next function the
+        // walk enters - the one the pragma annotates.
+        _entrypoint_pragma_pending: bool;
+
         _in_catch_variable: bool;
 
         _indent: int;
@@ -1252,6 +1257,14 @@ namespace Syntax.Process is
             // emit.
             symbol.gen_entrypoint(_context);
 
+            if _entrypoint_pragma_pending then
+                _entrypoint_pragma_pending = false;
+
+                if let emitter = _context.srm_assembly_emitter then
+                    emitter.entry_point_function = symbol;
+                fi
+            fi
+
             enter_block();
 
             return false;
@@ -1394,6 +1407,7 @@ namespace Syntax.Process is
             body_emitter.ret();
 
             assembly_emitter.handles.set_body_offset(symbol, body_emitter.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(symbol, body_emitter.il_outputs);
 
             _context.current_srm_body_emitter = null;
 
@@ -1692,6 +1706,7 @@ namespace Syntax.Process is
             body.ret();
 
             assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(symbol, body.il_outputs);
         si
 
         // The frame constructor as it must be named from outside: on the
@@ -1756,6 +1771,7 @@ namespace Syntax.Process is
                 body.ret();
 
                 assembly_emitter.handles.set_body_offset(symbol, body.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(symbol, body.il_outputs);
             finally
                 _context.current_srm_body_emitter = enclosing;
             yrt
@@ -2536,6 +2552,8 @@ namespace Syntax.Process is
 
                 assembly_emitter.handles.set_body_offset(
                     frame.constructor, body.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(
+                    frame.constructor, body.il_outputs);
             finally
                 _context.current_srm_body_emitter = enclosing;
             yrt
@@ -2790,6 +2808,8 @@ namespace Syntax.Process is
 
             assembly_emitter.handles.set_body_offset(
                 frame.constructor, body.flush(assembly_emitter));
+            assembly_emitter.handles.set_il_outputs(
+                frame.constructor, body.il_outputs);
         si
 
         _gen_state_machine_ctor(frame: Semantic.Symbols.STATE_MACHINE_FRAME) is
@@ -3204,8 +3224,15 @@ namespace Syntax.Process is
                     else
                         _context.seen_entrypoint = true;
 
-                        if let emitter = _context.srm_assembly_emitter then
-                            emitter.entry_point_function = current_function;
+                        if _context.srm_assembly_emitter? then
+                            // The pragma is processed before the walk
+                            // enters the function it annotates, so the
+                            // function to mark is not in scope yet and
+                            // is claimed as the walk reaches it. The
+                            // text path has no such trouble: it writes
+                            // the directive into the body it is already
+                            // inside.
+                            _entrypoint_pragma_pending = true;
                         else
                             _context.write_line(".entrypoint");
                         fi
@@ -3381,6 +3408,8 @@ namespace Syntax.Process is
 
                 assembly_emitter.handles.set_body_offset(
                     closure, body_emitter.flush(assembly_emitter));
+                assembly_emitter.handles.set_il_outputs(
+                    closure, body_emitter.il_outputs);
 
                 _context.current_srm_body_emitter = enclosing;
 
@@ -3599,6 +3628,8 @@ namespace Syntax.Process is
 
                     assembly_emitter.handles.set_body_offset(
                         closure, body.flush(assembly_emitter));
+                    assembly_emitter.handles.set_il_outputs(
+                        closure, body.il_outputs);
                 finally
                     _context.current_srm_body_emitter = enclosing;
                 yrt

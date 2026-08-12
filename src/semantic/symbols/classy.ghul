@@ -2064,6 +2064,8 @@ namespace Semantic.Symbols is
 
                 assembly_emitter!.handles.set_body_offset(
                     _constructor!, body_emitter.flush(assembly_emitter!));
+                assembly_emitter!.handles.set_il_outputs(
+                    _constructor!, body_emitter.il_outputs);
 
                 context.current_srm_body_emitter = enclosing;
 
