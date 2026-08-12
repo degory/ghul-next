@@ -573,12 +573,6 @@ namespace IR.Emitter is
             fi
         si
 
-        // il_name_override carries the name already quoted, so a
-        // segment colliding with an IL keyword arrives as
-        // 'System'.'String'. Metadata stores the bare name; leaving the
-        // quotes in produces a type reference that resolves to nothing.
-        unquote(value: string) -> string static => value.replace("'", "");
-
         // A primitive's il_name_override is the assembler keyword, which
         // is what a signature needs and what a reference must never
         // carry: there is no type called `int32`. Named here so that a
@@ -637,7 +631,7 @@ namespace IR.Emitter is
             return reference_for_clr_name(
                 symbol,
                 assembly_name,
-                unquote(symbol.il_name_override ?? symbol.qualified_name));
+                symbol.il_name_override ?? symbol.qualified_name);
         si
 
         // One CLR type name to one reference row, for both places that

@@ -59,7 +59,7 @@ namespace IR.Values is
             let end_label = IR.LABEL();
 
             let body = context.current_srm_body_emitter!;
-                let temp = "'.coalesce.{id}'";
+                let temp = ".coalesce.{id}";
 
                 body.declare_local(temp, receiver.type!);
                 gen(receiver, context);

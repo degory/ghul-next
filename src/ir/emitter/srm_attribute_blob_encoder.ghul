@@ -492,12 +492,14 @@ namespace IR.Emitter is
             // not carry — so a `typeof` of one would name a type that
             // does not exist in the assembly it claims to be in.
             //
-            // The IL quoting has to come off: this name is parsed by
-            // the reflection type resolver, which takes
-            // `'System'.'AttributeTargets'` literally.
+            // This name comes from the renderer rather than from the
+            // symbol, so it arrives quoted the way a rendered name is.
+            // The reflection type resolver that parses it back takes
+            // `'System'.'AttributeTargets'` literally, so the quoting
+            // has to come off again.
             let name =
-                SRM_SIGNATURE_ENCODER.unquote(
-                    _strip_assembly_prefix(type.get_il_class_name().trim()));
+                _strip_assembly_prefix(type.get_il_class_name().trim())
+                    .replace("'", "");
 
             let symbol = cast Semantic.Symbols.Classy?(type.symbol);
 

@@ -154,14 +154,10 @@ namespace IR.Emitter is
             cast MethodAttributes(
                 _PRIVATE_METHOD | _HIDE_BY_SIG | _STATIC | _SPECIAL_NAME | _RT_SPECIAL_NAME);
 
-        // A name whose segments collide with an IL keyword arrives
-        // quoted ('.ctor'); metadata stores the bare name, and the
-        // quotes would become part of it.
-        method_name(method: Function) -> string static =>
-            method.il_bare_name.replace("'", "");
+        method_name(method: Function) -> string static => method.il_name;
 
         property_name(property: Semantic.Symbols.Property) -> string static =>
-            property.il_bare_name.replace("'", "");
+            property.il_name;
 
         _COVARIANT: int static => 1;
         _CONTRAVARIANT: int static => 2;

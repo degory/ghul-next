@@ -1259,7 +1259,7 @@ namespace Syntax.Process is
             // outside (ECMA-335 forbids that, and the previous
             // centralized-dispatch shape had exactly that bug).
             let outer_dispatch_holder =
-                _open_state_machine_entry(frame, frame.state_field, "'.gen_state'");
+                _open_state_machine_entry(frame, frame.state_field, ".gen_state");
 
             // Stash the previous generator-yield-return label so
             // nested generator functions (rare) don't trip over
@@ -1523,7 +1523,7 @@ namespace Syntax.Process is
                 frame.builder_field!,
                 unspec_builder,
                 unspec_task,
-                "'.sm'"
+                ".sm"
             );
 
             _emit_async_outer_method_srm(symbol, launch);
@@ -1551,7 +1551,7 @@ namespace Syntax.Process is
             // finally before exiting), and side effects must be
             // skipped.
             let outer_dispatch_holder =
-                _open_state_machine_entry(frame, frame.state_field, "'.async_state'");
+                _open_state_machine_entry(frame, frame.state_field, ".async_state");
 
             // Labels used by the trailer: success fall-through and
             // the end of the wrapping try/catch. The entire MoveNext
@@ -2593,7 +2593,7 @@ namespace Syntax.Process is
             // the closure body register with the outer holder unless
             // an inner `.try` pushes its own.
             let outer_dispatch_holder =
-                _open_state_machine_entry(frame, frame.state_field, "'.async_state'");
+                _open_state_machine_entry(frame, frame.state_field, ".async_state");
 
             let success_label = IR.LABEL();
             let end_label = IR.LABEL();
@@ -2669,7 +2669,7 @@ namespace Syntax.Process is
                 frame.builder_field!,
                 unspec_builder,
                 unspec_task,
-                "'.sm'"
+                ".sm"
             );
 
             add(launch);
@@ -3672,7 +3672,7 @@ namespace Syntax.Process is
                 frame,
                 frame.state_field,
                 Values.Literal.NUMBER(state, _innate_symbol_lookup.get_int_type()),
-                "'.gen_state'");
+                ".gen_state");
 
             // Suspend. From INSIDE an inner `.try`, `ret` is
             // invalid IL; emit `leave` to a shared return-true label
@@ -3700,7 +3700,7 @@ namespace Syntax.Process is
                 frame,
                 frame.state_field,
                 Values.INSTRUCTION(ILOpCode.LDC_I4_M1),
-                "'.gen_state'");
+                ".gen_state");
         si
 
         // Write a state value to BOTH the CLR local cached at MoveNext
@@ -4744,7 +4744,7 @@ namespace Syntax.Process is
             // the frame field via a temp instead.
             if let v: Semantic.Symbols.Variable = symbol, sm_field = v.state_machine_field then
                 let exception_type = variable.type_expression.type!;
-                let caught = "'.catch_exc'";
+                let caught = ".catch_exc";
 
                 add(Values.DECLARE_LOCAL(caught, exception_type));
                 add(Values.STORE_TEMP(caught, exception_type));
@@ -4757,7 +4757,7 @@ namespace Syntax.Process is
             else
                 add(
                     Values.STORE_TEMP(
-                        symbol!.get_il_reference(),
+                        symbol!.il_name,
                         variable.type_expression.type!));
             fi
 
