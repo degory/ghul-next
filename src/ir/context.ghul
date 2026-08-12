@@ -128,11 +128,41 @@ namespace IR is
         // the IL visitor currently has open, and is null outside one.
         _srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER?;
 
+        // What the emitter was installed as, so a rebuild can make
+        // another one like it. Analysis compiles the project again on
+        // every edit and query miss, and an emitter accumulates a
+        // reference and specification cache per compile: kept across
+        // rebuilds it grows for as long as the editor session lasts.
+        _srm_module_name: string?;
+        _srm_module_version: string?;
+        _srm_want_library: bool;
+
         srm_assembly_emitter: Emitter.SRM_ASSEMBLY_EMITTER =>
             _srm_assembly_emitter!;
 
-        install_srm_assembly_emitter(emitter: Emitter.SRM_ASSEMBLY_EMITTER) is
-            _srm_assembly_emitter = emitter;
+        install_srm_assembly_emitter(
+            module_name: string,
+            module_version: string,
+            want_library: bool
+        ) is
+            _srm_module_name = module_name;
+            _srm_module_version = module_version;
+            _srm_want_library = want_library;
+
+            reset_srm_assembly_emitter();
+        si
+
+        // Called wherever the symbol table is abandoned: the handles the
+        // old emitter holds name symbols that no longer exist.
+        reset_srm_assembly_emitter() is
+            if let module_name = _srm_module_name then
+                _srm_assembly_emitter =
+                    Emitter.SRM_ASSEMBLY_EMITTER(
+                        "{module_name}.{if _srm_want_library then "dll" else "exe" fi}",
+                        module_name,
+                        _srm_module_version!,
+                        _srm_want_library);
+            fi
         si
 
         current_srm_body_emitter: Emitter.SRM_METHOD_BODY_EMITTER? public;

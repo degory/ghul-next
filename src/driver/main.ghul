@@ -522,11 +522,7 @@ namespace Driver is
         // context is being built into.
         install_assembly_emitter(module_name: string) is
             container.ir_context.install_srm_assembly_emitter(
-                IR.Emitter.SRM_ASSEMBLY_EMITTER(
-                    "{module_name}.{if flags.want_library then "dll" else "exe" fi}",
-                    module_name,
-                    module_version,
-                    flags.want_library));
+                module_name, module_version, flags.want_library);
         si
 
         analyse() is
