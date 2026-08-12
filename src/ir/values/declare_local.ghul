@@ -26,19 +26,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.declare_local(name, type);
-
-                return;
-            fi
-
-            let buffer = System.Text.StringBuilder();
-
-            buffer.append(".locals init (");
-            type.gen_type(buffer);
-            buffer.append(' ').append(name).append(')');
-
-            context.write_line(buffer);
         si
 
         to_string() -> string => "declare-local:[{type}]({name})";
@@ -58,13 +47,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.stloc(name);
-
-                return;
-            fi
-
-            context.write_line("stloc {name}");
         si
 
         to_string() -> string => "store-temp:[{type}]({name})";
@@ -80,13 +64,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ret();
-
-                return;
-            fi
-
-            context.write_line("ret");
         si
 
         to_string() -> string => "ret";
@@ -107,15 +86,9 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.declare_local("'.default'", type);
                 body.ldloc("'.default'");
-
-                return;
-            fi
-
-            context.write_line(".locals init ({type.get_il_type()} '.default')");
-            context.write_line("ldloc '.default'");
         si
 
         to_string() -> string => "default-return:[{type}]()";

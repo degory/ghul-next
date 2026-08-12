@@ -406,7 +406,7 @@ namespace Syntax.Process is
 
             closure.unmap_type_arguments();
 
-            let value mut = closure.load(function.location, _symbol_loader).freeze();
+            let value mut = closure.load(function.location, _symbol_loader);
 
             // A literal whose body proved store-free surfaces at the
             // pure shape of its function type, so it satisfies a pure

@@ -83,13 +83,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 _extent.start = body.mark_region_boundary();
-
-                return;
-            fi
-
-            context.write_line(".try {{");
         si
 
         to_string() -> string => ".try {{";
@@ -106,13 +101,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 _extent.end = body.mark_region_boundary();
-
-                return;
-            fi
-
-            context.write_line("}}");
         si
 
         to_string() -> string => "}} // try";
@@ -129,17 +119,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 _region.handler_start = body.mark_region_boundary();
-
-                return;
-            fi
-
-            if _region.is_catch then
-                context.write_line("catch {_region.catch_type_il} {{");
-            else
-                context.write_line("finally {{");
-            fi
         si
 
         to_string() -> string =>
@@ -170,7 +151,7 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 _region.handler_end = body.mark_region_boundary();
 
                 if _region.is_catch then
@@ -199,11 +180,6 @@ namespace IR.Values is
                         _region.handler_start,
                         _region.handler_end);
                 fi
-
-                return;
-            fi
-
-            context.write_line("}}");
         si
 
         to_string() -> string => "}} // handler";

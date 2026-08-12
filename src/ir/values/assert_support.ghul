@@ -10,13 +10,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.call(context.resolve_string_concat());
-
-                return;
-            fi
-
-            context.write_line("call string string::Concat(object,object)");
         si
 
         to_string() -> string => "call-string-concat";
@@ -32,13 +27,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.call(context.resolve_string_equality());
-
-                return;
-            fi
-
-            context.write_line("call bool string::op_Equality(string, string)");
         si
 
         to_string() -> string => "call-string-equality";
@@ -50,15 +40,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.new_object(context.resolve_assert_failed_constructor());
-
-                return;
-            fi
-
-            context.write_line(
-                "newobj instance void class ['ghul-runtime']Ghul.AssertFailedException"
-                "::.ctor(class [System.Runtime]System.String)");
         si
 
         to_string() -> string => "new-assert-failed-exception";

@@ -29,7 +29,7 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             let boxer = IoC.CONTAINER.instance.value_boxer;
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 let element = context.resolve_type_token(element_type);
 
                 body.ldc_i4(values.count);
@@ -43,25 +43,6 @@ namespace IR.Values is
 
                     body.store_element(element);
                 od
-
-                return;
-            fi
-
-            context.write_line("ldc.i4 {values.count}");
-            context.write_line("newarr {element_type.get_il_type()}");
-
-            let element_type_il_type = element_type.get_il_type();
-
-            for i in 0..values.count do
-                context.write_line("dup");
-
-                let v = boxer.box_if_needed(values[i], element_type);
-
-                context.write_line("ldc.i4 {i}");
-                gen(v, context);
-
-                context.write_line("stelem {element_type_il_type}");
-            od            
         si
 
         to_string() -> string =>

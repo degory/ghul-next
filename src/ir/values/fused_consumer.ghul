@@ -164,11 +164,8 @@ namespace IR.Values is
                 // if source isa Pipe[element] then fall back else fuse
                 gen(source, context);
 
-                if let body = context.current_srm_body_emitter then
+                let body = context.current_srm_body_emitter!;
                     body.is_instance(context.resolve_type_token(guard_isa_type!));
-                else
-                    context.write_line("isinst {guard_isa_type!.get_il_type()}");
-                fi
 
                 _branch(context, "brfalse", System.Reflection.Metadata.ILOpCode.BRFALSE, fused_label);
 
@@ -197,43 +194,23 @@ namespace IR.Values is
         // name to a slot and to a label handle, forward references
         // included.
         _declare(context: IR.CONTEXT, name: string, type: Semantic.Types.Type) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.declare_local(name, type);
-
-                return;
-            fi
-
-            context.write_line(".locals init ({type.get_il_type()} {name})");
         si
 
         _stloc(context: IR.CONTEXT, name: string) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.stloc(name);
-
-                return;
-            fi
-
-            context.write_line("stloc {name}");
         si
 
         _ldloc(context: IR.CONTEXT, name: string) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldloc(name);
-
-                return;
-            fi
-
-            context.write_line("ldloc {name}");
         si
 
         _mark(context: IR.CONTEXT, label: IR.LABEL) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.mark_label(label);
-
-                return;
-            fi
-
-            context.write_line("{label}:");
         si
 
         _branch(
@@ -242,23 +219,13 @@ namespace IR.Values is
             op_code: System.Reflection.Metadata.ILOpCode,
             label: IR.LABEL
         ) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.branch(op_code, label);
-
-                return;
-            fi
-
-            context.write_line("{mnemonic} {label}");
         si
 
         _ldc_i4(context: IR.CONTEXT, value: int) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldc_i4(value);
-
-                return;
-            fi
-
-            context.write_line("ldc.i4.{value}");
         si
 
         _op(
@@ -266,13 +233,8 @@ namespace IR.Values is
             mnemonic: string,
             op_code: System.Reflection.Metadata.ILOpCode
         ) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.op(op_code);
-
-                return;
-            fi
-
-            context.write_line(mnemonic);
         si
 
         // Emit the fused loop, leaving the consumer's result on the stack

@@ -114,7 +114,7 @@ namespace IR.Values is
             let null_label = IR.LABEL();
             let end_label = IR.LABEL();
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 if _receiver_is_value_type then
                     receiver.gen_address(context);
                     body.op(ILOpCode.DUP);
@@ -146,41 +146,6 @@ namespace IR.Values is
                 fi
 
                 body.mark_label(end_label);
-
-                return;
-            fi
-
-            if _receiver_is_value_type then
-                receiver.gen_address(context);
-                context.write_line("dup");
-                gen(presence_test!, context);
-                context.write_line("brfalse {null_label}");
-
-                if _receiver_consumed then
-                    gen(value_extract!, context);
-                else
-                    context.write_line("pop");
-                fi
-            else
-                gen(receiver, context);
-                context.write_line("dup");
-                context.write_line("brfalse {null_label}");
-
-                if !_receiver_consumed then
-                    context.write_line("pop");
-                fi
-            fi
-
-            gen(member_load, context);
-            context.write_line("br {end_label}");
-            context.write_line("{null_label}:");
-            context.write_line("pop");
-
-            if null_value? then
-                gen(null_value!, context);
-            fi
-
-            context.write_line("{end_label}:");
         si
 
         to_string() -> string =>

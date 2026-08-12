@@ -54,13 +54,8 @@ namespace IR.Values is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 _gen_srm(context, body);
-
-                return;
-            fi
-
-            _gen_text(context);
         si
 
         _gen_srm(context: IR.CONTEXT, body: IR.Emitter.SRM_METHOD_BODY_EMITTER) is

@@ -20,15 +20,9 @@ namespace IR.Values is
         gen(context: IR.CONTEXT) is
             gen(value, context);
 
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldnull();
                 body.op(System.Reflection.Metadata.ILOpCode.CGT_UN);
-
-                return;
-            fi
-
-            context.write_line("ldnull");
-            context.write_line("cgt.un");
         si
 
         to_string() -> string =>

@@ -1386,8 +1386,8 @@ namespace Syntax.Process is
 
             // Generator / async: realise the state-machine frame's
             // argument fields and `_outer_self` field before the body
-            // walks. A closure inside the body freezes captured loads
-            // via `Value.freeze()` at compile-expressions time, and
+            // walks. A closure inside the body captures loaded values
+            // at compile-expressions time, and
             // the captured `Load.LOCAL_ARGUMENT.gen` only redirects
             // through `ldarg.0; ldfld _arg_<name>` when
             // `state_machine_field` is populated on the symbol —

@@ -142,25 +142,6 @@ namespace IR.Values is
         //
         // The binary back end needs no equivalent and cannot use this
         // one: instructions are encoded into the body being built, and
-        // text captured here would have nowhere to go. Emitting the
-        // value where it lands gives the same result, because nothing
-        // about it depends on when it is encoded.
-        freeze() -> Value is
-            if IoC.CONTAINER.instance.ir_context.srm_assembly_emitter? then
-                return self;
-            fi
-
-            let context = IR.CONTEXT(IoC.CONTAINER.instance.logger, null);
-
-            context.enter_buffer(false);
-
-            gen(context);
-
-            let result = context.leave_buffer();
-
-            return RAW(type!, result);
-        si
-
         init() is
             _ambient_location = IoC.CONTAINER.instance.location_stack.current;
         si

@@ -16,23 +16,13 @@ namespace IR.Values.Load is
         si
 
         gen(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldloc(name);
-
-                return;
-            fi
-
-            context.write_line("ldloc {name}");
         si
 
         gen_address(context: IR.CONTEXT) is
-            if let body = context.current_srm_body_emitter then
+            let body = context.current_srm_body_emitter!;
                 body.ldloca(name);
-
-                return;
-            fi
-
-            context.write_line("ldloca {name}");
         si
 
         to_string() -> string =>
