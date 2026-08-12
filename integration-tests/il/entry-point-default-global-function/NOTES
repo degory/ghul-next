@@ -1,9 +1,0 @@
-Built as a library so the test asserts emitted IL without running the binary.
-
-The binary back end emits no entry point for a global function, or for one
-named by the @entry pragma: built as an executable, the assembly fails at
-startup with "Entry point not found in assembly". Building as a library
-sidesteps that, at the cost of the snapshot no longer carrying an
-.entrypoint row - so this test covers the method's IL but not the entry
-point itself. Drop --library and recapture once the back end sets the entry
-point for these forms.

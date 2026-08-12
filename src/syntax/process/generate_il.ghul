@@ -296,6 +296,11 @@ namespace Syntax.Process is
         _try_extents: Collections.STACK[Values.TRY_EXTENT];
 
         _il_output_depth: int;
+
+        // Set by an `@entry` pragma, and cleared by the next function the
+        // walk enters - the one the pragma annotates.
+        _entrypoint_pragma_pending: bool;
+
         _in_catch_variable: bool;
 
         _indent: int;
@@ -1251,6 +1256,14 @@ namespace Syntax.Process is
             // through `gen_body_header`, which the binary path does not
             // emit.
             symbol.gen_entrypoint(_context);
+
+            if _entrypoint_pragma_pending then
+                _entrypoint_pragma_pending = false;
+
+                if let emitter = _context.srm_assembly_emitter then
+                    emitter.entry_point_function = symbol;
+                fi
+            fi
 
             enter_block();
 
@@ -3211,8 +3224,15 @@ namespace Syntax.Process is
                     else
                         _context.seen_entrypoint = true;
 
-                        if let emitter = _context.srm_assembly_emitter then
-                            emitter.entry_point_function = current_function;
+                        if _context.srm_assembly_emitter? then
+                            // The pragma is processed before the walk
+                            // enters the function it annotates, so the
+                            // function to mark is not in scope yet and
+                            // is claimed as the walk reaches it. The
+                            // text path has no such trouble: it writes
+                            // the directive into the body it is already
+                            // inside.
+                            _entrypoint_pragma_pending = true;
                         else
                             _context.write_line(".entrypoint");
                         fi

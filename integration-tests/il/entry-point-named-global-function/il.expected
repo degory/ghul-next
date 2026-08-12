@@ -11,11 +11,31 @@
 {
   .ver 0:0:0:0
 }
-.module binary.dll
+.module binary.exe
 .imagebase 0x00400000
 .file alignment 0x00000200
 .stackreserve 0x00100000
 .subsystem 0x0003       // WINDOWS_CUI
 .corflags 0x00000001    //  ILONLY
+
+
+// =============== CLASS MEMBERS DECLARATION ===================
+
+.class public abstract auto ansi sealed Test.$globals
+       extends [System.Runtime]System.Object
+{
+  .custom instance void ['ghul-runtime']Ghul.Internal.GLOBALS_ATTRIBUTE::.ctor() = ( 01 00 00 00 ) 
+  .method public hidebysig static void  named_entry_point() cil managed
+  {
+    .entrypoint
+    // Code size       1 (0x1)
+    .maxstack  64
+    IL_0000:  ret
+  } // end of method $globals::named_entry_point
+
+} // end of class Test.$globals
+
+
+// =============================================================
 
 // *********** DISASSEMBLY COMPLETE ***********************
