@@ -3195,18 +3195,11 @@ namespace Syntax.Process is
                     else
                         _context.seen_entrypoint = true;
 
-                        if _context.srm_assembly_emitter? then
-                            // The pragma is processed before the walk
-                            // enters the function it annotates, so the
-                            // function to mark is not in scope yet and
-                            // is claimed as the walk reaches it. The
-                            // text path has no such trouble: it writes
-                            // the directive into the body it is already
-                            // inside.
-                            _entrypoint_pragma_pending = true;
-                        else
-                            _context.write_line(".entrypoint");
-                        fi
+                        // The pragma is processed before the walk enters
+                        // the function it annotates, so the function to
+                        // mark is not in scope yet and is claimed as the
+                        // walk reaches it.
+                        _entrypoint_pragma_pending = true;
                     fi
                 fi
             elif name =~ "test" then
