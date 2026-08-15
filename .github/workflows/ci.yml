@@ -63,6 +63,10 @@ jobs:
     # in a commit or PR body can no longer trigger a bump). Pull request builds
     # get a -beta.<run> prerelease so they never collide with a real release.
     # The action only reads the repo - it never tags or releases.
+    #
+    # This repository's tags are its own, and cannot collide with the ones
+    # degory/ghul publishes: the two tag namespaces are separate, and what is
+    # built here packs under its own package id.
     - name: Determine the version
       id: version
       uses: degory/create-version@v1.0.0
@@ -250,7 +254,7 @@ jobs:
     - uses: actions/upload-artifact@v7
       with:
         name: ghul-compiler-package
-        path: ./nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg
+        path: ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg
 
     # Separate artefact for consumers that need to spawn the bootstrapped
     # compiler as a process (e.g. analysis_tests). The whole tool tree is
@@ -259,7 +263,7 @@ jobs:
     # assemblies (ghul-runtime, System.IO.Abstractions, ...).
     - name: Extract compiler tool tree
       run: |
-        unzip -o nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg \
+        unzip -o nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg \
           'tools/net10.0/any/*' -d extracted-tool
 
     - uses: actions/upload-artifact@v7
@@ -276,7 +280,7 @@ jobs:
     - uses: actions/upload-artifact@v7
       with:
         name: ghul-analysis-protocol-package
-        path: ./analysis-protocol/nupkg/ghul.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
+        path: ./analysis-protocol/nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg
 
 
   integration_tests:
@@ -304,7 +308,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -320,7 +324,7 @@ jobs:
       run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
 
     - name: Install the freshly-built compiler
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
 
     - name: Restore local .NET tools
       run: dotnet tool restore
@@ -382,7 +386,7 @@ jobs:
         name: ghul-compiler-tool
         path: bootstrap-tool
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -401,7 +405,7 @@ jobs:
       run: dotnet tool restore
 
     - name: Install the freshly-built compiler
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
 
     - name: Run analysis tests
       env:
@@ -433,7 +437,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -443,7 +447,7 @@ jobs:
       run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
 
     - name: Install the freshly-built compiler
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
 
     - name: Restore local .NET tools
       run: dotnet tool restore
@@ -482,7 +486,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -492,7 +496,7 @@ jobs:
       run: dotnet nuget add source --username USERNAME --password ${{ secrets.GITHUB_TOKEN }} --store-password-in-clear-text --name github "https://nuget.pkg.github.com/degory/index.json"
 
     - name: Install the freshly-built compiler
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source nupkg
 
     - name: Restore local .NET tools
       run: dotnet tool restore
@@ -577,7 +581,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -585,7 +589,7 @@ jobs:
 
     - name: Install the freshly-built compiler in ghul-runtime
       working-directory: ghul-runtime
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source ../nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source ../nupkg
 
     - name: Add GHCR package source
       working-directory: ghul-runtime
@@ -666,7 +670,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -674,7 +678,7 @@ jobs:
 
     - name: Install the freshly-built compiler in ghul-examples
       working-directory: ghul-examples
-      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul.compiler --version ${{ needs.version.outputs.package }} --add-source ../nupkg
+      run: dotnet tool uninstall --local ghul.compiler || true; dotnet tool install --local ghul-next.compiler --version ${{ needs.version.outputs.package }} --add-source ../nupkg
 
     - name: Add GHCR package source
       working-directory: ghul-examples
@@ -759,12 +763,12 @@ jobs:
         path: nupkg
 
     - name: Publish beta package to GitHub
-      run: dotnet nuget push ./nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
+      run: dotnet nuget push ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Publish analysis protocol beta package to GitHub
-      run: dotnet nuget push ./nupkg/ghul.analysis.protocol.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
+      run: dotnet nuget push ./nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -799,25 +803,18 @@ jobs:
         name: ghul-analysis-protocol-package
         path: nupkg
 
+    # The GitHub feed and nowhere else. `ghul-next.compiler` is an
+    # experimental build of the compiler, published so that branch work can
+    # consume it; nuget.org carries the real one, under its own package id.
     - name: Publish release package to GitHub
-      run: dotnet nuget push ./nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
+      run: dotnet nuget push ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Publish release package to NuGet
-      run: dotnet nuget push ./nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg -k ${NUGET_TOKEN} -s https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols
-      env:
-        NUGET_TOKEN: ${{ secrets.NUGET_TOKEN }}
 
     - name: Publish analysis protocol release package to GitHub
-      run: dotnet nuget push ./nupkg/ghul.analysis.protocol.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
+      run: dotnet nuget push ./nupkg/ghul-next.analysis.protocol.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Publish analysis protocol release package to NuGet
-      run: dotnet nuget push ./nupkg/ghul.analysis.protocol.${{ needs.version.outputs.package }}.nupkg -k ${NUGET_TOKEN} -s https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols
-      env:
-        NUGET_TOKEN: ${{ secrets.NUGET_TOKEN }}
 
   create_release:
     needs: [version, integration_tests, publish_release_package]
@@ -835,7 +832,7 @@ jobs:
       with:
         fetch-depth: '0'
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -849,6 +846,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh release create "${{ needs.version.outputs.tag }}" \
-          ./nupkg/ghul.compiler.${{ needs.version.outputs.package }}.nupkg \
+          ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg \
           --title "${{ needs.version.outputs.tag }}" \
           --notes-file changelog.txt

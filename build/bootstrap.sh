@@ -10,6 +10,7 @@ if [ "${CI}" == "" ] ; then
 
     cleanup() {
         echo "Cleaning up..."
+        dotnet tool uninstall --local ghul-next.compiler >/dev/null 2>&1 || true
         dotnet tool uninstall --local ghul.compiler >/dev/null 2>&1 || true
         if [ -n "${PRE_BOOTSTRAP_VERSION}" ] ; then
             dotnet tool install --local ghul.compiler --version "${PRE_BOOTSTRAP_VERSION}"
@@ -79,9 +80,13 @@ for PASS in 1 2 3 4 ; do
     echo "   Packed pass ${PASS}"
     echo
 
+    # Either package id can be the installed one: the manifest pins the
+    # published compiler as the starting point, and every pass installs the
+    # one packed here.
     dotnet tool uninstall --local ghul.compiler >/dev/null 2>&1 || true
+    dotnet tool uninstall --local ghul-next.compiler >/dev/null 2>&1 || true
 
-    dotnet tool install --local ghul.compiler --add-source nupkg --version ${PASS_PACKAGE_VERSION}
+    dotnet tool install --local ghul-next.compiler --add-source nupkg --version ${PASS_PACKAGE_VERSION}
 
     echo
     echo "Installed pass ${PASS}"
