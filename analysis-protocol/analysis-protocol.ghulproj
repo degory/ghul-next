@@ -21,7 +21,7 @@
     <Title>ghūl analysis protocol client</Title>
     <Authors>degory</Authors>
     <Company>ghul.dev</Company>
-    <PackageId>ghul.analysis.protocol</PackageId>
+    <PackageId>ghul-next.analysis.protocol</PackageId>
     <Description>client library for the ghūl compiler's analysis-mode JSON protocol</Description>
     <PackageDescription>client library for the ghūl compiler's analysis-mode JSON protocol</PackageDescription>
     <PackageTags>ghul;ghūl;compiler;analysis;language-server</PackageTags>
@@ -32,7 +32,7 @@
          aren't copyleft-bound, matching the runtime library's licensing. -->
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageIcon>ghul-logo-icon.png</PackageIcon>
-    <RepositoryUrl>https://github.com/degory/ghul</RepositoryUrl>
+    <RepositoryUrl>https://github.com/degory/ghul-next</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <RepositoryBranch>main</RepositoryBranch>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
