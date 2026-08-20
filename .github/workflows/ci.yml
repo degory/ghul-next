@@ -63,6 +63,10 @@ jobs:
     # in a commit or PR body can no longer trigger a bump). Pull request builds
     # get a -beta.<run> prerelease so they never collide with a real release.
     # The action only reads the repo - it never tags or releases.
+    #
+    # This repository's tags are its own, and cannot collide with the ones
+    # degory/ghul publishes: the two tag namespaces are separate, and what is
+    # built here packs under its own package id.
     - name: Determine the version
       id: version
       uses: degory/create-version@v1.0.0
@@ -309,7 +313,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -387,7 +391,7 @@ jobs:
         name: ghul-compiler-tool
         path: bootstrap-tool
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -438,7 +442,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -487,7 +491,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -582,7 +586,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -671,7 +675,7 @@ jobs:
           **/Directory.Packages.props
           **/.config/dotnet-tools.json
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
@@ -804,6 +808,9 @@ jobs:
         name: ghul-analysis-protocol-package
         path: nupkg
 
+    # The GitHub feed and nowhere else. `ghul-next.compiler` is an
+    # experimental build of the compiler, published so that branch work can
+    # consume it; nuget.org carries the real one, under its own package id.
     - name: Publish release package to GitHub
       run: dotnet nuget push ./nupkg/ghul-next.compiler.${{ needs.version.outputs.package }}.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/degory/index.json --skip-duplicate --no-symbols
       env:
@@ -832,7 +839,7 @@ jobs:
       with:
         fetch-depth: '0'
 
-    - name: Download ghul.compiler package
+    - name: Download ghul-next.compiler package
       uses: actions/download-artifact@v8
       with:
         name: ghul-compiler-package
