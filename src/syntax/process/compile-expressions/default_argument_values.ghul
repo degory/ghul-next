@@ -1,0 +1,205 @@
+namespace Syntax.Process is
+    use Semantic.Types.Type;
+
+    use IR.Values;
+
+    // Translates a value reflected out of assembly metadata into an IR
+    // value of the type it is wanted at. Metadata carries such a value
+    // as invariant-culture text — symbol_factory stores it that way for
+    // both a parameter's default and a constant's value — so reading it
+    // back is a per-type dispatch on the type the position expects.
+    //
+    // Two entries, differing only over what an absent value looks like.
+    // `build` serves an argument default, where absence is spelled: ghūl
+    // source declares only `= _`, which is stored as the word "default",
+    // and a null reflected default is stored the same way. `build_value`
+    // serves a caller whose text is a value and nothing else — a
+    // constant's value is whatever a library author wrote, the same word
+    // included — and so reserves no spelling.
+    //
+    // Consumed by an omitted call argument (COMPILE_CALLS), an omitted
+    // attribute constructor argument (ATTRIBUTE_RESOLVER), and a
+    // constant read (SYMBOL_LOADER.load_constant_field).
+    //
+    // An enum-typed value is delegated to Symbols.ENUM_CONSTANT, which
+    // reads it at the width the enum was declared over rather than
+    // always at int32.
+    class DEFAULT_ARGUMENT_VALUES is
+        build(
+            stored: string?,
+            formal_type: Type,
+            innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup
+        ) -> Value static is
+            if !stored? \/ stored =~ "default" then
+                return IR.Values.DEFAULT(formal_type);
+            fi
+
+            return build_value(stored, formal_type, innate_symbol_lookup);
+        si
+
+        // The same conversion without the absent-value sentinel above.
+        // A caller that already knows its text is a value comes in here:
+        // a constant's value is whatever a library author wrote, the
+        // word the sentinel uses included, so a channel carrying one
+        // cannot also reserve a spelling to mean "no value".
+        build_value(
+            stored: string,
+            formal_type: Type,
+            innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup
+        ) -> Value static is
+            if formal_type.matches(innate_symbol_lookup.get_string_type()) then
+                return IR.Values.Literal.STRING(stored, formal_type);
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_bool_type()) then
+                let v = if stored =~ "True" then 1 else 0 fi;
+                return IR.Values.Literal.NUMBER(v, formal_type);
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_char_type()) then
+                let v =
+                    if stored.length > 0 then
+                        cast int(stored[0])
+                    else
+                        0
+                    fi;
+                return IR.Values.Literal.NUMBER(v, formal_type);
+            fi
+
+            let is_enum_type =
+                formal_type.symbol.symbol_kind == Semantic.Symbols.SymbolKind.ENUM;
+
+            // An enum reads its values at the width it was declared
+            // over, which is the enum's own decision to make - see
+            // Symbols.ENUM_CONSTANT.
+            if is_enum_type then
+                let (ok, value) = _stored_integer(stored);
+
+                return
+                    if ok then
+                        Semantic.Symbols.ENUM_CONSTANT.from_pattern(formal_type, value, innate_symbol_lookup)
+                    else
+                        IR.Values.DEFAULT(formal_type)
+                    fi;
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_long_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_ulong_type())
+            then
+                let (ok, value) = _stored_integer(stored);
+
+                return
+                    if ok then
+                        IR.Values.Literal.NUMBER(IR.Values.Literal.CONSTANT.I8(cast long(value)), formal_type)
+                    else
+                        IR.Values.DEFAULT(formal_type)
+                    fi;
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_single_type()) then
+                let (ok, value) = _stored_real(stored);
+
+                return
+                    if ok then
+                        IR.Values.Literal.NUMBER(cast single(value), formal_type)
+                    else
+                        IR.Values.DEFAULT(formal_type)
+                    fi;
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_double_type()) then
+                let (ok, value) = _stored_real(stored);
+
+                return
+                    if ok then
+                        IR.Values.Literal.NUMBER(value, formal_type)
+                    else
+                        IR.Values.DEFAULT(formal_type)
+                    fi;
+            fi
+
+            if formal_type.matches(innate_symbol_lookup.get_byte_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_ubyte_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_short_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_ushort_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_int_type())
+               \/ formal_type.matches(innate_symbol_lookup.get_uint_type())
+            then
+                let (ok, value) = _stored_integer(stored);
+
+                return
+                    if ok then
+                        IR.Values.Literal.NUMBER(
+                            IR.Values.Literal.CONSTANT.I4(cast int(cast uint(value))),
+                            formal_type)
+                    else
+                        IR.Values.DEFAULT(formal_type)
+                    fi;
+            fi
+
+            return IR.Values.DEFAULT(formal_type);
+        si
+
+        // A value arrives from assembly metadata as its rendered form, so
+        // it is read back here - the one place a parse is unavoidable,
+        // because the rendering is all the metadata carries.
+        //
+        // Read in the culture it was written in, which is the invariant
+        // one. Reading it in whatever culture the process happens to be
+        // running under would not merely fail: `1.7976931348623157E+308`
+        // read where `.` groups digits rather than separating the
+        // fraction parses successfully, to infinity.
+        //
+        // Both signed and unsigned are tried, because one parse cannot
+        // cover the range: a negative value is out of range for `ulong`
+        // and a `ulong` above `long`'s maximum is out of range for
+        // `long`, and both are ordinary .NET defaults. The result is
+        // the bit pattern either way.
+        _stored_integer(stored: string) -> (ok: bool, value: ulong) static is
+            let signed: long mut = _;
+
+            if
+                long.try_parse(
+                    stored,
+                    System.Globalization.NumberStyles.INTEGER,
+                    System.Globalization.CultureInfo.invariant_culture,
+                    signed ref
+                )
+            then
+                return (true, cast ulong(signed));
+            fi
+
+            let unsigned: ulong mut = _;
+
+            if
+                ulong.try_parse(
+                    stored,
+                    System.Globalization.NumberStyles.INTEGER,
+                    System.Globalization.CultureInfo.invariant_culture,
+                    unsigned ref
+                )
+            then
+                return (true, unsigned);
+            fi
+
+            return (false, 0UL);
+        si
+
+        _stored_real(stored: string) -> (ok: bool, value: double) static is
+            let value: double mut = _;
+
+            if
+                double.try_parse(
+                    stored,
+                    System.Globalization.NumberStyles.FLOAT,
+                    System.Globalization.CultureInfo.invariant_culture,
+                    value ref
+                )
+            then
+                return (true, value);
+            fi
+
+            return (false, 0.0D);
+        si
+    si
+si

@@ -2,6 +2,7 @@ namespace Logging is
     use System.Exception;
     use System.NotImplementedException;
 
+    use Collections.LIST;
     use Collections.STACK;
 
     use IO.Std;
@@ -115,6 +116,26 @@ namespace Logging is
         // cures (or should re-report) its error.
         paths_with_errors: Collections.Iterable[string];
 
+        // Every source path with a retained diagnostics list at the
+        // current speculation depth — includes a path checked and found
+        // clean, since `clear` creates the (possibly empty) list before
+        // any diagnostic is added for it.
+        diagnostic_paths: Collections.Iterable[string];
+
+        // Every diagnostic message recorded for `path` at the current
+        // speculation depth, in report order. Walked directly by
+        // DIAGNOSTICS_COLLECTOR — no text formatter in between.
+        diagnostics_for(path: string) -> Collections.Iterable[DIAGNOSTIC_MESSAGE];
+
+        // True when a parse error is present alongside a high total error
+        // count — the two-signal heuristic for "this is one error cascade,
+        // not many independent problems". A consumer that only wants the
+        // likely root cause, not the flood of downstream diagnostics it
+        // produces, filters to non-analysis diagnostics and caps them
+        // (DIAGNOSTICS_COLLECTOR takes the first 15 per path) when this
+        // is true.
+        is_possible_error_cascade: bool;
+
         // True iff this speculation level recorded no errors and didn't
         // consume any wild / inferred / placeholder types. Used by the
         // iterative inference loop in COMPILE_EXPRESSIONS to detect
@@ -141,10 +162,11 @@ namespace Logging is
         // The set of files the client currently has open. Replaced whole by
         // each client update. Editor-only hints are suppressed at the source
         // for any file not in this set, since they are invisible for a file
-        // the user is not viewing. Returns true iff the resulting set differs
-        // from the previous one, so the caller can invalidate any cached
-        // compile whose hint output was gated on the previous set.
-        set_open_files(paths: Collections.Iterable[string]) -> bool;
+        // the user is not viewing. Returns the paths whose open state
+        // changed, so the caller can invalidate the expression walk of each
+        // - and only of each: no other file's hint output was gated on the
+        // part of the set that moved.
+        set_open_files(paths: Collections.Iterable[string]) -> Collections.List[string];
         is_file_open(path: string) -> bool;
 
         start_analysis();
@@ -152,21 +174,52 @@ namespace Logging is
 
         set_is_compiling_expressions(value: bool);
 
+        // Reliance-judge diagnostics are re-derived and re-reported at
+        // every effects round, so each round stamps what it logs and
+        // starts by dropping the previous round's copies. No-ops for
+        // loggers that never serve an analysis session.
+        set_is_judging_reliances(value: bool) is si
+        clear_reliance_diagnostics() is si
+
         merge(state: DIAGNOSTICS_STATE);
 
         exception(location: LOCATION, exception: Exception, message: string);
         fatal(location: LOCATION, message: string);
         error(location: LOCATION, message: string);
+        // Same as error(location, message), plus a second location this
+        // diagnostic refers to (a prior declaration, an overridden
+        // member) - rendered by a capable client as a jump-to link, and
+        // appended to the line by the text formatters. The primary
+        // `message` must still name the thing the related location
+        // points at; the related location says where, not what.
+        error(location: LOCATION, message: string, related_location: LOCATION, related_message: string);
+        // Same as error(location, message, related_location,
+        // related_message), plus several related locations - for a
+        // diagnostic whose counterpart sites are peers (a duplicate
+        // declaration reported at every site) rather than one
+        // authoritative prior declaration.
+        error(location: LOCATION, message: string, related: LIST[RELATED_LOCATION]);
         // A lexer-produced error, written to the base diagnostics state so it
         // survives parser speculation rollback (see DIAGNOSTICS_STORE).
         lexer_error(location: LOCATION, message: string);
         warn(location: LOCATION, message: string);
         warn(location: LOCATION, code: string, message: string);
+        // Same as warn(location, code, message), plus a related location -
+        // see error(location, message, related_location, related_message).
+        warn(location: LOCATION, code: string, message: string, related_location: LOCATION, related_message: string);
+        // Same as warn(location, code, message), plus several related
+        // locations - for a diagnostic that points at more than one other
+        // declaration at once (every field a constructor leaves
+        // unassigned, say).
+        warn(location: LOCATION, code: string, message: string, related: LIST[RELATED_LOCATION]);
         poison(location: LOCATION, message: string);
         info(location: LOCATION, message: string);
         info(location: LOCATION, code: string, message: string);
         hint(location: LOCATION, message: string);
         hint(location: LOCATION, code: string, message: string);
+        // Same as hint(location, code, message), plus a related location -
+        // see error(location, message, related_location, related_message).
+        hint(location: LOCATION, code: string, message: string, related_location: LOCATION, related_message: string);
 
         // Record an editor-only inlay hint at `location`: a terse `label`
         // (the ghost text) plus an optional `detail` (hover tooltip). Never
@@ -177,6 +230,18 @@ namespace Logging is
         // Every inlay carrier recorded for `path` in the current state, in
         // emission order. Consulted by the INLAY_HINTS handler.
         inlays_for(path: string) -> Collections.Iterable[DIAGNOSTIC_MESSAGE];
+
+        // Drop the inlay carriers recorded for `path` whose code begins
+        // with `code`. A pass re-run against one file calls this first so
+        // it replaces its carriers rather than stacking a second copy;
+        // a prefix because one pass emits suffixed codes for variants of
+        // one carrier (an accessor's half) alongside its base code.
+        clear_inlays(path: string, code: string);
+
+        // Drop the inlay carriers recorded for `path` that carry
+        // exactly `code` at exactly `location` — a single carrier
+        // retracted, leaving the same code at every other site.
+        clear_inlays_at(path: string, code: string, location: LOCATION);
 
         // Suppress every subsequent warn/info/hint carrying this code.
         // Accumulating — calling twice with different codes silences both.

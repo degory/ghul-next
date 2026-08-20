@@ -9,6 +9,10 @@ namespace Analysis.Protocol is
     // One text edit within a quick fix. Coordinates use the same convention
     // as DIAGNOSTIC ranges (1-based, end column exclusive). A zero-width
     // range is an insertion.
+    //
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class FIX_EDIT is
         start_line: int public;
         start_column: int public;
@@ -45,6 +49,10 @@ namespace Analysis.Protocol is
     // diagnostic's own file. The client presents fixes in list order;
     // `is_preferred` marks the fix that directly resolves the diagnostic
     // (as opposed to suppressing it).
+    //
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class QUICK_FIX is
         title: string public;
         is_preferred: bool public;
@@ -64,6 +72,9 @@ namespace Analysis.Protocol is
             "\"{title}\"{if is_preferred then " (preferred)" else "" fi}: {edits}";
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class DIAGNOSTIC is
         path: string public;
         start_line: int public;
@@ -83,6 +94,14 @@ namespace Analysis.Protocol is
         // the sole author of fixes — clients render them without any
         // per-code knowledge.
         fixes: LIST[QUICK_FIX]? public;
+
+        // Other locations this diagnostic refers to — a prior
+        // declaration, an overridden member, the call that invalidated a
+        // narrowing. Null when there are none. Maps to LSP's
+        // DiagnosticRelatedInformation; the primary `message` still names
+        // what each entry points at, so an older client that ignores this
+        // field degrades to today's behaviour minus the jump targets.
+        related: LIST[RELATED_LOCATION_DTO]? public;
 
         init() is si
 
@@ -124,6 +143,9 @@ namespace Analysis.Protocol is
             "{path}:{start_line}:{start_column}-{end_line}:{end_column} severity {severity}: {message}";
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class LOCATION_DTO is
         file: string public;
         start_line: int public;
@@ -145,6 +167,26 @@ namespace Analysis.Protocol is
             "{file}:{start_line}:{start_column}-{end_line}:{end_column}";
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
+    class RELATED_LOCATION_DTO is
+        location: LOCATION_DTO public;
+        message: string public;
+
+        init() is si
+
+        init(location: LOCATION_DTO, message: string) is
+            self.location = location;
+            self.message = message;
+        si
+
+        to_string() -> string => "{location}: {message}";
+    si
+
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class HOVER_ENTRY is
         start_line: int public;
         start_column: int public;
@@ -171,6 +213,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class SEMANTIC_TOKEN is
         start_line: int public;
         start_column: int public;
@@ -191,6 +236,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class INLAY_HINT is
         line: int public;
         column: int public;
@@ -212,6 +260,9 @@ namespace Analysis.Protocol is
     // One named analyser timer: how many times it fired (`count`) and its
     // moving-average execution time in milliseconds. Names used purely as
     // counters (the edit-path tallies) carry a zero time.
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class STAT_ENTRY is
         name: string public;
         count: int public;
@@ -226,6 +277,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class COMPLETION_ITEM is
         name: string public;
         kind: int public;
@@ -252,6 +306,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class SIGNATURE_DTO is
         label: string public;
         parameters: LIST[string] public;
@@ -266,6 +323,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class SYMBOL_DTO is
         search_description: string public;
         kind: int public;
@@ -327,6 +387,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class SYMBOL_FILE is
         path: string public;
         symbols: LIST[SYMBOL_DTO] public;
@@ -341,6 +404,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class MEMBER_DTO is
         // Short name of the member, e.g. "length", "append", "SOME_VARIANT".
         name: string public;
@@ -383,6 +449,9 @@ namespace Analysis.Protocol is
         si
     si
 
+    // JSON DTO: the parameterless constructor is for the deserializer,
+    // which populates fields by reflection after construction.
+    @suppress("field-definite-assignment")
     class RENAME_EDIT is
         file: string public;
         start_line: int public;
@@ -440,6 +509,10 @@ namespace Analysis.Protocol is
     @System.Text.Json.Serialization.JsonDerivedType(typeof Response.DESCRIBE_TYPE, "describe_type")
     @System.Text.Json.Serialization.JsonDerivedType(typeof Response.CODE_ACTIONS, "code_actions")
     @System.Text.Json.Serialization.JsonDerivedType(typeof Response.ERROR, "error")
+    // A variant carrying an optional field lowers through a checked
+    // `object` cast the compiler synthesizes; nothing in this file
+    // constructs a variant by hand, so the throw path is unreachable.
+    @suppress("cast-may-throw")
     union Response is
         // capabilities is optional because deserialization leaves it
         // null when the field is absent from the JSON. compiler_version

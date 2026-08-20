@@ -22,6 +22,19 @@ namespace Semantic is
     // TODO this really needs cleaning up. Could use double dispatch between the overrider and the overridee
     // for non-method symbols to determine what to do, which might simplify it a bit
     class SYMBOL_INHERITANCE_RESOLVER is
+
+        // One "declared here" related location per symbol - the prose of
+        // these diagnostics lists the colliding declarations already; the
+        // related locations make each of them a jump target.
+        _declared_here(symbols: Iterable[Symbol]) -> Collections.LIST[RELATED_LOCATION] is
+            let related = Collections.LIST[RELATED_LOCATION]();
+
+            for symbol in symbols do
+                related.add(RELATED_LOCATION(symbol.location, "declared here"));
+            od
+
+            return related;
+        si
         into: Classy;
 
         init(into: Classy) is
@@ -133,8 +146,9 @@ namespace Semantic is
                                 logger.warn(
                                     overrider.location,
                                     "likely-override-mismatch",
-                                    "{overrider} hides {overridee} due to narrower argument types"
-                                );
+                                    "{overrider} hides {overridee} due to narrower argument types",
+                                    overridee.location,
+                                    "hidden member declared here");
                             fi
                         od
                     od
@@ -243,7 +257,7 @@ namespace Semantic is
 
             if !is_reflected then
                 for os in other_overridee_symbols do
-                    logger.warn(overriding_method.location, "hides-inherited", "hides {os} (case A)");
+                    logger.warn(overriding_method.location, "hides-inherited", "hides {os} (case A)", os.location, "hidden declaration");
                 od
             fi
         si
@@ -257,13 +271,13 @@ namespace Semantic is
         )
         is
             if !is_reflected then
-                for f in overridees.iterable do    
-                    logger.warn(other_overrider_symbol.location, "hides-inherited", "hides {f} (case B)");
+                for f in overridees.iterable do
+                    logger.warn(other_overrider_symbol.location, "hides-inherited", "hides {f} (case B)", f.location, "hidden declaration");
                 od
 
                 for os in other_overridee_symbols do
-                    logger.warn(other_overrider_symbol.location, "hides-inherited", "hides {os} (case C)");
-                od                        
+                    logger.warn(other_overrider_symbol.location, "hides-inherited", "hides {os} (case C)", os.location, "hidden declaration");
+                od
             fi
         si
 
@@ -283,8 +297,10 @@ namespace Semantic is
 
             all_symbols.add_range(other_overridee_symbols);
 
-            logger.error(into.location, 
-                "cannot inherit multiple symbols with the same name: {all_symbols|> sort_by(symbol => symbol.short_description)}"
+            logger.error(
+                into.location,
+                "cannot inherit multiple symbols with the same name: {all_symbols|> sort_by(symbol => symbol.short_description)}",
+                _declared_here(all_symbols)
             );
         si
 
@@ -312,12 +328,13 @@ namespace Semantic is
                     od
                        
                     logger.error(
-                        into.location, 
+                        into.location,
                         "cannot inherit multiple symbols with the same name: {
                             overridees.iterable |>
                                 map(f => f.to_string()) |>
                                 sort()
-                        }"                                    
+                        }",
+                        _declared_here(other_overridee_symbols)
                     );
                 fi
             else
@@ -364,12 +381,13 @@ namespace Semantic is
                 
                 logger
                     .error(
-                        into.location, 
+                        into.location,
                         "cannot inherit multiple concrete methods: {
                             concretes |>
                                 map(f => f.to_string()) |>
                                 sort()
-                        }"
+                        }",
+                        _declared_here(concretes)
                     );
 
             elif concrete? then
@@ -406,7 +424,8 @@ namespace Semantic is
                             abstracts |>
                                 map(f => f.to_string()) |>
                                 sort()
-                        }"
+                        }",
+                        _declared_here(abstracts)
                     );
                 fi
 
@@ -481,7 +500,7 @@ namespace Semantic is
                     handle_property_overridee(
                         overrider_symbol, overridee, logger);
                 elif !(isa Symbols.Variable(overridee)) then
-                    logger.warn(overrider_symbol.location, "hides-inherited", "{overrider_symbol} hides non-property {overridee}");
+                    logger.warn(overrider_symbol.location, "hides-inherited", "{overrider_symbol} hides non-property {overridee}", overridee.location, "hidden declaration");
                 fi
             od
         si
@@ -508,7 +527,7 @@ namespace Semantic is
                 // be allowed to stand; genuinely different types really
                 // do hide, and keep the warning.
                 if !overrider_symbol.is_reflected /\ overrider_type.matches(overridee_type) /\ overrider_type.is_optional /\ !overridee_type.is_optional then
-                    logger.error(overrider_symbol.location, "cannot override {overridee} with optional type {overrider_type}");
+                    logger.error(overrider_symbol.location, "cannot override {overridee} with optional type {overrider_type}", overridee.location, "overridden declaration");
                 elif overrider_symbol.is_reflected then
                     // Imported declarations model optionality more loosely
                     // than ghūl does, so a redeclaration that only widens
@@ -516,10 +535,10 @@ namespace Semantic is
                     // hides, but there is nothing to report about it.
                     return;
                 elif overridee.is_instance /\ overrider_symbol.is_instance then
-                    logger.warn(overrider_symbol.location, "override-mismatch-type", "{overrider_symbol} does not override {overridee} due to non-assignable type ({overrider_symbol.type} vs {overridee.type})");
+                    logger.warn(overrider_symbol.location, "override-mismatch-type", "{overrider_symbol} does not override {overridee} due to non-assignable type ({overrider_symbol.type} vs {overridee.type})", overridee.location, "declared here");
                     return;
                 else
-                    logger.warn(overrider_symbol.location, "hides-inherited", "{overrider_symbol} hides {overridee}");
+                    logger.warn(overrider_symbol.location, "hides-inherited", "{overrider_symbol} hides {overridee}", overridee.location, "hidden declaration");
                     return;
                 fi
             elif
@@ -531,7 +550,7 @@ namespace Semantic is
                 // Tightening an assignable property to non-optional is
                 // unsound in the assign direction: writers typed by the
                 // overridee can still store an absent value.
-                logger.error(overrider_symbol.location, "cannot override assignable {overridee} with non-optional type {overrider_type}");
+                logger.error(overrider_symbol.location, "cannot override assignable {overridee} with non-optional type {overrider_type}", overridee.location, "overridden declaration");
             fi
 
             let overrides mut = true;
@@ -542,7 +561,7 @@ namespace Semantic is
 
                 if overridee.is_private then
                     if !overrider_symbol.is_assignable then
-                        logger.warn(overrider_symbol.location, "override-missing-assign-accessor", "does not override assign accessor for {overridee}");
+                        logger.warn(overrider_symbol.location, "override-missing-assign-accessor", "does not override assign accessor for {overridee}", overridee.location, "assign accessor declared here");
                     fi
                 else
                     if !overrider_symbol.is_assignable /\ !overrider_symbol.is_reflected then
@@ -556,17 +575,17 @@ namespace Semantic is
                                 journal.record(Symbols.InheritanceOp.PROPERTY_ASSIGN_INHERITED(overrider_symbol));
                             fi
                         else
-                            logger.error(overrider_symbol.location, "does not override public assign accessor for {overridee}");
+                            logger.error(overrider_symbol.location, "does not override public assign accessor for {overridee}", overridee.location, "assign accessor declared here");
                         fi
                     elif overrider_symbol.is_private then
-                        logger.error(overrider_symbol.location, "hides public assign accessor for {overridee}");
+                        logger.error(overrider_symbol.location, "hides public assign accessor for {overridee}", overridee.location, "assign accessor declared here");
                     fi
                 fi
             fi
 
             if overrider_symbol.il_name_override? then
                 if overridee.il_name_override? /\ overrider_symbol.il_name_override !~ overridee.il_name_override then
-                    logger.warn(overrider_symbol.location, "override-mismatch-il-name", "{overrider_symbol} does not override {overridee} due to different IL name ({overrider_symbol.il_name_override} vs {overridee.il_name_override})");
+                    logger.warn(overrider_symbol.location, "override-mismatch-il-name", "{overrider_symbol} does not override {overridee} due to different IL name ({overrider_symbol.il_name_override} vs {overridee.il_name_override})", overridee.location, "declared here");
                     overrides = false;
                 fi
             else
@@ -586,7 +605,7 @@ namespace Semantic is
                 let read_is_default = overridee.read_function? /\ overridee.read_function.is_default_trait_method;
                 let assign_is_default = overridee.assign_function? /\ overridee.assign_function.is_default_trait_method;
 
-                if (read_is_default \/ assign_is_default) /\ isa Symbols.Classy(overridee.owner) then
+                if let overridee_owner = cast Symbols.Classy?(overridee.owner) /\ (read_is_default \/ assign_is_default) then
                     Symbols.INEFFECTIVE_TRAIT_OVERRIDE_CHECKER()
                         .check(
                             into,
@@ -594,7 +613,7 @@ namespace Semantic is
                             overrider_symbol.to_string(),
                             overridee,
                             overridee.name,
-                            cast Symbols.Classy?(overridee.owner)!,
+                            overridee_owner,
                             logger
                         );
                 fi
@@ -615,7 +634,12 @@ namespace Semantic is
             for overridee in overridee_symbols do
                 if !(isa Symbols.Variable(overridee)) /\ !overridee.can_hide_inherited then
                     logger.info(overrider_symbol.location, "overrider {overrider_symbol.get_type()} hides overridee {overridee.get_type()}");
-                    logger.warn(overrider_symbol.location, "hides-inherited", "{overrider_symbol} hides (case 3): {overridee_symbols|}");
+                    logger.warn(
+                        overrider_symbol.location,
+                        "hides-inherited",
+                        "{overrider_symbol} hides (case 3): {overridee_symbols|}",
+                        overridee.location,
+                        "hidden declaration");
                 fi
             od
         si

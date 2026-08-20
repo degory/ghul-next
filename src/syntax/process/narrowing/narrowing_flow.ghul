@@ -1,0 +1,1335 @@
+namespace Syntax.Process is
+    use Logging.Logger;
+    use Source.LOCATION;
+    use Semantic.Types.Type;
+    use Semantic.Types.INTERSECTION;
+    use Symbol = Semantic.Symbols.Symbol;
+
+    // Per-IF bookkeeping for the flow pass. pre(IF) pushes a frame;
+    // each branch's controlled walk records its body-exit
+    // environment and threads the running else-environment to the
+    // next branch; visit(IF) joins the branch exits.
+    class IF_FLOW_FRAME is
+        // Environment for the next not-yet-walked branch — refined
+        // by each cond branch's false edge as the chain proceeds.
+        running_else: NARROW_ENV public;
+        // Exit environment of each branch already walked (bottom for
+        // a branch whose body diverges).
+        branch_exits: Collections.LIST[NARROW_ENV] public;
+        // True once an unconditional (else) branch has been seen.
+        has_else: bool public;
+
+        init(in_env: NARROW_ENV) is
+            running_else = in_env;
+            branch_exits = Collections.LIST[NARROW_ENV]();
+        si
+    si
+
+    // Per-CASE bookkeeping for the flow pass, mirroring IF_FLOW_FRAME.
+    // Case arms are mutually exclusive alternatives rather than a
+    // chained if/elif, so every arm's body walks from the same
+    // pre-case entry environment (plus whatever narrowing the arm's
+    // own pattern/guard adds) instead of a running_else threaded arm
+    // to arm — a case has no equivalent of an elif's "previous
+    // conditions were false" fact today, since the else-arm complement
+    // narrowing this would require isn't implemented (see the
+    // `case-when-pattern-scrutinee-narrow` test region). pre(CASE)
+    // pushes a frame; each arm's controlled walk resets to `entry`,
+    // applies its own narrowing, walks its body, and records the
+    // exit; visit(CASE) joins the arm exits, plus `entry` itself when
+    // no `else` arm was seen — the no-arm-matched fall-through.
+    class CASE_FLOW_FRAME is
+        entry: NARROW_ENV public;
+        branch_exits: Collections.LIST[NARROW_ENV] public;
+        has_else: bool public;
+
+        init(entry: NARROW_ENV) is
+            self.entry = entry;
+            branch_exits = Collections.LIST[NARROW_ENV]();
+        si
+    si
+
+    // Per-`try` bookkeeping for the flow pass. pre(TRY) pushes a
+    // frame; pre(CATCH) observes the try body's exit, visit(CATCH)
+    // each handler's exit, and visit(TRY) the no-catch body exit, so
+    // visit(TRY) can tell whether control can fall through the try
+    // statement at all (it cannot when the body and every handler
+    // diverge).
+    class TRY_FLOW_FRAME is
+        // The environment in force before the try — its
+        // definite-assignment facts survive the statement.
+        entry: NARROW_ENV public;
+        // True once the try body's exit environment has been
+        // observed (at the first catch, or — with no catches — at
+        // visit(TRY)).
+        body_seen: bool public;
+        // True if the body, or some catch handler, can complete
+        // normally and so reach the end of the try statement.
+        can_complete: bool public;
+        // True if the finally body cannot complete normally, in
+        // which case control never falls through the try however
+        // the body and handlers fared.
+        finally_diverges: bool public;
+
+        init(entry: NARROW_ENV) is
+            self.entry = entry;
+        si
+    si
+
+
+    // The flow-sensitive narrowing orchestrator. Holds the narrowing
+    // environment in force at the current walk point and keeps each
+    // narrowed variable's `Symbol.type` reconciled to it, so the
+    // rest of COMPILE_EXPRESSIONS — and the per-use-site IR value
+    // snapshots the IDE reads — observe the narrowed type.
+    //
+    // Replaces the scope-stack NARROWING. See
+    // `docs/claude/flow-sensitive-narrowing.md`.
+    class NARROWING_FLOW is
+        // Sink for the analysis-mode narrowing-kill hints. Its
+        // `want_hint_for` gate and `hint` are the only members consulted
+        // here.
+        _logger: Logger;
+
+        _current_env: NARROW_ENV;
+        // Declared (pre-narrowing) type of every variable that has
+        // been narrowed — the restore target. Captured lazily the
+        // first time a variable is narrowed.
+        _declared: Collections.MAP[Symbol, Type];
+
+        // Deferred-initialization locals (`let x: T;` with no
+        // initializer) subject to the definite-assignment read
+        // check. Method-global within one body walk — a variable,
+        // once declared, stays tracked until the next reset.
+        _tracked: Collections.SET[Symbol];
+
+        // Assignment-target receivers held exempt from the call transfer
+        // while their assignment is in flight. See RECEIVER_SHIELD.
+        _shield: RECEIVER_SHIELD;
+
+        // Bumped by every heap-fact kill (call, heap store, member
+        // store). Controlled walks capture it before walking and
+        // compare after: branch environments derived from a snapshot
+        // taken before a walk that killed cannot keep the snapshot's
+        // heap facts. `_current_env` itself always reflects kills
+        // directly, so straight-line flow needs no epoch check.
+        _heap_epoch: int;
+
+        // Speculation baselines, mirroring the logger's diagnostics
+        // stack. A speculative expression re-walk pushes the pre-walk
+        // env, resets to it between retry attempts, and on completion
+        // either commits (keeps the final walk's facts) or rolls back
+        // (discards them). This keeps the flow env and the coupled
+        // in-place `Symbol.type` narrowing from desyncing when a
+        // re-walk's diagnostics are scrubbed.
+        _speculation: Collections.STACK[NARROW_ENV];
+
+
+        // Every call crossing this body walk has noted, in order —
+        // the source adopt_crossings_* copies from. Grows for the
+        // body's duration and clears at reset(). A rolled-back
+        // speculative walk's entries stay in the log; adopting them
+        // is conservative (an extra crossing can only add an
+        // obligation), and the retry re-walks the same calls anyway.
+        _crossing_log: Collections.LIST[CROSSING];
+
+        // The crossing-log count at the moment each condition-leaf
+        // test expression was first compiled — an `isa`, a `?`, a
+        // null-comparison. The condition analyzer reads it back when
+        // it forms a leaf's facts, so adoption can skip the calls a
+        // condition walked before the leaf's own test ran. First walk
+        // wins: a crossing excluded by that stamp ran before the leaf
+        // in every walk that reached it, and a speculative walk's
+        // re-stamp can only attach more.
+        _test_site_marks: Collections.MAP[Trees.Expressions.Expression, int];
+
+        init(logger: Logger) is
+            _logger = logger;
+            _crossing_log = Collections.LIST[CROSSING]();
+            _test_site_marks = Collections.MAP[Trees.Expressions.Expression, int]();
+            _current_env = NARROW_ENV();
+            _declared = Collections.MAP[Symbol, Type]();
+            _tracked = Collections.SET[Symbol]();
+            _shield = RECEIVER_SHIELD();
+            _speculation = Collections.STACK[NARROW_ENV]();
+        si
+
+        // Surface a hint at the point a narrowing is discarded, so the
+        // editor can show where and why a narrowed type stops
+        // applying. Emitted only in analysis mode, and only for a
+        // variable that actually carries a narrow at this point —
+        // `reason` names what invalidated it. Must be called before
+        // the narrow is dropped, while `_current_env` still holds it.
+        _report_kill(v: Symbol, location: LOCATION, reason: string) is
+            // Editor-only: never generate a kill hint for a file the client
+            // is not viewing — it would be invisible there and only add
+            // formatting and transmission cost.
+            if !_logger.want_hint_for(location) then
+                return;
+            fi
+
+            let narrowed = _current_env.narrowed_type_of(v);
+            let declared = declared_type_of(v);
+
+            if narrowed? then
+                _logger.inlay(location, "narrowing-killed", "◄", "{v.name}\n    ◄ {declared}\n\n{reason}");
+            elif _current_env.is_non_null(v) then
+                // The presence bit is redundant with a non-optional
+                // declared type — a non-optional variable is always
+                // known to hold a value, so the bit adds nothing over
+                // the declaration and the kill hint would confuse the
+                // reader by pointing at a narrowing that never carried
+                // information.
+                if declared? /\ declared.is_optional then
+                    _logger.inlay(location, "narrowing-killed", "◄", "{v.name}\n    ◄ {declared}\n\n{reason}");
+                fi
+            fi
+        si
+
+        // Path analogue of `_report_kill`: surface a hint at the point
+        // a member-access path's narrow or presence fact is discarded.
+        // A path presence fact is only ever recorded for an optional
+        // access, so — unlike the symbol case — there is no redundant
+        // non-optional branch to guard. Same analysis-mode + open-file
+        // gating; must be called while `_current_env` still holds the
+        // fact.
+        _report_path_kill(path: ACCESS_PATH, location: LOCATION, reason: string) is
+            if !_logger.want_hint_for(location) then
+                return;
+            fi
+
+            let narrowed = _current_env.narrowed_type_of_path(path);
+
+            // A member-access path has no single declared type to name as
+            // the revert target, so the code body is just the path; the
+            // reason carries what changed.
+            if narrowed? then
+                _logger.inlay(location, "narrowing-killed", "◄", "{path}\n\n{reason}");
+            elif _current_env.is_non_null_path(path) then
+                _logger.inlay(location, "narrowing-killed", "◄", "{path}\n\n{reason}");
+            fi
+        si
+
+        current_env: NARROW_ENV => _current_env;
+        is_unreachable: bool => _current_env.is_bottom;
+
+        heap_epoch: int => _heap_epoch;
+
+        // True iff a heap-fact kill has fired since `epoch` was
+        // captured.
+        heap_killed_since(epoch: int) -> bool => _heap_epoch != epoch;
+
+        // While a function literal's body compiles, the transfers
+        // also record whether it performed any possibly heap-visible
+        // operation — the signal behind Function.literal_body_impure.
+        // A call only charges the frame when it records a crossing,
+        // so a call to a structurally store-free callee — declared
+        // pure, whitelisted, a backing read — leaves the literal
+        // clean; a call the solve would later prove harmless still
+        // charges it, so the pure shape surfaces on fewer literals
+        // than the solve proves. That costs display only: the pure
+        // slot judge answers from the solved relations, not from the
+        // shape. A stack because literals nest; only the innermost
+        // literal is charged (an outer literal that never invokes the
+        // inner one is unaffected by it).
+        _literal_impure_stack: Collections.LIST[bool]?;
+
+        push_literal_frame() is
+            if !_literal_impure_stack? then
+                _literal_impure_stack = Collections.LIST[bool]();
+            fi
+
+            _literal_impure_stack.add(false);
+        si
+
+        pop_literal_frame() -> bool is
+            let stack = _literal_impure_stack;
+
+            assert stack?;
+
+            let result = stack[stack.count - 1];
+            stack.remove_at(stack.count - 1);
+            return result;
+        si
+
+        _mark_literal_impure() is
+            if _literal_impure_stack? /\ _literal_impure_stack.count > 0 then
+                _literal_impure_stack[_literal_impure_stack.count - 1] = true;
+            fi
+        si
+
+        // Narrowing subjects are local variables, fields and
+        // properties — all carry a settable type; anything else never
+        // enters the environment, but stay defensive.
+        _set_symbol_type(v: Symbol, t: Type) is
+            if isa Semantic.Types.SettableTyped(v) then
+                (cast Semantic.Types.SettableTyped(v)).set_type(t);
+            fi
+        si
+
+        // Restore every currently-narrowed variable to its declared
+        // type, empty the environment, and forget declared types.
+        // Called at each method-body boundary.
+        reset() is
+            restore_all();
+            _current_env = NARROW_ENV();
+            _declared.clear();
+            _tracked.clear();
+
+            // literal frames are pushed and popped around literal
+            // body walks; an aborted walk (analysis-mode exception)
+            // can leak one, so drop any leftovers at body boundaries
+            if _literal_impure_stack? then
+                _literal_impure_stack.clear();
+            fi
+
+            _crossing_log.clear();
+            _test_site_marks.clear();
+
+            // Speculation baselines are balanced by the `speculate_then_*`
+            // disposables, but an aborted walk can leak one; drop any
+            // leftovers at the body boundary (inert env copies — nothing
+            // to restore, restore_all already reconciled `Symbol.type`).
+            _speculation.clear();
+        si
+
+        // Restore every currently-narrowed variable's `.type` to its
+        // declared type (without emptying the environment).
+        restore_all() is
+            for v in _current_env.variables do
+                let declared: Type mut;
+
+                if _declared.try_get_value(v, declared ref) then
+                    _set_symbol_type(v, declared);
+                fi
+            od
+        si
+
+        // The declared (pre-narrowing) type of `v` — used for the
+        // assignment-LHS typecheck, which must see past any narrow.
+        declared_type_of(v: Symbol) -> Type? is
+            let declared: Type mut;
+
+            if _declared.try_get_value(v, declared ref) then
+                return declared;
+            fi
+
+            return v.type;
+        si
+
+        // Make `target` the environment in force: restore all
+        // current narrows, then apply `target`'s sound narrows,
+        // reconciling `Symbol.type` to match. `_current_env`
+        // becomes the actually-applied subset of `target`.
+        set_env(target: NARROW_ENV) is
+            restore_all();
+
+            let applied = NARROW_ENV();
+
+            if target.is_bottom then
+                applied.is_bottom = true;
+            else
+                for v in target.variables do
+                    if let t = target.narrowed_type_of(v) then
+                        if _apply_one(v, t) then
+                            applied.set_narrow(v, t);
+                        fi
+                    fi
+                od
+
+                for v in target.assigned_variables do
+                    applied.set_assigned(v);
+                od
+
+                for f in target.called_methods do
+                    applied.set_called(f);
+                od
+
+                for v in target.non_null_variables do
+                    applied.set_non_null(v);
+                od
+
+                for p in target.non_null_paths do
+                    applied.set_non_null_path(p);
+                od
+
+                for p in target.narrowed_paths do
+                    if let t = target.narrowed_type_of_path(p) then
+                        applied.set_path_narrow(p, t);
+                    fi
+                od
+            fi
+
+            // the set_* establishment calls above cleared the records
+            // a branch entry must carry forward
+            applied.adopt_crossings_from(target);
+            applied.adopt_creation_marks_from(target);
+
+            _current_env = applied;
+        si
+
+        // Snapshot the current env as a speculation baseline (see
+        // `_speculation`). Pairs with `commit` or `roll_back`; usually
+        // reached through the `speculate_then_*` disposables.
+        speculate() is
+            _speculation.push(_current_env.copy());
+            PURE_SLOTS.speculate();
+        si
+
+        // Reset the current env to the active baseline without dropping
+        // it, so a retry re-walk starts from the facts the first walk
+        // saw rather than the ones it recorded. A no-op when no
+        // speculation is active, so callers that may or may not run
+        // inside a speculation can call it unconditionally.
+        restore() is
+            if _speculation.count > 0 then
+                set_env(_speculation.peek());
+            fi
+        si
+
+        // Drop the active baseline, keeping the current env — the
+        // walk's narrowing facts survive into the enclosing expression.
+        commit() is
+            assert _speculation.count >= 1 else "flow commit with no active speculation";
+
+            _speculation.pop();
+            PURE_SLOTS.commit();
+        si
+
+        // Drop the active baseline and restore the current env to it,
+        // discarding the speculative walk's narrowing facts.
+        roll_back() is
+            assert _speculation.count >= 1 else "flow roll_back with no active speculation";
+
+            set_env(_speculation.pop());
+            PURE_SLOTS.roll_back();
+        si
+
+        speculate_then_commit() -> FLOW_SPECULATE_THEN_COMMIT =>
+            FLOW_SPECULATE_THEN_COMMIT(self);
+
+        speculate_then_roll_back() -> FLOW_SPECULATE_THEN_ROLL_BACK =>
+            FLOW_SPECULATE_THEN_ROLL_BACK(self);
+
+        // Mark the current point unreachable (after return / throw /
+        // break / continue).
+        set_unreachable() is
+            set_env(NARROW_ENV.bottom());
+        si
+
+        // Assignment transfer plus re-narrow: a write to `v`
+        // invalidates any narrow on it and any presence fact, since
+        // the new value may not satisfy them; when the assigned
+        // value's static type is a strict refinement of the declared
+        // type, `v` then re-narrows to it. Returns the narrowed-to
+        // view when one was applied, else null.
+        //
+        // The editor hint reflects which of the two halves fired: a
+        // re-narrow to a different view renders both edges in one
+        // hint (the killed view and the new one) with the usual
+        // reassignment note; a re-narrow to the same view is a plain
+        // introduction; a kill with no new narrow keeps the plain
+        // kill hint.
+        on_assignment(v: Symbol, location: LOCATION, value_type: Type?) -> Type? is
+            // The in-force facts, captured before the transfer drops
+            // them, so the hint can name the killed view.
+            let killed_narrow = _current_env.narrowed_type_of(v);
+            let killed_presence = _current_env.is_non_null(v);
+
+            _assignment_transfer(v);
+
+            let narrowed = narrow_to_assigned_value(v, value_type);
+
+            if !_logger.want_hint_for(location) then
+                return narrowed;
+            fi
+
+            let reason = "{v.name} is reassigned";
+
+            if narrowed? then
+                if killed_narrow? /\ !killed_narrow.matches(narrowed) then
+                    _logger.inlay(
+                        location,
+                        "narrowing-assign",
+                        "◄►",
+                        "{v.name}\n    ◄ {INLAY_TYPE.render(killed_narrow)}\n    ► {INLAY_TYPE.render(narrowed)}\n\n{reason}");
+                else
+                    _logger.inlay(location, "narrowing-assign", "►", INLAY_TYPE.render(narrowed));
+                fi
+
+                return narrowed;
+            fi
+
+            let declared = declared_type_of(v);
+
+            if killed_narrow? then
+                _logger.inlay(location, "narrowing-killed", "◄", "{v.name}\n    ◄ {declared}\n\n{reason}");
+            elif killed_presence then
+                // The presence bit is redundant with a non-optional
+                // declared type — a non-optional variable is always
+                // known to hold a value, so the bit adds nothing over
+                // the declaration and the kill hint would confuse the
+                // reader by pointing at a narrowing that never carried
+                // information.
+                if declared? /\ declared.is_optional then
+                    _logger.inlay(location, "narrowing-killed", "◄", "{v.name}\n    ◄ {declared}\n\n{reason}");
+                fi
+            fi
+
+            return null;
+        si
+
+        // The assignment transfer proper: drop every fact the write
+        // invalidates and restore the declared view.
+        _assignment_transfer(v: Symbol) is
+            _mark_literal_impure();
+
+            _current_env.drop_non_null(v);
+
+            // Reassigning the root redirects every `v.…` path; and a
+            // bare field target writes `self.<v>`, so any path reading
+            // through that field — on any receiver — is stale too.
+            _current_env.drop_paths_rooted_at(v);
+
+            if isa Semantic.Symbols.Field(v) then
+                _current_env.drop_paths_through(v);
+            fi
+
+            if !_current_env.contains(v) then
+                return;
+            fi
+
+            _current_env.drop_narrow(v);
+
+            let declared = declared_type_of(v);
+
+            if declared? then
+                _set_symbol_type(v, declared);
+            fi
+        si
+
+        // Narrow `v` to the static type of a just-assigned value when
+        // that type is more specific than the declared type, so
+        // `if isa CAT(pet) then pet = DOG()` leaves `pet` viewed as DOG
+        // rather than reverting all the way to the declared Animal. The
+        // assigned value always typechecks against the declared type, so
+        // this only ever tightens, never relaxes. Runs after the
+        // assignment transfer has reset the target to its declared
+        // type. Returns the narrowed-to view when a narrow was
+        // applied, else null.
+        //
+        // Locals only (locals and parameters): a field target wants the
+        // path-narrow plumbing (`self.field` is an access path, and its
+        // facts die at calls), not a symbol narrow.
+        //
+        // A null RHS contributes no type information — `x = null` is
+        // fully described by the presence facts the assignment transfer
+        // already maintains.
+        //
+        // A value-type RHS never narrows: storing a value type into a
+        // wider slot boxes it, so the slot holds a box reference and a
+        // bare-struct view would misdescribe every subsequent load —
+        // plain reads carry no unbox projection. (A value-type slot
+        // can't be narrowed anyway: structs have no subtypes.)
+        //
+        // Skipped on an unreachable edge: a bottom environment ignores
+        // `set_narrow`, and applying the symbol-type half without the
+        // environment record would leave a stale narrow no later
+        // restore point knows about.
+        narrow_to_assigned_value(v: Symbol, value_type: Type?) -> Type? is
+            if
+                !value_type? \/
+                value_type.is_null \/
+                value_type.is_value_type \/
+                !v.is_local \/
+                _current_env.is_bottom
+            then
+                return null;
+            fi
+
+            // Only a strict refinement narrows. A mutually-assignable
+            // RHS type is a different spelling of the same slot, not
+            // extra information.
+            let v_type = v.type;
+
+            if v_type? /\ value_type.is_assignable_from(v_type) then
+                return null;
+            fi
+
+            // Tuple element names sit outside the subtype lattice: an
+            // unnamed tuple is assignable where a named-element tuple
+            // is expected, at any nesting depth (an unnamed-tuple array
+            // refines an Iterable of named tuples), so a view that
+            // mentions a tuple can silently lose the declared names and
+            // break by-name element access. Keep the declared spelling.
+            if _mentions_tuple(value_type, 0) then
+                return null;
+            fi
+
+            if _apply_one(v, value_type) then
+                // Locals take no crossings — a callee cannot reach one
+                // — so the narrow needs no creation index.
+                _current_env.set_narrow(v, value_type);
+                return v.type;
+            fi
+
+            return null;
+        si
+
+        // True when `t` is or mentions a tuple type anywhere in its
+        // type arguments. Depth-capped: type arguments cannot cycle,
+        // but the cap keeps a malformed recursive shape from spinning.
+        _mentions_tuple(t: Type?, depth: int) -> bool is
+            if !t? \/ depth > 8 then
+                return false;
+            fi
+
+            // Tuple types appear in three shapes: the ghūl-side
+            // Types.TUPLE, and the reflected ValueTuple wrappers,
+            // which carry `is_value_tuple` / `tuple_element_names`
+            // but are not TUPLE subclasses.
+            if isa Semantic.Types.TUPLE(t) \/ t.is_value_tuple \/ t.tuple_element_names? then
+                return true;
+            fi
+
+            for a in t.arguments do
+                if _mentions_tuple(a, depth + 1) then
+                    return true;
+                fi
+            od
+
+            return false;
+        si
+
+        // Call transfer. Narrowing is optimistic: a call drops no
+        // heap fact. Instead the call is recorded as a crossing
+        // against every heap fact live over it, and each later use of
+        // such a fact is judged against its crossings — a crossing
+        // whose callee provably left the fact alone is discharged,
+        // and relying on a fact with an undischarged crossing is a
+        // compile error at the use site. Locals are unreachable to
+        // the callee and take no crossings. Fires once a call
+        // expression has been compiled — its receiver has already
+        // been read, so the call's own narrowed access is unaffected.
+        on_call(location: LOCATION) is
+            on_call_of(location, null);
+        si
+
+        // The call transfer, told which function is being called.
+        // `callee` is null where the site has no single bounded
+        // callee — a closure invocation, an interpolation — which no
+        // judgement can discharge. A call does not bump the heap
+        // epoch: facts survive it optimistically, carrying the
+        // crossing, and the epoch is what direct stores use to make
+        // snapshot-derived environments drop. The crossing is also
+        // logged so controlled walks can attach it to environments
+        // derived from snapshots taken before the call ran.
+        on_call_of(location: LOCATION, callee: Semantic.Symbols.Function?) is
+            _mark_literal_impure();
+
+            let crossing = CROSSING(location, callee);
+
+            _current_env.note_crossing(crossing);
+            _crossing_log.add(crossing);
+
+            _record_kill_candidates(crossing);
+        si
+
+        // Editor-only: describe each heap fact the call was crossed
+        // over, so that once the effect relations are solved the ones
+        // the callee cannot be shown to have left alone can be marked
+        // at the call. Rendering happens here because the narrowed and
+        // declared types are only in scope while the environment still
+        // holds the fact - the same reason the kill reports below take
+        // their text at the point of the kill. The description is the
+        // fact alone; the report adds the wording, because several
+        // facts can share one call site and it renders them together.
+        _record_kill_candidates(crossing: CROSSING) is
+            if !_logger.want_hint_for(crossing.location) then
+                return;
+            fi
+
+            // A store-free callee is cleared by the solved relations
+            // whatever the fact, so recording and rendering one would
+            // only be undone later.
+            let callee = crossing.callee;
+
+            if callee? /\ callee.is_store_free then
+                return;
+            fi
+
+            for v in _current_env.heap_fact_variables do
+                let narrowed = _current_env.narrowed_type_of(v);
+                let declared = declared_type_of(v);
+
+                if narrowed? then
+                    RELIANCES.note_kill_candidate(
+                        KILL_CANDIDATE(crossing, v, null, false, "{v.name} ◄ {declared}"));
+                elif declared? /\ declared.is_optional then
+                    // A presence bit on a non-optional declaration
+                    // carries nothing over the declaration itself, so
+                    // marking it would point at a narrowing that never
+                    // said anything.
+                    RELIANCES.note_kill_candidate(
+                        KILL_CANDIDATE(crossing, v, null, true, "{v.name} ◄ {declared}"));
+                fi
+            od
+
+            for p in _current_env.heap_fact_paths do
+                // A member-access path has no single declared type to
+                // name as the revert target, so the description is the
+                // path alone.
+                let is_presence = !_current_env.narrowed_type_of_path(p)?;
+
+                RELIANCES.note_kill_candidate(
+                    KILL_CANDIDATE(crossing, null, p, is_presence, "{p}"));
+            od
+        si
+
+        // Position marker into the call-crossing log, paired with the
+        // adopt_crossings_* methods below: an environment derived
+        // from a snapshot never saw the calls walked after the
+        // snapshot was taken, so their crossings are attached to its
+        // heap facts before it comes into force. This replaces the
+        // epoch drop for calls; direct stores still bump the epoch,
+        // and snapshot consumers still drop everything on it.
+        crossing_mark: int => _crossing_log.count;
+
+        // Record the log position at which a condition-leaf test
+        // expression compiles. Called as the leaf's node is walked;
+        // the first stamp wins (see `_test_site_marks`).
+        note_test_site(expr: Trees.Expressions.Expression) is
+            if !_test_site_marks.contains_key(expr) then
+                _test_site_marks[expr] = _crossing_log.count;
+            fi
+        si
+
+        // The log position a leaf test was first walked at, or null
+        // when no walk stamped it.
+        test_site_mark_of(expr: Trees.Expressions.Expression) -> int? is
+            let mark mut = 0;
+
+            if _test_site_marks.try_get_value(expr, mark ref) then
+                return mark;
+            fi
+
+            return null;
+        si
+
+        adopt_crossings_since(env: NARROW_ENV, mark: int) is
+            adopt_crossings_between(env, mark, _crossing_log.count);
+        si
+
+        adopt_crossings_between(env: NARROW_ENV, from_mark: int, to_mark: int) is
+            for i in from_mark..to_mark do
+                env.note_crossing_at(_crossing_log[i], i);
+            od
+        si
+
+        // Emit a kill hint for each tracked path about to be dropped,
+        // deduplicating a path carrying both a narrow and a presence
+        // fact. When `getter_only`, restricts to getter-bearing paths —
+        // the subset a heap store discards. Gated once on the call
+        // location so the set is not built during a normal compile.
+        _report_dropped_paths(location: LOCATION, reason: string, getter_only: bool) is
+            if !_logger.want_hint_for(location) then
+                return;
+            fi
+
+            let doomed = Collections.SET[ACCESS_PATH]();
+
+            for p in _current_env.narrowed_paths do
+                if !getter_only \/ p.has_getter_hop then
+                    doomed.add(p);
+                fi
+            od
+
+            for p in _current_env.non_null_paths do
+                if !getter_only \/ p.has_getter_hop then
+                    doomed.add(p);
+                fi
+            od
+
+            for p in doomed do
+                _report_path_kill(p, location, reason);
+            od
+        si
+
+        // Heap-store transfer: a direct store — to a field, a
+        // property, an index or any member path — can change what any
+        // property getter returns, so property facts cannot survive
+        // it. Field facts do: a store to one field cannot alter
+        // another field, and a store to the narrowed field itself is
+        // handled by the assignment transfer. Local facts are
+        // unaffected.
+        on_heap_store(location: LOCATION) is
+            _drop_property_facts(location, "a store here may change it");
+        si
+
+        // ==== reliance judgement ====
+        //
+        // A use that leans on a heap fact — a load compiled at the
+        // narrowed type, or an optional read compiled as present — is
+        // checked against the fact's crossings. Every crossing must
+        // be discharged: the callee provably left the fact alone.
+        // Anything less is an error at the use site: the value may
+        // have changed since the fact was proven, and the emitted
+        // code would trust a stale view. The remedy at the use site is
+        // to re-establish — test again, unwrap with `!`, or copy to a
+        // local before the call.
+
+        // A crossing is discharged when the callee provably left the
+        // fact alone: a store-free callee writes nothing at all; a
+        // receiver-interior callee writes only its own receiver's
+        // BCL-internal state, which no field is, so it leaves field
+        // facts alone but can change what a getter reads.
+        _crossing_discharged(crossing: CROSSING, reads_through_getter: bool) -> bool is
+            let callee = crossing.callee;
+
+            return
+                callee? /\
+                (callee.is_store_free \/
+                    (!reads_through_getter /\ callee.writes_only_receiver_interior));
+        si
+
+        _first_undischarged(
+            crossings: Collections.LIST[CROSSING]?,
+            reads_through_getter: bool
+        ) -> CROSSING? is
+            if !crossings? then
+                return null;
+            fi
+
+            for c in crossings do
+                if !_crossing_discharged(c, reads_through_getter) then
+                    return c;
+                fi
+            od
+
+            return null;
+        si
+
+        // The crossings the inline filter cannot discharge, snapshot
+        // so later mutation of the fact's own list cannot reach a
+        // pending event. Null when every crossing is discharged.
+        _undischarged_crossings(
+            crossings: Collections.LIST[CROSSING]?,
+            reads_through_getter: bool
+        ) -> Collections.LIST[CROSSING]? is
+            if !crossings? then
+                return null;
+            fi
+
+            let kept: Collections.LIST[CROSSING]? mut = null;
+
+            for c in crossings do
+                if !_crossing_discharged(c, reads_through_getter) then
+                    if !kept? then
+                        kept = Collections.LIST[CROSSING]();
+                    fi
+
+                    kept.add(c);
+                fi
+            od
+
+            return kept;
+        si
+
+        // Provenance for a load of `v`'s in-force facts, or null when
+        // no fact carries a crossing the inline tiers cannot
+        // discharge. `wide_type` is the value's un-narrowed type, so
+        // the consumption judge can tell a use the wide type already
+        // satisfies from one that leans on the fact.
+        provenance_for_symbol(location: LOCATION, v: Symbol, wide_type: Type?) -> RELIANCE_PROVENANCE? is
+            if !wide_type? then
+                return null;
+            fi
+
+            if !isa Semantic.Symbols.Field(v) /\ !isa Semantic.Symbols.Property(v) then
+                return null;
+            fi
+
+            RELIANCES.loads_consulted = RELIANCES.loads_consulted + 1;
+
+            let getter = isa Semantic.Symbols.Property(v);
+            let narrow_in_force = _current_env.contains(v);
+            let presence_in_force = _current_env.is_non_null(v);
+
+            if !narrow_in_force /\ !presence_in_force then
+                return null;
+            fi
+
+            let narrow_crossings =
+                if narrow_in_force then
+                    _undischarged_crossings(_current_env.narrow_crossings_of(v), getter)
+                else
+                    null
+                fi;
+
+            let presence_crossings =
+                if presence_in_force then
+                    _undischarged_crossings(_current_env.non_null_crossings_of(v), getter)
+                else
+                    null
+                fi;
+
+            let getter_unproven = !_getter_proven_inline(v);
+
+            if !narrow_crossings? /\ !presence_crossings? /\ !getter_unproven then
+                return null;
+            fi
+
+            RELIANCES.loads_stamped = RELIANCES.loads_stamped + 1;
+
+            return RELIANCE_PROVENANCE(location, v.name, v, null, wide_type, narrow_in_force, presence_in_force, narrow_crossings, presence_crossings, getter_unproven);
+        si
+
+        provenance_for_path(location: LOCATION, path: ACCESS_PATH, wide_type: Type?) -> RELIANCE_PROVENANCE? is
+            if !wide_type? then
+                return null;
+            fi
+
+            RELIANCES.loads_consulted = RELIANCES.loads_consulted + 1;
+
+            let getter = path.has_getter_hop;
+            let narrow_in_force = _current_env.narrowed_type_of_path(path)?;
+            let presence_in_force = _current_env.is_non_null_path(path);
+
+            if !narrow_in_force /\ !presence_in_force then
+                return null;
+            fi
+
+            let narrow_crossings =
+                if narrow_in_force then
+                    _undischarged_crossings(_current_env.path_narrow_crossings_of(path), getter)
+                else
+                    null
+                fi;
+
+            let presence_crossings =
+                if presence_in_force then
+                    _undischarged_crossings(_current_env.path_presence_crossings_of(path), getter)
+                else
+                    null
+                fi;
+
+            let getter_unproven = !_path_getters_proven_inline(path);
+
+            if !narrow_crossings? /\ !presence_crossings? /\ !getter_unproven then
+                return null;
+            fi
+
+            RELIANCES.loads_stamped = RELIANCES.loads_stamped + 1;
+
+            return RELIANCE_PROVENANCE(location, "{path}", null, path, wide_type, narrow_in_force, presence_in_force, narrow_crossings, presence_crossings, getter_unproven);
+        si
+
+
+
+        // Whether the fact-formation tier proves the getter a fact
+        // reads through - the same Property.narrowable_getter rule
+        // the formation gates apply, so with the gates in place this
+        // never fails. It is kept as a safety net: should a fact ever
+        // arrive through a getter the tier no longer proves (a stale
+        // incremental state, a future gate change), the use records
+        // an obligation for the deferred judge instead of silently
+        // leaning on the getter.
+        _getter_proven_inline(m: Symbol) -> bool is
+            if !isa Semantic.Symbols.Property(m) then
+                return true;
+            fi
+
+            return (cast Semantic.Symbols.Property(m)).narrowable_getter;
+        si
+
+        _path_getters_proven_inline(path: ACCESS_PATH) -> bool is
+            if !_getter_proven_inline(path.root) then
+                return false;
+            fi
+
+            for m in path.members do
+                if !_getter_proven_inline(m) then
+                    return false;
+                fi
+            od
+
+            return true;
+        si
+
+
+
+
+
+
+
+
+        // Whether every crossing recorded against `v`'s facts is
+        // discharged. Gates the redundancy warnings: an `!` or a
+        // re-test after an undischarged crossing is load-bearing —
+        // it is the remedy the reliance error asks for — and must not
+        // be reported redundant.
+        symbol_fact_validated(v: Symbol) -> bool is
+            if !isa Semantic.Symbols.Field(v) /\ !isa Semantic.Symbols.Property(v) then
+                return true;
+            fi
+
+            let getter = isa Semantic.Symbols.Property(v);
+
+            return
+                _getter_proven_inline(v) /\
+                !_first_undischarged(_current_env.non_null_crossings_of(v), getter)? /\
+                !_first_undischarged(_current_env.narrow_crossings_of(v), getter)?;
+        si
+
+        path_fact_validated(path: ACCESS_PATH) -> bool =>
+            _path_getters_proven_inline(path) /\
+            !_first_undischarged(_current_env.path_presence_crossings_of(path), path.has_getter_hop)? /\
+            !_first_undischarged(_current_env.path_narrow_crossings_of(path), path.has_getter_hop)?;
+
+        _drop_property_facts(location: LOCATION, reason: string) is
+            _heap_epoch = _heap_epoch + 1;
+            _mark_literal_impure();
+
+            let stale = Collections.SET[Symbol]();
+
+            for v in _current_env.variables do
+                if isa Semantic.Symbols.Property(v) then
+                    stale.add(v);
+                fi
+            od
+
+            for v in _current_env.non_null_variables do
+                if isa Semantic.Symbols.Property(v) then
+                    stale.add(v);
+                fi
+            od
+
+            for v in stale do
+                _report_kill(v, location, reason);
+                forget(v);
+            od
+
+            _report_dropped_paths(location, reason, true);
+            _current_env.drop_getter_paths();
+        si
+
+        // Member-store transfer: a store through `receiver.member`
+        // invalidates the member's own facts and every path reading
+        // through it. Keyed on the member symbol, not the receiver —
+        // the written receiver may alias whatever receiver a fact was
+        // established on, so `other.f = e` must invalidate a fact
+        // proven on `self`'s bare `f` just as `f = e` would.
+        on_member_store(member: Symbol?) is
+            if !member? then
+                return;
+            fi
+
+            _heap_epoch = _heap_epoch + 1;
+            _mark_literal_impure();
+
+            forget(member);
+
+            _current_env.drop_paths_rooted_at(member);
+            _current_env.drop_paths_through(member);
+        si
+
+        // Drop a single field's narrow + presence facts — the call
+        // transfer applied to one variable.
+        forget(v: Symbol) is
+            if _current_env.contains(v) then
+                _current_env.drop_narrow(v);
+
+                let declared = declared_type_of(v);
+
+                if declared? then
+                    _set_symbol_type(v, declared);
+                fi
+            fi
+
+            _current_env.drop_non_null(v);
+        si
+
+        // Exempt `v` from the call transfer until its frame is released.
+        // See RECEIVER_SHIELD.push.
+        push_shield(v: Symbol?) -> SHIELD_FRAME? => _shield.push(v);
+
+        // Release a frame from `push_shield`, returning whether a call
+        // dropped the receiver. See RECEIVER_SHIELD.release.
+        release_shield(frame: SHIELD_FRAME?) -> bool => _shield.release(frame);
+
+        // Register `v` as a deferred-init local subject to the
+        // definite-assignment use-before-assignment check.
+        track_deferred(v: Symbol) is
+            _tracked.add(v);
+        si
+
+        // True iff `v` is a tracked deferred-init local.
+        is_tracked(v: Symbol) -> bool => _tracked.contains(v);
+
+        // True iff `v` is definitely assigned at the current point.
+        is_assigned(v: Symbol) -> bool => _current_env.is_assigned(v);
+
+        // Record `v` as definitely assigned at the current point.
+        mark_assigned(v: Symbol) is
+            _current_env.set_assigned(v);
+        si
+
+        // Record a method of the enclosing type as called on every path
+        // reaching here, and read the set back at the end of a body.
+        mark_called(f: Symbol) is
+            _current_env.set_called(f);
+        si
+
+        called_methods: Collections.Iterable[Symbol] => _current_env.called_methods;
+
+        // The symbols definitely assigned at the current point.
+        assigned_variables: Collections.Iterable[Symbol] => _current_env.assigned_variables;
+
+        // True iff `v` is known to hold a value at the current point.
+        is_non_null(v: Symbol) -> bool => _current_env.is_non_null(v);
+
+        // Record `v` as known to hold a value at the current point —
+        // used by the `x!` (unwrap) transfer.
+        mark_non_null(v: Symbol) is
+            _current_env.creation_mark = crossing_mark;
+            _current_env.set_non_null(v);
+        si
+
+        // Editor-only narrowing-introduction hint emitted at a site
+        // outside the condition analyzer (unwrap `x!`, non-optional
+        // initializer / assignment). Same open-files gating as
+        // `_report_kill`; each caller supplies its own slug so the
+        // editor can suppress it independently. `detail` carries only the
+        // narrowed-to type; NARROWING_INLAY_MERGER builds the hover text.
+        report_narrowing_site(location: LOCATION, code: string, label: string, detail: string) is
+            if !_logger.want_hint_for(location) then
+                return;
+            fi
+
+            _logger.inlay(location, code, label, detail);
+        si
+
+        // True iff the member-access `path` is known to hold a value
+        // at the current point — consulted at member-load sites to
+        // narrow the access optional -> non-optional.
+        is_non_null_path(path: ACCESS_PATH?) -> bool => path? /\ _current_env.is_non_null_path(path);
+
+        // The type recorded for `path` at the current point, or null
+        // when none — consulted at member-load sites to narrow the
+        // access to its recorded static subtype.
+        narrowed_type_of_path(path: ACCESS_PATH?) -> Type? =>
+            if path? then _current_env.narrowed_type_of_path(path) else null fi;
+
+        // Compose a loaded type with the recorded path narrow into a
+        // sound view type, or null when the narrow cannot be applied.
+        // The rules mirror `_apply_one` for symbol narrowing:
+        //   - reject error / inferred targets
+        //   - strict-subtype narrow -> target
+        //   - sibling / class+trait -> INTERSECTION(loaded, target)
+        //   - reject supertype broadening
+        // Returns null when the composed view equals the loaded type
+        // itself, so callers can skip the wrap in that case.
+        compose_path_narrow(loaded: Type?, target: Type?) -> Type? is
+            if !loaded? \/ !target? then
+                return null;
+            fi
+
+            if target.is_error \/ target.is_inferred then
+                return null;
+            fi
+
+            let effective_target: Type mut = target;
+
+            if !loaded.is_optional /\ target.is_optional then
+                let stripped = target.as_non_optional();
+                effective_target = stripped;
+            fi
+
+            if loaded.matches(effective_target) then
+                return null;
+            fi
+
+            // A bounded type variable narrows through its bound, the same
+            // way `_apply_one` and member access resolve through it.
+            let loaded_effective =
+                if let bound = loaded.bound_type then bound else loaded fi;
+
+            if loaded_effective.is_assignable_from(effective_target) then
+                return effective_target;
+            fi
+
+            let both_reference = !loaded_effective.is_value_type /\ !effective_target.is_value_type;
+            let loaded_supertypes_target = effective_target.is_assignable_from(loaded_effective);
+
+            if !both_reference \/ loaded_supertypes_target then
+                return null;
+            fi
+
+            let composed = INTERSECTION.try_create(loaded_effective, effective_target);
+
+            if !composed? \/ composed.matches(loaded_effective) then
+                return null;
+            fi
+
+            return composed;
+        si
+
+        // Apply one narrow if it is sound. Two cases:
+        //
+        //   - Strict-subtype narrow: `t` is a static subtype of v's
+        //     declared type. Narrow v.type to t directly.
+        //
+        //   - Sibling/class+trait narrow: neither t nor declared
+        //     subtypes the other, both are reference types. The
+        //     runtime `isa` check guarantees the value satisfies
+        //     both — narrow v.type to an INTERSECTION of declared
+        //     and t so subsequent member lookups can see both
+        //     sides. (For pure trait→trait or class→trait
+        //     narrowings the user's earlier "drops the declared
+        //     side" trade-off becomes a non-issue.)
+        //
+        // Supertype broadening is still rejected — narrowing must
+        // be sound and informative; widening declared → t where t
+        // supertypes declared would lose information.
+        //
+        // Captures the declared type on first narrow. Returns true
+        // when the narrow was applied.
+        _apply_one(v: Symbol, t: Type) -> bool is
+            if !v.type? then
+                return false;
+            fi
+
+            if t.is_error \/ t.is_inferred then
+                return false;
+            fi
+
+            let current = v.type!;
+            let declared = declared_type_of(v);
+
+            // Strict non-nullable-by-default: a non-optional slot
+            // can't be narrowed to an optional type. If `current`
+            // is already non-optional (the if-X? check has fired)
+            // and the narrowing target is optional, strip the
+            // optional layer — the narrow is from a non-null value
+            // to a more specific type, never re-introducing
+            // optionality.
+            let target: Type mut = t;
+            if !current.is_optional /\ target.is_optional then
+                let stripped = target.as_non_optional();
+                target = stripped;
+            fi
+
+            if !declared? \/ current.matches(target) then
+                return false;
+            fi
+
+            // A bounded type variable narrows through its bound: a value
+            // of `T: List[E]` can be a `CONS[E]` at runtime even though
+            // `CONS[E]` subtypes the bound, not `T` itself. Evaluate the
+            // narrow against the bound (what `T` is), not the variable.
+            // The narrowed view stays a valid subtype; IL loads it against
+            // the variable's declared `!!N` with a checked cast.
+            let current_effective =
+                if let bound = current.bound_type then bound else current fi;
+
+            let narrowed: Type? mut = null;
+
+            if current_effective.is_assignable_from(target) then
+                // Strict-subtype narrow: target is a static subtype of
+                // the current (possibly already-narrowed) type.
+                narrowed = target;
+            else
+                // Sibling / class+trait relaxation: extend current
+                // with target. Factory drops redundant supertypes and
+                // collapses to a plain type if a single survivor
+                // remains. Composes correctly with an already-
+                // narrowed intersection — adding a second trait
+                // produces a three-element intersection rather
+                // than replacing.
+                let both_reference = !current_effective.is_value_type /\ !target.is_value_type;
+                let current_supertypes_t = target.is_assignable_from(current_effective);
+
+                if !both_reference \/ current_supertypes_t then
+                    return false;
+                fi
+
+                narrowed = INTERSECTION.try_create(current_effective, target);
+
+                if !narrowed? then
+                    // Unrelated concrete identities — no value can be
+                    // both, so there is no narrowed view to apply.
+                    return false;
+                fi
+
+                if narrowed.matches(current) then
+                    return false;
+                fi
+            fi
+
+            if !_declared.contains_key(v) then
+                _declared[v] = current;
+            fi
+
+            _set_symbol_type(v, narrowed);
+
+            return true;
+        si
+    si
+
+    // RAII narrowing-env speculation, mirroring the logger's
+    // LOGGER_SPECULATE_THEN_* disposables. Construct to snapshot the
+    // current env as a baseline; a retry re-walk resets to it through
+    // `_flow.restore()`; on scope exit COMMIT keeps the walked facts,
+    // ROLL_BACK discards them. Pair the flow disposable with the logger
+    // disposable at any site that speculatively re-walks expressions, so
+    // the narrowing facts and the diagnostics roll back together.
+    struct FLOW_SPECULATE_THEN_COMMIT: Disposable is
+        _flow: NARROWING_FLOW?;
+
+        init(flow: NARROWING_FLOW) is
+            _flow = flow;
+            flow.speculate();
+        si
+
+        commit() is
+            _flow!.commit();
+            _flow = null;
+        si
+
+        cancel() is
+            _flow = null;
+        si
+
+        dispose() is
+            if _flow? then
+                _flow.commit();
+                _flow = null;
+            fi
+        si
+    si
+
+    struct FLOW_SPECULATE_THEN_ROLL_BACK: Disposable is
+        _flow: NARROWING_FLOW?;
+
+        init(flow: NARROWING_FLOW) is
+            _flow = flow;
+            flow.speculate();
+        si
+
+        roll_back() is
+            _flow!.roll_back();
+            _flow = null;
+        si
+
+        cancel() is
+            _flow = null;
+        si
+
+        dispose() is
+            if _flow? then
+                _flow.roll_back();
+                _flow = null;
+            fi
+        si
+    si
+si

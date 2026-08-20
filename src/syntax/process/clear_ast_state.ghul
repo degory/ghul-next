@@ -136,6 +136,8 @@ namespace Syntax.Process is
         visit(`await: Expressions.AWAIT) is `await.clear(); si
         visit(spill: Expressions.SPILL) is spill.clear(); si
         visit(`isa: Expressions.ISA) is `isa.clear(); si
+
+        visit(field_equals: Expressions.FIELD_EQUALS) is field_equals.clear(); si
         visit(`isa: Expressions.TYPEOF) is `isa.clear(); si
         visit(`default: Expressions.DEFAULT) is `default.clear(); si
         visit(function: Expressions.FUNCTION) is function.clear(); si
@@ -145,7 +147,6 @@ namespace Syntax.Process is
         visit(list: Expressions.LIST) is list.clear(); si
         visit(call: Expressions.CALL) is call.clear(); si
         visit(member: Expressions.MEMBER) is member.clear(); si
-        visit(member: Expressions.EXPLICIT_SPECIALIZATION) is member.clear(); si
         visit(ambiguous_expression: Expressions.AMBIGUOUS_EXPRESSION) is ambiguous_expression.clear(); si
         visit(ambiguous_expression: Expressions.GENERIC_APPLICATION) is ambiguous_expression.clear(); si
         visit(index: Expressions.INDEX) is index.clear(); si

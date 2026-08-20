@@ -1,0 +1,213 @@
+namespace Analysis.Tests is
+    use Collections.LIST;
+
+    use Analysis.Protocol.ANALYSER_PROCESS;
+    use Analysis.Protocol.DIAGNOSTIC;
+    use Analysis.Protocol.EDIT_FILE;
+    use Analysis.Protocol.Response;
+    use Analysis.Protocol.user_diagnostics_of;
+
+    use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+    use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute;
+    use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute;
+    use Assertions;
+
+    // Cross-file store-free knowledge trues up at the debounced
+    // COMPILE without a whole-project rebuild: the effects solve
+    // re-derives every function's answer and the deferred reliance
+    // judge re-judges every file's recorded reliances against it, so
+    // an edit that changes a callee's store-freedom updates its
+    // callers' diagnostics without recompiling them.
+    @TestClass()
+    class STORE_FREE_TRUE_UP_TESTS is
+        init() is si
+
+        COMPILE_RUN: string => "compile-run";
+
+        // `churn` reads only - store-free.
+        probe_store_free() -> string =>
+            "namespace SFTarget is\n"
+            "    class PROBE is\n"
+            "        s: int static public;\n"
+            "\n"
+            "        churn() -> int static is\n"
+            "            let w = s;\n"
+            "            return w;\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // Interface-identical, but `churn` nulls the member the
+        // caller's narrowing is about — the one store the judge can
+        // never discharge for it.
+        probe_storing() -> string =>
+            "namespace SFTarget is\n"
+            "    class PROBE is\n"
+            "        s: int static public;\n"
+            "\n"
+            "        churn() -> int static is\n"
+            "            HOLDER.v = null;\n"
+            "            return s;\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // HOLDER.check narrows the property `v` and keeps that
+        // narrowing across the churn() call only while churn provably
+        // leaves it alone - a local's narrowing would survive any
+        // call, but a member's dies at a call that can write it:
+        // `return v` needs the narrowed int.
+        caller_source() -> string =>
+            "namespace SFTarget is\n"
+            "    class HOLDER is\n"
+            "        v: int? static public;\n"
+            "\n"
+            "        init() is si\n"
+            "\n"
+            "        check() -> int is\n"
+            "            if v? then\n"
+            "                PROBE.churn();\n"
+            "                return v;\n"
+            "            fi\n"
+            "\n"
+            "            return 0;\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        prime(analyser: ANALYSER_PROCESS) -> LIST[DIAGNOSTIC] is
+            analyser.send_edit_files([
+                EDIT_FILE("sft-probe.ghul", probe_store_free()),
+                EDIT_FILE("sft-caller.ghul", caller_source())
+            ]);
+
+            let diagnostics = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(diagnostics) else "expected DIAGNOSTICS response after EDIT";
+
+            return LIST[DIAGNOSTIC](user_diagnostics_of(diagnostics));
+        si
+
+        edit_probe(analyser: ANALYSER_PROCESS, source: string) is
+            analyser.send_edit("sft-probe.ghul", source);
+
+            let diagnostics = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(diagnostics) else "expected DIAGNOSTICS response after EDIT";
+        si
+
+        compile(analyser: ANALYSER_PROCESS) -> LIST[DIAGNOSTIC] is
+            analyser.send_compile();
+
+            let response = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(response) else "expected DIAGNOSTICS response after COMPILE";
+
+            return LIST[DIAGNOSTIC](user_diagnostics_of(response));
+        si
+
+        summary(diagnostics: LIST[DIAGNOSTIC]) -> string is
+            let result = System.Text.StringBuilder();
+            for d in diagnostics do
+                result.append("\n  ").append(d.to_string());
+            od
+            return result.to_string();
+        si
+
+        // A body edit turns churn storing; the cross-file caller whose
+        // narrowing depended on it is trued up at the next COMPILE -
+        // the error appears, and clears again in reverse, without any
+        // whole-project rebuild.
+        @Test()
+        cross_file_narrowing_trues_up_without_a_rebuild() is
+            let use analyser = ANALYSER_PROCESS();
+
+            let baseline = prime(analyser);
+            are_equal(
+                0,
+                baseline.count,
+                "baseline (store-free churn, narrowing holds) should be clean; got:{summary(baseline)}\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+
+            compile(analyser);
+
+            let runs_before = analyser.stat_count(COMPILE_RUN);
+
+            edit_probe(analyser, probe_storing());
+
+            let after_flip = compile(analyser);
+
+            is_true(
+                after_flip.count > 0,
+                "after churn turns storing, check's narrowing must die and return x must error\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+
+            are_equal(
+                runs_before,
+                analyser.stat_count(COMPILE_RUN),
+                "no whole-project rebuild - the re-solve and re-judge cover the change\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+
+            edit_probe(analyser, probe_store_free());
+
+            let after_restore = compile(analyser);
+
+            are_equal(
+                0,
+                after_restore.count,
+                "restoring store-free churn must clear the caller's error; got:{summary(after_restore)}"
+                "\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+
+            are_equal(
+                runs_before,
+                analyser.stat_count(COMPILE_RUN),
+                "the reverse edit must not rebuild either\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+        si
+
+        // Appending a store-free function nobody references compiles
+        // clean at the next COMPILE without a whole-project rebuild.
+        @Test()
+        appended_member_flip_recompiles_nothing() is
+            let use analyser = ANALYSER_PROCESS();
+
+            let baseline = prime(analyser);
+            are_equal(0, baseline.count, "baseline should be clean; got:{summary(baseline)}");
+
+            compile(analyser);
+
+            let runs_before = analyser.stat_count(COMPILE_RUN);
+
+            // Append a store-free method to PROBE: the class-member
+            // append shape takes the incremental interface path, and
+            // the next COMPILE's solve proves the new body.
+            edit_probe(
+                analyser,
+                "namespace SFTarget is\n"
+                "    class PROBE is\n"
+                "        s: int static public;\n"
+                "\n"
+                "        churn() -> int static is\n"
+                "            let w = s;\n"
+                "            return w;\n"
+                "        si\n"
+                "\n"
+                "        appended() -> int static => 42;\n"
+                "    si\n"
+                "si\n"
+            );
+
+            let after = compile(analyser);
+
+            are_equal(
+                0,
+                after.count,
+                "the appended function should compile clean; got:{summary(after)}\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+
+            are_equal(
+                runs_before,
+                analyser.stat_count(COMPILE_RUN),
+                "an unreferenced append must not trigger a whole-project rebuild\n--- stderr ---\n{analyser.stderr_capture}"
+            );
+        si
+    si
+si

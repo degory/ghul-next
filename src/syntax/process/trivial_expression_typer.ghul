@@ -86,7 +86,26 @@ namespace Syntax.Process is
             return null;
         si
 
+        // Study-only: once compile-expressions has run, every value
+        // expression carries its resolved type, so the same walk can be
+        // repeated knowing what it could not know the first time. This
+        // is how the study measures what running the analysis later
+        // would buy; it is never set during a production run.
+        use_resolved: bool public;
+
         try_type(expression: Trees.Expressions.Expression?) -> Type? is
+            if use_resolved /\ expression? then
+                let resolved = expression.value;
+
+                if resolved? /\ resolved.type? then
+                    return resolved.type;
+                fi
+            fi
+
+            return _try_type(expression);
+        si
+
+        _try_type(expression: Trees.Expressions.Expression?) -> Type? is
             if !expression? then
                 return null;
             fi
@@ -298,10 +317,6 @@ namespace Syntax.Process is
                 return try_collect_operator_candidates(left_type.find_member(member.identifier.name), candidates);
             fi
 
-            if isa Trees.Expressions.EXPLICIT_SPECIALIZATION(target) then
-                return try_collect_call_candidates((cast Trees.Expressions.EXPLICIT_SPECIALIZATION(target)).left, candidates);
-            fi
-
             return false;
         si
 
@@ -426,10 +441,6 @@ namespace Syntax.Process is
         find(name: string) -> Symbol? => _symbol_table.current_scope.find_enclosing(name);
 
         try_find(identifier: Identifiers.Identifier) -> Symbol? is
-            if identifier.name == null then
-                return null;
-            fi
-
             if identifier.qualifier? then
                 let qualifier = try_find(identifier.qualifier);
 

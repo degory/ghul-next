@@ -45,6 +45,17 @@ namespace IR.Values is
             _values.add(value);
         si
 
+        values: Collections.MutableList[Value] => _values;
+
+        // The value the block leaves behind when consumed as an
+        // expression: the earlier entries run for effect only.
+        result_value: Value? =>
+            if _values.count > 0 then
+                _values[_values.count - 1]
+            else
+                null
+            fi;
+
         gen(context: IR.CONTEXT) is
             assert !self.is_emitted else "oops: block value already emitted";
 
@@ -53,7 +64,6 @@ namespace IR.Values is
             // assert self.is_closed else "oops: block is not closed";
             is_emitted = true;
 
-            context.indent();
 
             for value in _values do
                 if value.has_location then
@@ -62,7 +72,6 @@ namespace IR.Values is
                 value.gen(context);
             od
 
-            context.outdent();
         si
 
         to_string() -> string =>

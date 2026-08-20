@@ -22,6 +22,11 @@ namespace Analysis.Protocol is
     // in [@test_cleanup]: the compiler carries persistent global state that
     // `clear_symbols` doesn't fully scrub, so a process can't be safely reused
     // across tests.
+    //
+    // `capabilities` is read off the LISTEN frame inside the try that
+    // blocks for it; every path that leaves the constructor without
+    // setting it throws.
+    @suppress("field-definite-assignment")
     class ANALYSER_PROCESS: Disposable is
         _process: Process;
         _stderr_capture: StringBuilder;
@@ -219,10 +224,7 @@ namespace Analysis.Protocol is
         // that declares in source what it would otherwise reference - the
         // runtime, which declares the compiler's own magic types.
         init(extra_arguments: Iterable[string], without_assemblies: Iterable[string]) is
-            _options = JsonSerializerOptions();
-            // Variant constructor args emit as public CLR fields, not
-            // properties — System.Text.Json's default is to skip fields.
-            _options.include_fields = true;
+            _options = JSON_OPTIONS.create();
 
             let project_directory = find_project_directory();
 

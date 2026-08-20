@@ -53,6 +53,9 @@ namespace Syntax.Process is
 
         is_member_completion: bool => _is_member_completion;
 
+        // The result collections belong to one find_completions call and
+        // are rebuilt at the top of each.
+        @suppress("field-definite-assignment")
         init(
             logger: Logger,
             symbol_table: Semantic.SYMBOL_TABLE,
@@ -325,10 +328,6 @@ namespace Syntax.Process is
             _have_hit = true;
             _is_member_completion = true;
 
-            if member.left == null then
-                return;
-            fi
-
             let symbol = _resolve_member_lhs_symbol(member.left);
 
             if !symbol? then
@@ -438,16 +437,16 @@ namespace Syntax.Process is
         // to for type / namespace references (`TYPE.|`, `Outer.Inner.|`,
         // `IO.|`); null when neither resolves.
         _resolve_member_lhs_symbol(left: Trees.Expressions.Expression) -> Semantic.Symbols.Symbol? is
-            if let value = left.value /\ value.type? /\ value.type!.is_named then
+            if let value = left.value /\ value.type? /\ value.type.is_named then
                 let type = value.type;
 
-                if type? /\ type.is_ref then
+                if type.is_ref then
                     // is_ref implies an element type; the runtime
                     // invariant guarantees get_element_type() non-null.
                     return type.get_element_type()!.symbol;
                 fi
 
-                return type!.symbol;
+                return type.symbol;
             fi
 
             let identifier = left.try_copy_as_identifer();

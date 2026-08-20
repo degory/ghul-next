@@ -56,15 +56,15 @@ namespace Syntax.Process is
             fi
 
             let intrinsic =
-                cast Semantic.Symbols.Function(
+                cast Semantic.Symbols.Function?(
                     target.declare_innate(
                         declaration.location,
                         declaration.name,
-                        declaration.intrinsic_operation!,
+                        declaration.intrinsic_operation,
                         target,
                         null
                     )
-                );
+                )!;
 
             intrinsic.arguments = declaration.arguments;
             intrinsic.argument_names = declaration.argument_names;

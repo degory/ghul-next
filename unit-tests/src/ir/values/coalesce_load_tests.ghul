@@ -6,79 +6,77 @@ namespace IR.Values.UnitTests is
 
     use Source.LOCATION;
 
+    use Semantic.Lookups.InnateSymbolLookup;
+
     use Semantic.Symbols.CLASS;
     use Semantic.Types.NAMED;
     use Semantic.Types.Type;
+    use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute;
+    use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute;
+    use Assertions;
 
     // Focused tests for the IR values backing `?.` coalescing access:
     // STACK_TOP / STACK_TOP_ADDRESS as receiver stand-ins for already-
     // on-stack values, and COALESCE_LOAD emitting the dup / null-test
     // / load / null-sentinel sequence. Type-system fixtures follow
     // the patterns in narrow_env_tests / condition_analysis_tests.
+    @TestClass()
     class COALESCE_LOAD_TESTS is
-        @test()
-
         init() is si
 
         loc() -> LOCATION => LOCATION("test.ghul", 1, 1, 1, 1);
         empty_names() -> LIST[string] => LIST[string]();
 
         make_class_type(name: string) -> Type is
-            let c = CLASS(loc(), loc(), null, name, empty_names(), null);
+            let c = CLASS(loc(), loc(), Semantic.BLOCK_SCOPE(), name, empty_names(), Semantic.BLOCK_SCOPE());
             c.set_type(NAMED(c));
             return c.type!;
         si
 
+        @Test()
         STACK_TOP_should_type_as_the_underlying_value() is
-            @test()
-
             let t = make_class_type("Foo");
             let st = STACK_TOP(t);
 
-            Assert.is_true(st.type?);
-            Assert.are_same(t, st.type);
+            is_true(st.type?);
+            are_same(t, st.type);
         si
 
+        @Test()
         STACK_TOP_should_not_report_address() is
-            @test()
-
             let t = make_class_type("Foo");
             let st = STACK_TOP(t);
 
-            Assert.is_false(st.has_address);
+            is_false(st.has_address);
         si
 
+        @Test()
         STACK_TOP_should_be_lightweight_pure() is
-            @test()
-
             let t = make_class_type("Foo");
             let st = STACK_TOP(t);
 
-            Assert.is_true(st.is_lightweight_pure);
+            is_true(st.is_lightweight_pure);
         si
 
+        @Test()
         STACK_TOP_ADDRESS_should_report_address() is
-            @test()
-
             let t = make_class_type("Foo");
             let sta = STACK_TOP_ADDRESS(t);
 
-            Assert.is_true(sta.has_address);
+            is_true(sta.has_address);
         si
 
+        @Test()
         STACK_TOP_ADDRESS_should_type_as_the_underlying_value() is
-            @test()
-
             let t = make_class_type("Foo");
             let sta = STACK_TOP_ADDRESS(t);
 
-            Assert.is_true(sta.type?);
-            Assert.are_same(t, sta.type);
+            is_true(sta.type?);
+            are_same(t, sta.type);
         si
 
+        @Test()
         COALESCE_LOAD_should_type_as_the_result_type() is
-            @test()
-
             let recv_t = make_class_type("FooOptional");
             let result_t = make_class_type("BarOptional");
             let recv = STACK_TOP(recv_t);
@@ -87,13 +85,12 @@ namespace IR.Values.UnitTests is
 
             let coalesce = COALESCE_LOAD(recv, member_load, null_value, result_t, true);
 
-            Assert.is_true(coalesce.type?);
-            Assert.are_same(result_t, coalesce.type);
+            is_true(coalesce.type?);
+            are_same(result_t, coalesce.type);
         si
 
+        @Test()
         COALESCE_LOAD_value_type_overload_should_type_as_the_result_type() is
-            @test()
-
             let recv_t = make_class_type("FooOptional");
             let inner_t = make_class_type("FooInner");
             let bool_t = make_class_type("bool");
@@ -116,13 +113,12 @@ namespace IR.Values.UnitTests is
                     true
                 );
 
-            Assert.is_true(coalesce.type?);
-            Assert.are_same(result_t, coalesce.type);
+            is_true(coalesce.type?);
+            are_same(result_t, coalesce.type);
         si
 
+        @Test()
         COALESCE_LOAD_should_accept_absent_null_value_for_void_member() is
-            @test()
-
             // A coalesced call to a void method pushes no value on
             // either arm: no null sentinel, result type stays the
             // callee's void type.
@@ -133,13 +129,12 @@ namespace IR.Values.UnitTests is
 
             let coalesce = COALESCE_LOAD(recv, member_call, null, void_t, true);
 
-            Assert.is_true(coalesce.type?);
-            Assert.are_same(void_t, coalesce.type);
+            is_true(coalesce.type?);
+            are_same(void_t, coalesce.type);
         si
 
+        @Test()
         COALESCE_LOAD_should_expose_receiver_kind_for_rewrap() is
-            @test()
-
             // rewrap_coalesce_call re-seats an invocation inside the
             // arm of an existing wrap and needs to know which
             // constructor shape to rebuild with.
@@ -162,13 +157,12 @@ namespace IR.Values.UnitTests is
                     true
                 );
 
-            Assert.is_false(reference_shape.receiver_is_value_type);
-            Assert.is_true(value_shape.receiver_is_value_type);
+            is_false(reference_shape.receiver_is_value_type);
+            is_true(value_shape.receiver_is_value_type);
         si
 
+        @Test()
         COALESCE_LOAD_should_not_be_lightweight_pure() is
-            @test()
-
             // Coalesce composes branching IL and a stack-top
             // null-sentinel — never short-circuited away.
             let recv_t = make_class_type("FooOptional");
@@ -179,44 +173,38 @@ namespace IR.Values.UnitTests is
 
             let coalesce = COALESCE_LOAD(recv, member_load, null_value, result_t, true);
 
-            Assert.is_false(coalesce.is_lightweight_pure);
+            is_false(coalesce.is_lightweight_pure);
         si
 
+        @Test()
         build_optional_type_should_return_already_optional_unchanged() is
-            @test()
-
             // Already-optional → identity; widening is a no-op and
-            // never reaches the InnateSymbolLookup. null InnateSymbolLookup
-            // here pins that contract — any access would NRE.
+            // never reaches the InnateSymbolLookup, which the substitute
+            // below pins.
             let t = make_class_type("Foo");
             let optional = t.as_optional();
 
-            let result = Syntax.Process.COMPILE_ACCESS.build_optional_type(optional, null);
+            let result = Syntax.Process.COMPILE_ACCESS.build_optional_type(optional, unused_lookup());
 
-            Assert.are_same(optional, result);
+            are_same(optional, result);
         si
 
+        @Test()
         build_optional_type_should_flag_reference_type() is
-            @test()
-
             // Reference T → T flagged optional via NAMED.as_optional —
-            // IL identity, the type system carries the `?` view, the
-            // lookup is bypassed (null below pins that).
+            // IL identity, the type system carries the `?` view, and the
+            // lookup is again bypassed.
             let t = make_class_type("Foo");
 
-            let result = Syntax.Process.COMPILE_ACCESS.build_optional_type(t, null);
+            let result = Syntax.Process.COMPILE_ACCESS.build_optional_type(t, unused_lookup());
 
-            Assert.is_true(result.is_optional);
+            is_true(result.is_optional);
         si
 
-        build_optional_type_should_return_null_input_unchanged() is
-            @test()
-
-            // Defensive: a null input survives the widen, callers can
-            // null-check the result. The lookup is again bypassed.
-            let result = Syntax.Process.COMPILE_ACCESS.build_optional_type(null, null);
-
-            Assert.is_null(result);
-        si
+        // The widening paths under test never consult the lookup. A
+        // substitute says so and stays a valid argument, where a null
+        // would only have been one by accident.
+        unused_lookup() -> InnateSymbolLookup =>
+            NSubstitute.Substitute.`for`[InnateSymbolLookup](System.Array.empty`[object]());
     si
 si

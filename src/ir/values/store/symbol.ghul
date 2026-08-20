@@ -6,7 +6,7 @@ namespace IR.Values.Store is
     class SYMBOL: Value, TypeTyped is
         symbol: SymbolBase;
         symbol_as_typed: TypeTyped => cast TypeTyped?(symbol)!;
-        type: Type => symbol_as_typed.type!;
+        type: Type pure => symbol_as_typed.type!;
         from: Value?;
         value: IR.Values.Value;
         is_consumable: bool => false;
@@ -23,8 +23,9 @@ namespace IR.Values.Store is
             gen(from, context);
             gen(value, context);
 
-            context.write_line("store member {symbol}");
-        si            
+            throw System.NotImplementedException(
+                "the binary back end has no emission for storing to '{symbol}' yet");
+        si
 
         to_string() -> string =>
             "store:[{type}]({from},\"{symbol.name}\",{value})";

@@ -224,6 +224,15 @@ namespace Syntax.Parsers is
         // caller's normal "unexpected token" handling.
         in_formal_arguments: bool public;
 
+        // True only while parsing a pattern that can fail to match —
+        // an `if let` / `while let` clause or a `case` `when` arm. The
+        // destructure parser consults this to reject the `~` match
+        // marker everywhere a leaf can only ever bind: a plain `let`,
+        // a formal argument, a lambda parameter. Defaulting to false
+        // means a position added later rejects the marker until it
+        // says otherwise.
+        in_refutable_pattern: bool public;
+
         // intentation is not part of the syntax, but it is used for
         // for error recovery: we may want to skip over a block of code
         // out to a given indentation level
@@ -245,10 +254,6 @@ namespace Syntax.Parsers is
 
         current_token_name: string is
             let result mut = Lexical.TOKEN_NAMES[current_token];
-
-            if result == null then
-                result = "unknown";
-            fi
 
             if current_string? /\ current_string !~ result then
                 result = "{result} {current_string}";
@@ -412,14 +417,19 @@ namespace Syntax.Parsers is
             logger.warn(location, message);
         si
 
-        error(location: LOCATION, message: string) is
+        // The repeated-error recovery cursor: true when `location` and
+        // `message` are new and should be reported, having updated the
+        // cursor to match; false when this is an exact repeat of the
+        // last error, having already taken the recovery action (consume
+        // a token, or count towards the end-of-file bail-out).
+        _should_report_error(location: LOCATION, message: string) -> bool is
             if location !~ last_error_location \/ message !~ last_error_message then
                 _repeated_error_count_at_eof = 0;
 
                 last_error_location = location;
                 last_error_message = message;
 
-                logger.error(location, message);
+                return true;
             elif !is_end_of_file then
                 next_token();
             else
@@ -428,6 +438,21 @@ namespace Syntax.Parsers is
                 if (_repeated_error_count_at_eof > 10) then
                     throw Compiler.PARSE_EXCEPTION("repeated errors at end of file");
                 fi
+            fi
+
+            return false;
+        si
+
+        error(location: LOCATION, message: string) is
+            if _should_report_error(location, message) then
+                logger.error(location, message);
+            fi
+        si
+
+        // Same as error(location, message), plus a related location.
+        error(location: LOCATION, message: string, related_location: LOCATION, related_message: string) is
+            if _should_report_error(location, message) then
+                logger.error(location, message, related_location, related_message);
             fi
         si
     si

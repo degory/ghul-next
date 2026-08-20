@@ -29,7 +29,7 @@ namespace Semantic.DotNet is
         // `Ghul.MAYBE[T]`, and bare type variables already round-trip
         // via their distinct CLR types; their nested arguments are
         // still walked.
-        needs_attribute(type: Types.Type) -> bool static is
+        needs_attribute(type: Types.Type?) -> bool static is
             let bytes = compute_bytes(type);
 
             return needs_attribute_for_bytes(bytes);
@@ -39,7 +39,7 @@ namespace Semantic.DotNet is
         // order: head byte for the type itself, then recurse into each
         // entry of `arguments`. Empty `[0]` for null / sentinel /
         // error — those carry no nullability info either way.
-        compute_bytes(type: Types.Type) -> LIST[int] static is
+        compute_bytes(type: Types.Type?) -> LIST[int] static is
             let result = LIST[int]();
 
             _append_bytes(type, result);
@@ -83,20 +83,6 @@ namespace Semantic.DotNet is
             return 1;
         si
 
-        // The full `.custom instance void ...NullableAttribute::.ctor(...) = (...)`
-        // directive line for `type`, or null when the slot needs no
-        // attribute. Picks `.ctor(uint8)` for the single-position case
-        // and `.ctor(uint8[])` for the rest.
-        gen_attribute_line_for_type(type: Types.Type) -> string? static is
-            let bytes = compute_bytes(type);
-
-            if !needs_attribute_for_bytes(bytes) then
-                return null;
-            fi
-
-            return gen_attribute_line_for_bytes(bytes);
-        si
-
         needs_attribute_for_bytes(bytes: List[int]) -> bool static is
             if bytes.count == 0 then
                 return false;
@@ -109,26 +95,6 @@ namespace Semantic.DotNet is
             od
 
             return false;
-        si
-
-        // A single position uses `.ctor(uint8)`, anything else the
-        // `.ctor(uint8[])` overload.
-        gen_attribute_arguments_for_bytes(bytes: List[int]) -> string static is
-            if bytes.count == 1 then
-                return "{{ {IL_ATTRIBUTE_ARGUMENTS.byte_argument(bytes[0])} }}";
-            fi
-
-            return "{{ {IL_ATTRIBUTE_ARGUMENTS.byte_array_argument(bytes)} }}";
-        si
-
-        gen_attribute_line_for_bytes(bytes: List[int]) -> string static is
-            let arguments = gen_attribute_arguments_for_bytes(bytes);
-
-            if bytes.count == 1 then
-                return ".custom instance void [System.Runtime]System.Runtime.CompilerServices.NullableAttribute::.ctor(uint8) = {arguments}";
-            fi
-
-            return ".custom instance void [System.Runtime]System.Runtime.CompilerServices.NullableAttribute::.ctor(uint8[]) = {arguments}";
         si
 
         // The position bytes carried by a `NullableAttribute` in
@@ -358,8 +324,8 @@ namespace Semantic.DotNet is
         // rebuild — slots whose tree has no `?` position never force
         // a TYPE_WRAPPER's symbol, preserving the bootstrap-safe path
         // the existing reflection import depends on.
-        apply_bytes(type: Types.Type, bytes: List[int]) -> Types.Type static is
-            if bytes.count == 0 then
+        apply_bytes(type: Types.Type?, bytes: List[int]) -> Types.Type? static is
+            if !type? \/ bytes.count == 0 then
                 return type;
             fi
 

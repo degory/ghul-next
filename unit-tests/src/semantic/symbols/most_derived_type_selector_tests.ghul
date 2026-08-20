@@ -6,14 +6,16 @@ namespace Semantic.Symbols.UnitTests is
     use Source.LOCATION;
 
     use Semantic.Types.Type;
+    use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute;
+    use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute;
+    use Assertions;
 
     // Tests for MOST_DERIVED_TYPE_SELECTOR — given a set of types expected
     // to form a single subtype chain (as covariantly-redeclared interface
     // members do), it returns the index of the most-derived one, or -1 when
     // they don't form a chain.
+    @TestClass()
     class MOST_DERIVED_TYPE_SELECTOR_TESTS is
-        @test()
-
         init() is si
 
         loc() -> LOCATION => LOCATION("test.ghul", 1, 1, 1, 1);
@@ -22,16 +24,16 @@ namespace Semantic.Symbols.UnitTests is
 
         // A tiny hierarchy: object <- animal <- cat, plus a sibling plant.
         build_hierarchy() -> (object_class: CLASS, animal: CLASS, cat: CLASS, plant: CLASS) is
-            let object_class = CLASS(loc(), loc(), null, "object", empty_names(), null);
+            let object_class = CLASS(loc(), loc(), Semantic.BLOCK_SCOPE(), "object", empty_names(), Semantic.BLOCK_SCOPE());
             object_class.mark_is_object();
 
-            let animal = CLASS(loc(), loc(), null, "animal", empty_names(), null);
+            let animal = CLASS(loc(), loc(), Semantic.BLOCK_SCOPE(), "animal", empty_names(), Semantic.BLOCK_SCOPE());
             animal.add_ancestor(object_class.type!);
 
-            let cat = CLASS(loc(), loc(), null, "cat", empty_names(), null);
+            let cat = CLASS(loc(), loc(), Semantic.BLOCK_SCOPE(), "cat", empty_names(), Semantic.BLOCK_SCOPE());
             cat.add_ancestor(animal.type!);
 
-            let plant = CLASS(loc(), loc(), null, "plant", empty_names(), null);
+            let plant = CLASS(loc(), loc(), Semantic.BLOCK_SCOPE(), "plant", empty_names(), Semantic.BLOCK_SCOPE());
             plant.add_ancestor(object_class.type!);
 
             return (object_class, animal, cat, plant);
@@ -43,48 +45,48 @@ namespace Semantic.Symbols.UnitTests is
             return result;
         si
 
+        @Test()
         Selecting_from_an_empty_set_returns_minus_one() is
-            @test()
-            Assert.are_equal(-1, MOST_DERIVED_TYPE_SELECTOR().select(LIST[Type?]()));
+            are_equal(-1, MOST_DERIVED_TYPE_SELECTOR().select(LIST[Type?]()));
         si
 
+        @Test()
         Selecting_from_a_single_type_returns_its_index() is
-            @test()
             let h = build_hierarchy();
-            Assert.are_equal(0, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type])));
+            are_equal(0, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type])));
         si
 
+        @Test()
         Selecting_a_chain_returns_the_most_derived_regardless_of_order() is
-            @test()
             let h = build_hierarchy();
 
-            Assert.are_equal(
+            are_equal(
                 2,
                 MOST_DERIVED_TYPE_SELECTOR().select(types([h.object_class.type, h.animal.type, h.cat.type]))
             );
 
-            Assert.are_equal(
+            are_equal(
                 0,
                 MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type, h.animal.type, h.object_class.type]))
             );
         si
 
+        @Test()
         Selecting_when_the_same_type_repeats_returns_a_valid_index() is
-            @test()
             let h = build_hierarchy();
-            Assert.are_equal(0, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type, h.cat.type])));
+            are_equal(0, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type, h.cat.type])));
         si
 
+        @Test()
         Selecting_from_sibling_types_returns_minus_one() is
-            @test()
             let h = build_hierarchy();
-            Assert.are_equal(-1, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type, h.plant.type])));
+            are_equal(-1, MOST_DERIVED_TYPE_SELECTOR().select(types([h.cat.type, h.plant.type])));
         si
 
+        @Test()
         Selecting_with_a_sibling_alongside_a_chain_returns_minus_one() is
-            @test()
             let h = build_hierarchy();
-            Assert.are_equal(
+            are_equal(
                 -1,
                 MOST_DERIVED_TYPE_SELECTOR().select(types([h.animal.type, h.cat.type, h.plant.type]))
             );

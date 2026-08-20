@@ -303,9 +303,9 @@ namespace Syntax.Process.Printer is
             location(`cast);
             write("cast");
 
-            if `cast.type_expression? then
+            if let type_expression = `cast.type_expression then
                 write(' ');
-                `cast.type_expression.accept(self);
+                type_expression.accept(self);
             fi
 
             write('(');
@@ -320,6 +320,13 @@ namespace Syntax.Process.Printer is
             write('(');
             `isa.right.accept(self);
             write(')');
+        si
+
+        visit(field_equals: Expressions.FIELD_EQUALS) is
+            location(field_equals);
+            field_equals.left.accept(self);
+            write(" =~ ");
+            field_equals.right.accept(self);
         si
 
         visit(`typeof: Expressions.TYPEOF) is
@@ -384,14 +391,6 @@ namespace Syntax.Process.Printer is
                 write('.');
             fi
             member.identifier.accept(self);
-        si
-
-        visit(explicit_specialization: Trees.Expressions.EXPLICIT_SPECIALIZATION) is
-            location(explicit_specialization);
-            explicit_specialization.left.accept(self);
-            write("`[");
-            explicit_specialization.types.accept(self);
-            write("]");
         si
 
         visit(index: Expressions.INDEX) is

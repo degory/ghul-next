@@ -1,0 +1,576 @@
+namespace Syntax.Process is
+    use Logging;
+
+    use Semantic.Types.Type;
+
+    use IR.Values;
+
+    use Ghul.Pipes;
+
+    // Compiles function bodies and function literals: the method-body
+    // walk with its iterative type-inference retry loop, lambda
+    // (closure) literals and `rec` references. Split out of
+    // COMPILE_EXPRESSIONS, which delegates the matching visit methods
+    // here. The `super.pre` / `super.visit` base-visitor calls and
+    // the exception / environment-save wrapper of visit(function
+    // literal) stay in the visitor; the methods here are the enclosed
+    // logic.
+    class COMPILE_LAMBDAS is
+        _logger: Logger;
+        _symbol_table: Semantic.SYMBOL_TABLE;
+        _symbol_use_locations: Semantic.SYMBOL_USE_LOCATIONS;
+        _symbol_loader: Semantic.SYMBOL_LOADER;
+        _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup;
+        _task_conversion: Semantic.TASK_CONVERSION;
+        _closure_arg_resolver: Semantic.CLOSURE_ARG_RESOLVER;
+        _type_arg_placeholder_registry: Semantic.TYPE_ARG_PLACEHOLDER_REGISTRY;
+        _flow: NARROWING_FLOW;
+        _build_flags: Compiler.GLOBAL_BUILD_FLAGS;
+        _visitor: ScopedVisitor;
+
+        _field_assignment_checker: FIELD_ASSIGNMENT_CHECKER;
+        _delegate_shape: Semantic.DELEGATE_SHAPE;
+        _attribute_resolver: ATTRIBUTE_RESOLVER;
+
+        init(
+            logger: Logger,
+            symbol_table: Semantic.SYMBOL_TABLE,
+            symbol_use_locations: Semantic.SYMBOL_USE_LOCATIONS,
+            symbol_loader: Semantic.SYMBOL_LOADER,
+            innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup,
+            task_conversion: Semantic.TASK_CONVERSION,
+            closure_arg_resolver: Semantic.CLOSURE_ARG_RESOLVER,
+            type_arg_placeholder_registry: Semantic.TYPE_ARG_PLACEHOLDER_REGISTRY,
+            flow: NARROWING_FLOW,
+            build_flags: Compiler.GLOBAL_BUILD_FLAGS,
+            visitor: ScopedVisitor,
+            attribute_resolver: ATTRIBUTE_RESOLVER
+        ) is
+            super.init();
+
+            _logger = logger;
+            _symbol_table = symbol_table;
+            _symbol_use_locations = symbol_use_locations;
+            _symbol_loader = symbol_loader;
+            _innate_symbol_lookup = innate_symbol_lookup;
+            _task_conversion = task_conversion;
+            _closure_arg_resolver = closure_arg_resolver;
+            _type_arg_placeholder_registry = type_arg_placeholder_registry;
+            _flow = flow;
+            _build_flags = build_flags;
+            _visitor = visitor;
+            _field_assignment_checker = FIELD_ASSIGNMENT_CHECKER(logger);
+            _attribute_resolver = attribute_resolver;
+            _delegate_shape = Semantic.DELEGATE_SHAPE();
+        si
+
+        visit_function_definition(function: Trees.Definitions.FUNCTION) is
+            if function.name? then
+                function.name.walk(_visitor);
+            fi
+
+            function.type_expression.walk(_visitor);
+
+            function.arguments.walk(_visitor);
+
+            if function.body? then
+                // Recorded symbol uses follow the diagnostics speculation
+                // discipline through this walk: every roll_back below is
+                // followed by a full body re-walk, so uses recorded
+                // against not-yet-settled types are discarded with the
+                // diagnostics of the walk that produced them rather than
+                // surviving to shadow the settled walk's records.
+                _logger.speculate();
+                _symbol_use_locations.speculate();
+
+                let retries = 20;
+
+                for i in 1::retries do
+                    // Narrowing is method-local — start each body
+                    // walk (and each inference-retry re-walk) from
+                    // an empty environment.
+                    _flow.reset();
+
+                    function.body!.walk(_visitor);
+
+                    // Convergence: clean or no progress signal raised.
+                    // Without a `has_consumed_any` flag from somewhere
+                    // in the walk, errors that did fire are real and
+                    // persistent — re-walking won't change them, and
+                    // re-walking AST nodes that hold partial state
+                    // produces *different* (often worse) error sets
+                    // because the second walk sees state left over
+                    // from the first. So retry only when something
+                    // explicitly flagged "I consumed an unresolved
+                    // type" — that's the case where iteration N+1
+                    // might find narrower constraints and make
+                    // progress.
+                    if _logger.is_clean \/ !_logger.has_consumed_any then
+                        break;
+                    fi
+
+                    if i < retries then
+                        _logger.roll_back();
+                        _logger.speculate();
+
+                        _symbol_use_locations.roll_back();
+                        _symbol_use_locations.speculate();
+                    fi
+                od
+
+                // Any constructor-type-arg placeholder that didn't
+                // acquire a concrete constraint from any usage has no
+                // type to settle to - report rather than guess. This
+                // is also the backstop that keeps such a placeholder
+                // from surviving to IL emission, where the signature
+                // encoder would refuse it.
+                //
+                // Only sweep when the retry loop failed to converge.
+                // A walk that converged clean consumed no unresolved
+                // types, so every phantom that matters has settled -
+                // but the registry also holds phantom sets minted for
+                // overload candidates that lost their resolution and
+                // were rolled back, and those stay unresolved without
+                // being errors. Non-convergence is the signal that an
+                // unresolved phantom actually reached committed code.
+                if _logger.has_consumed_any /\ !_logger.is_clean then
+                    _type_arg_placeholder_registry.report_unresolved(_logger);
+                fi
+
+                // Definite return: control can reach the end of a
+                // non-void, block-bodied function's body without a
+                // value having been returned. `_flow.is_unreachable`
+                // is false here only when at least one path falls
+                // off the end — every path that returns / throws
+                // leaves the flow at `bottom`.
+                let function_symbol = _symbol_table.current_function;
+
+                // Generators "fall off the end" by design — that's
+                // how the state machine signals end-of-stream. The
+                // definite-return rule doesn't apply to them.
+                let is_generator = Semantic.Symbols.state_machine_for(function_symbol)?;
+
+                if
+                    !_build_flags.no_warn_definite_return /\
+                    !is_generator /\
+                    function.body!.is_block /\
+                    !_flow.is_unreachable /\
+                    function_symbol? /\
+                    function_symbol.return_type? /\
+                    !function_symbol.return_type!.is_sentinel /\
+                    !function_symbol.return_type!.is_inferred /\
+                    !function_symbol.return_type!.matches(_innate_symbol_lookup.get_void_type())
+                then
+                    _logger.warn(function.location, "definite-return", "function may not return a value on all paths");
+                fi
+
+                _record_field_assignment_summary(function, function_symbol);
+
+                _logger.commit();
+                _symbol_use_locations.commit();
+            fi
+        si
+
+        // Called once every method has been walked - see
+        // FIELD_ASSIGNMENT_CHECKER.
+        report_field_assignments() is
+            _field_assignment_checker.report();
+        si
+
+        // What a method did, for the constructor field check that runs once
+        // every method has been walked. Two facts, both taken from the
+        // must-domains at the end of the body: the fields it definitely
+        // assigned, and the methods on `self` it definitely called.
+        //
+        // The check itself cannot run here. A constructor is routinely
+        // written before the helper it delegates to, so the helper's own
+        // summary does not exist yet; FIELD_ASSIGNMENT_CHECKER closes over
+        // the call graph after the build and reports then.
+        _record_field_assignment_summary(
+            function: Trees.Definitions.FUNCTION,
+            function_symbol: Semantic.Symbols.Function?
+        ) is
+            if
+                _build_flags.no_warn_field_definite_assignment \/
+                !function_symbol? \/
+                !function_symbol.is_instance
+            then
+                return;
+            fi
+
+            if !isa Semantic.Symbols.Classy(function_symbol.owner) then
+                return;
+            fi
+
+            let assigned = Collections.LIST[Semantic.Symbols.Symbol]();
+
+            for v in _flow.assigned_variables do
+                assigned.add(v);
+            od
+
+            let called = Collections.LIST[Semantic.Symbols.Symbol]();
+
+            for f in _flow.called_methods do
+                called.add(f);
+            od
+
+            // function_symbol.location is the constructor name alone
+            // (declare-members hands declare_function the name's own
+            // location as the symbol location, function.location - the
+            // whole declaration - as its separate span), so the warning
+            // this summary eventually produces squiggles just "init"
+            // rather than the entire constructor body.
+            _field_assignment_checker.record(
+                function_symbol,
+                function_symbol.location,
+                assigned,
+                called,
+                _flow.is_unreachable
+            );
+        si
+
+        visit_function(function: Trees.Expressions.FUNCTION) is
+            if !function.value? then
+                function.compile_expressions_state.value = IR.Values.WRAPPER();
+            fi
+
+            let closure = cast Semantic.Symbols.Closure?(_symbol_table.scope_for(function))!;
+
+            closure.map_type_arguments();
+
+            let implied_type: Type mut;
+            let implied_argument_types: Collections.List[Type]? mut = null;
+            let constraint_return_type: Type? mut = null;
+
+            // have we been passed expected arguments types? If so we'll use them
+            // to argument types of any anonymous function literal arguments.
+            // Single source of truth: function.expected_type, set by the parent
+            // context — LHS of an assignment, typed variable initializer, or
+            // overload-resolution second-pass when this lambda was an actual
+            // arg whose chosen-formal type is now known (#1174).
+            // A context expecting a named delegate constrains the literal
+            // exactly as a function type does: the literal is compiled to
+            // the delegate's call shape and the delegate itself is
+            // constructed at the load site.
+            let expected_type: Type? mut = function.expected_type;
+
+            if let expected = expected_type then
+                if !expected.is_function then
+                    let shape = _delegate_shape.try_get_function_type(expected, _innate_symbol_lookup);
+
+                    if shape? then
+                        expected_type = shape;
+                        closure.delegate_target_type = expected;
+                    fi
+                fi
+            fi
+
+            if let effective = expected_type /\ effective.is_function then
+                implied_argument_types = effective.arguments;
+
+                // Func slots store the return type as the last entry in
+                // `arguments`; Action slots strip the void return so
+                // `arguments` holds only the input types. Reading
+                // `arguments[count - 1]` on an Action would grab the
+                // last input arg, not the return.
+                if !effective.is_action then
+                    let argument_count = effective.arguments.count;
+                    if argument_count > 0 then
+                        // The slot type may embed placeholders whose
+                        // origins settled on an earlier iteration -
+                        // collapse them, or the stale composite gets
+                        // pushed onto the body and committed as the
+                        // closure's return type every iteration,
+                        // keeping the retry loop from converging.
+                        let candidate =
+                            Semantic.SETTLED_PLACEHOLDER_RESOLVER.instance.resolve(
+                                effective.arguments[argument_count - 1]);
+
+                        if Semantic.LAMBDA_RETURN_CONSTRAINT.should_push(candidate) then
+                            constraint_return_type = candidate;
+                        fi
+                    fi
+                fi
+            fi
+
+            _symbol_table.current_closure_context.add_closure(closure);
+
+            // we are walking the arguments here while speculating
+            let arguments_resolved = _closure_arg_resolver.resolve(function.arguments.expressions, closure, implied_argument_types);
+
+            _resolve_argument_attributes(function, closure);
+
+            if arguments_resolved then
+                let return_type: Type mut;
+
+                if function.type_expression.type? then
+                    return_type = function.type_expression.type;
+                else
+                    return_type = Semantic.Types.INFERRED_RETURN_TYPE();
+                    closure.return_type_was_inferred = true;
+                fi
+
+                // Body contains `await` → closure must eventually
+                // return `Tasks.TASK[?]`. Void-async (no value
+                // returns) pins to non-generic `Tasks.TASK`; value-
+                // async stays INFERRED_RETURN_TYPE and pins to
+                // `Tasks.TASK[T]` via the wrap-paths.
+                if function.contains_let_await then
+                    if function.is_void_async then
+                        let void_task = _innate_symbol_lookup.get_void_task_type();
+                        if void_task? then
+                            return_type = void_task;
+                            closure.return_type_was_inferred = false;
+                            closure.wrap_inferred_return_as_task = false;
+                            closure.is_void_async = true;
+                        fi
+                    else
+                        closure.wrap_inferred_return_as_task = true;
+                    fi
+                elif
+                    closure.return_type_was_inferred /\
+                    constraint_return_type? /\
+                    _task_conversion.try_get_task_element_type(constraint_return_type)?
+                then
+                    // Slot expects `Tasks.TASK[T]`; mark the closure
+                    // so a bare-T body return wraps to
+                    // `Tasks.TASK.from_result(orig)` via the same
+                    // inferred-return paths used for async closures.
+                    closure.wrap_inferred_return_as_task = true;
+                fi
+
+                closure.set_return_type(return_type);
+            fi
+
+            // Push the constraint's return-type slot onto the body's
+            // last expression before walking. The implicit-return path
+            // (pre(Bodies.EXPRESSION)) is gated on
+            // `!function.return_type.is_sentinel` and skips when the closure
+            // hasn't been given an explicit return-type annotation —
+            // but that's exactly the case where a bare variant
+            // constructor (`DONE()`) in the body would benefit from
+            // knowing the expected type. Set it here so the body's
+            // CALL nodes see the constraint; without setting
+            // closure.return_type, the lambda's emitted return type
+            // is still inferred from the body so covariant-return-via-
+            // assignment is unaffected.
+            if
+                constraint_return_type? /\
+                !function.type_expression.type? /\
+                isa Trees.Bodies.EXPRESSION(function.body)
+            then
+                let body = cast Trees.Bodies.EXPRESSION?(function.body)!;
+
+                body.expression.set_expected_type(constraint_return_type, "cannot return value of type {{0}} where {{1}} expected");
+            fi
+
+            _logger.commit();
+            _logger.speculate();
+
+            _symbol_use_locations.commit();
+            _symbol_use_locations.speculate();
+
+            // Each body re-walk below must start from the narrowing
+            // facts in force at the literal, not the ones the previous
+            // walk recorded: a body ending in `return` leaves the
+            // environment unreachable (a re-walk from there loses every
+            // narrow in the body), and a body that unwraps its own
+            // parameter leaves the recorded presence fact (a re-walk
+            // over it misreports the unwrap redundant).
+            let use flow_speculation = _flow.speculate_then_commit();
+
+            _walk_literal_body(function, closure);
+
+            let reported_inference_failure = false;
+
+            if closure.is_recursive then
+                _logger.roll_back();
+                _logger.speculate();
+
+                _symbol_use_locations.roll_back();
+                _symbol_use_locations.speculate();
+
+                _flow.restore();
+
+                _walk_literal_body(function, closure);
+            fi
+
+            if _build_flags.want_assembler /\ arguments_resolved /\ closure.could_be_delegate then
+                _logger.roll_back();
+                _logger.speculate();
+
+                _symbol_use_locations.roll_back();
+                _symbol_use_locations.speculate();
+
+                _flow.restore();
+
+                closure.convert_to_delegate();
+
+                _walk_literal_body(function, closure);
+            fi
+
+            // Default an unresolved return type to void only when the
+            // arguments are *fully* resolved — concrete types, not still
+            // INFERRED_VARIABLE_TYPE placeholders. With placeholder args,
+            // an unresolved return is the symptom of an identity-shaped
+            // body (`a => a`) where the body offered no constraint and
+            // we're depending on the call-site formal-arg-push to
+            // resolve the args on the next outer iteration. Defaulting
+            // the return to void here would lock in `*** -> void` and
+            // poison the overload resolution that follows.
+            if closure.return_type!.is_inferred /\ closure.arguments |> all(a => a.is_settled) then
+                closure.set_return_type(_innate_symbol_lookup.get_void_type());
+
+                // A recursive literal's self-call was compiled during
+                // the body walks above, against a `$recurse` field
+                // typed with the then-unresolved function type, and
+                // the frozen call value keeps that stale composite —
+                // set_return_type refreshes the field, not the IR
+                // already recorded against it. With no value-producing
+                // arm to settle the return mid-walk, this is the only
+                // point the closure's type becomes final, so walk the
+                // body once more to re-record the self-call at the
+                // settled type.
+                if closure.is_recursive then
+                    _logger.roll_back();
+                    _logger.speculate();
+
+                    _symbol_use_locations.roll_back();
+                    _symbol_use_locations.speculate();
+
+                    _flow.restore();
+
+                    _walk_literal_body(function, closure);
+                fi
+            fi
+
+            closure.unmap_type_arguments();
+
+            let value mut = closure.load(function.location, _symbol_loader);
+
+            // A literal whose body proved store-free surfaces at the
+            // pure shape of its function type, so it satisfies a pure
+            // function-typed slot on type alone — freezing to raw IL
+            // has discarded the closure symbol by the time the slot
+            // check sees the value. The shape is the literal's own
+            // property, so it does not depend on the slot it is
+            // heading for: a store-free literal reads as pure
+            // wherever its type is shown.
+            if
+                !closure.literal_body_impure /\ value.type?
+            then
+                let pure_type = Semantic.Types.PURE_FUNCTION_SHAPE.pure_shape_of(value.type, _innate_symbol_lookup);
+
+                if pure_type? then
+                    value = IR.Values.TYPE_WRAPPER(pure_type, value);
+                fi
+            fi
+
+            cast IR.Values.WRAPPER?(function.value)!.value = value;
+        si
+
+        // visit_function re-runs on every retry of the enclosing
+        // function's body (a lambda literal is re-walked along with
+        // everything else in the body until the retry loop converges),
+        // so guard on custom_attributes already being populated —
+        // otherwise the same attribute would be resolved and appended
+        // again on each retry.
+        _resolve_argument_attributes(function: Trees.Expressions.FUNCTION, closure: Semantic.Symbols.Closure) is
+            for expr in function.arguments.expressions do
+                if let argument: Trees.Expressions.VARIABLE = expr, pragmas = argument.pragmas then
+                    // Trees.Expressions.FUNCTION.pre() suppresses the
+                    // default child walk (so visit_function can walk
+                    // the body up to N times), so nothing else ever
+                    // walks a pragma's own argument expressions.
+                    for pragma in pragmas do
+                        pragma.walk(_visitor);
+                    od
+
+                    let symbol = closure.find_direct(argument.name.name);
+
+                    if symbol? /\ !symbol.custom_attributes? then
+                        for pragma in pragmas do
+                            _attribute_resolver.resolve(pragma, symbol);
+                        od
+                    fi
+                fi
+            od
+        si
+
+        // Walk a literal's body with a purity frame in force, so the
+        // flow transfers record whether the body performed anything
+        // possibly heap-visible. Re-walks (recursion, delegate
+        // conversion) overwrite the recorded flag — the last walk is
+        // the one whose compilation stands.
+        _walk_literal_body(function: Trees.Expressions.FUNCTION, closure: Semantic.Symbols.Closure) is
+            _flow.push_literal_frame();
+
+            closure.enter_literal_body();
+            function.body.walk(_visitor);
+            closure.leave_literal_body();
+
+            closure.literal_body_impure = _flow.pop_literal_frame();
+        si
+
+        visit_recurse(recurse: Trees.Expressions.RECURSE) is
+            let function = _symbol_table.current_function;
+
+            if !function? \/ !function.is_closure then
+                recurse.compile_expressions_state.value = IR.Values.DUMMY(Semantic.Types.ERROR(), recurse.location);
+
+                _logger.error(recurse.location, "rec can only be used in a function literal body");
+                return;
+            fi
+
+            let closure = cast Semantic.Symbols.Closure?(function)!;
+
+            if closure.is_recursive then
+                recurse.compile_expressions_state.value = closure.load_recurse(recurse.location, _symbol_loader);
+                return;
+            fi
+
+            // Walk up enclosing closures looking for a recursive
+            // ancestor whose $recurse we can capture. The chain in
+            // between needs to capture it too so the value can be
+            // threaded down through nested frame constructors.
+            let stack = _symbol_table.stack;
+            let index mut = stack.count - 1;
+            let seen_self mut = false;
+            let outer_recursive: Semantic.Symbols.Closure? mut = null;
+            let intermediates = Collections.LIST[Semantic.Symbols.Closure]();
+
+            while index >= 0 do
+                let scope = stack[index];
+
+                if scope.is_closure then
+                    let c = cast Semantic.Symbols.Closure?(scope)!;
+
+                    if seen_self then
+                        if c.is_recursive then
+                            outer_recursive = c;
+                            break;
+                        fi
+                        intermediates.add(c);
+                    elif c == closure then
+                        seen_self = true;
+                    fi
+                fi
+
+                index = index - 1;
+            od
+
+            if !outer_recursive? then
+                recurse.compile_expressions_state.value = IR.Values.DUMMY(Semantic.Types.ERROR(), recurse.location);
+
+                _logger.error(recurse.location, "rec can only be used in a recursive function");
+                return;
+            fi
+
+            for intermediate in intermediates do
+                intermediate.find_or_add_captured_outer_recurse(outer_recursive);
+            od
+
+            recurse.compile_expressions_state.value = closure.load_captured_outer_recurse(recurse.location, outer_recursive, _symbol_loader);
+        si
+    si
+si

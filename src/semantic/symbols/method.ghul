@@ -105,10 +105,10 @@ namespace Semantic.Symbols is
         load_self(location: LOCATION, loader: SYMBOL_LOADER) -> Value is
             let context = IoC.CONTAINER.instance.symbol_table.current_instance_context;
 
-            return IR.Values.Load.REFERENCE_SELF(context!, context.type);
+            return IR.Values.Load.REFERENCE_SELF(context!, context.own_instantiation);
         si
 
-        call(location: Source.LOCATION, from: Value?, arguments: Collections.List[Value], type: Type?, caller: FUNCTION_CALLER) -> Value is           
+        call(location: Source.LOCATION, from: Value?, arguments: Collections.List[Value], type: Type?, caller: FUNCTION_CALLER) -> Value is
             return caller.call_instance_method(location, from, self, arguments, self.arguments, type);
         si
 
@@ -149,7 +149,7 @@ namespace Semantic.Symbols is
                 return;
             fi
 
-            logger.error(overrider.location, "cannot override abstract method {self}");
+            logger.error(overrider.location, "cannot override abstract method {self}", self.location, "declared here");
         si
 
     si
@@ -200,8 +200,6 @@ namespace Semantic.Symbols is
         symbol_kind: SymbolKind => SymbolKind.METHOD;
         completion_kind: CompletionKind => CompletionKind.METHOD;
 
-        override: Function public;
-
         init(location: LOCATION, span: LOCATION, owner: Scope, name: string, enclosing_scope: Scope) is
             super.init(location, span, owner, name, enclosing_scope);
         si
@@ -211,7 +209,7 @@ namespace Semantic.Symbols is
         load_self(location: LOCATION, loader: SYMBOL_LOADER) -> Value is
             let context = IoC.CONTAINER.instance.symbol_table.current_instance_context;
 
-            return IR.Values.Load.REFERENCE_SELF(context!, context.type);
+            return IR.Values.Load.REFERENCE_SELF(context!, context.own_instantiation);
         si
 
         call(location: Source.LOCATION, from: Value?, arguments: Collections.List[Value], type: Type?, caller: FUNCTION_CALLER) -> Value =>
@@ -221,13 +219,13 @@ namespace Semantic.Symbols is
             overridee.try_struct_override_me(into, self, logger);
 
         try_struct_override_me(into: Classy, overrider: Function, logger: Logger) =>
-            logger.error(overrider.location, "cannot override struct method {self}");
+            logger.error(overrider.location, "cannot override struct method {self}", self.location, "declared here");
 
         try_instance_override_me(into: Classy, overrider: Function, logger: Logger) =>
-            logger.error(overrider.location, "cannot override struct method {self}");
+            logger.error(overrider.location, "cannot override struct method {self}", self.location, "declared here");
 
         try_abstract_override_me(into: Classy, overrider: Function, logger: Logger) =>
-            logger.error(overrider.location, "cannot override struct method {self}");
+            logger.error(overrider.location, "cannot override struct method {self}", self.location, "declared here");
 
     si
 
@@ -252,7 +250,7 @@ namespace Semantic.Symbols is
             logger: Logging.Logger
         ) is
             if !into.is_trait /\ !into.is_reflected then
-                logger.error(into.location, "must implement {self}");
+                logger.error(into.location, "must implement {self}", self.location, "member declared here");
             fi
             
             into.add_member(self);
@@ -314,8 +312,6 @@ namespace Semantic.Symbols is
         symbol_kind: SymbolKind => SymbolKind.METHOD;
         completion_kind: CompletionKind => CompletionKind.METHOD;
 
-        override: Function public;
-
         // Set for a reflected static virtual/abstract interface member -
         // the only shape of static method the CLR allows to be
         // dispatched through an as-yet-unresolved type parameter.
@@ -354,7 +350,7 @@ namespace Semantic.Symbols is
         // an interface whose first type argument is the implementing
         // type.
         _static_interface_dispatch_type(from: Value?) -> Types.Type? is
-            if from? /\ from.type? /\ from.type!.is_type_variable then
+            if from? /\ from.type? /\ from.type.is_type_variable then
                 return from.type!;
             fi
 
@@ -372,7 +368,7 @@ namespace Semantic.Symbols is
         try_override(into: Classy, overridee: Function, logger: Logging.Logger) is
             // This is arguably not an issue as the hidden instance remains available via super.method()
             if !is_internal /\ overridee.is_instance then
-                logger.warn(self.location, "hides-inherited", "static method hides {overridee}");
+                logger.warn(self.location, "hides-inherited", "static method hides {overridee}", overridee.location, "hidden method declared here");
             fi
         si
 

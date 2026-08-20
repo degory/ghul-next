@@ -1,0 +1,597 @@
+namespace Analysis.Tests is
+    use Collections.LIST;
+
+    use Analysis.Protocol.ANALYSER_PROCESS;
+    use Analysis.Protocol.INLAY_HINT;
+    use Analysis.Protocol.Response;
+
+    use Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+    use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute;
+    use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute;
+    use Assertions;
+
+    // A call the solved effect relations cannot show left a fact
+    // alone is marked where it happens, and every use of that fact
+    // after it reports the un-narrowed type. These drive EDIT,
+    // COMPILE and then INLAY_HINTS or HOVER over a file carrying one
+    // call of each kind.
+    //
+    // The load under test is deliberately one that leans on nothing:
+    // `_f` flows into an `INNER?` parameter, which the un-narrowed
+    // type already satisfies. A leaning use is a reliance diagnostic
+    // in its own right, which these are not about.
+    @TestClass()
+    class NARROWING_KILL_CALL_HINT_TESTS is
+        init() is si
+
+        // `clobber` assigns `_f` a possibly-absent value, so a call to
+        // it leaves the presence fact unproven. `quiet` writes an
+        // unrelated member, so the same shape over it is cleared by the
+        // relations. Line 18 is the unproven call and line 19 the load
+        // after it; line 25 is the cleared call and line 26 its load.
+        // Column 33 is `_f` in both loads.
+        source() -> string =>
+            "namespace Unproven is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        _count: int;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        quiet() is\n"
+            "            _count = _count + 1;\n"
+            "        si\n"
+            "        describe(v: INNER?) -> string => if v? then \"y\" else \"n\" fi;\n"
+            "        unproven() -> string is\n"
+            "            if _f? then\n"
+            "                clobber();\n"
+            "                return describe(_f);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "        proven() -> string is\n"
+            "            if _f? then\n"
+            "                quiet();\n"
+            "                return describe(_f);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // Same shape with two facts live over the one call: `clobber`
+        // assigns both, so neither fact is discharged and both are
+        // candidates at line 19 — one kill site, two reverted values.
+        multi_source() -> string =>
+            "namespace Multi is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "    si\n"
+            "    class OTHER is\n"
+            "        init() is si\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        _g: OTHER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "            _g = null;\n"
+            "        si\n"
+            "        describe(v: INNER?) -> string => if v? then \"y\" else \"n\" fi;\n"
+            "        unproven() -> string is\n"
+            "            if _f? /\\ _g? then\n"
+            "                clobber();\n"
+            "                return describe(_f);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // Same shape with a construct whose type inference is still
+        // unresolved at the end of a first walk — a lambda whose
+        // parameter type has nothing to infer from: the
+        // compile-expressions retry loop walks the body again, and
+        // each walk re-notes the call's kill candidates. Line 15 is
+        // the unresolvable lambda, line 16 the crossing call.
+        retry_source() -> string =>
+            "namespace Retry is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        _count: int;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        describe(v: INNER?) -> string => if v? then \"y\" else \"n\" fi;\n"
+            "        unproven() -> string is\n"
+            "            if _f? then\n"
+            "                let g = y => y.nope;\n"
+            "                clobber();\n"
+            "                return describe(_f);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // `consume` takes `INNER` rather than `INNER?`, so line 15
+        // leans on the narrow — unlike `describe` above, this load
+        // has somewhere for the earlier candidates to matter. Lines
+        // 16 and 17 are two more `clobber()` calls after that load is
+        // the last thing in the function to read `_f` at all: nothing
+        // downstream can be shown a stale narrowed type there, so
+        // neither should draw a sigil.
+        dead_after_use_source() -> string =>
+            "namespace DeadAfterUse is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "        label() -> string => \"inner\";\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        consume(v: INNER) -> string => v.label();\n"
+            "        dead_after_use() -> string is\n"
+            "            if _f? then\n"
+            "                let r = consume(_f);\n"
+            "                clobber();\n"
+            "                clobber();\n"
+            "                return r;\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // The only read of `_f` after the crossing call is the `==`
+        // at line 15, which is an intrinsic: it is judged by nothing,
+        // since reference identity is valid at any type. It is still
+        // a read the editor reports a narrowed type for, so the call
+        // before it at line 14 has a later report to protect and
+        // draws its sigil.
+        intrinsic_read_source() -> string =>
+            "namespace IntrinsicRead is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        _other: INNER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        compare() -> bool is\n"
+            "            if _f? then\n"
+            "                clobber();\n"
+            "                return _f == _other;\n"
+            "            fi\n"
+            "            return false;\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // Two unproven calls before the load that leans on the fact:
+        // the first is where the narrowing stops being backed, and the
+        // second was crossed over a fact already gone. Line 15 is the
+        // first call, line 16 the second, line 17 the leaning load.
+        successive_calls_source() -> string =>
+            "namespace Successive is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "        label() -> string => \"inner\";\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        consume(v: INNER) -> string => v.label();\n"
+            "        successive() -> string is\n"
+            "            if _f? then\n"
+            "                clobber();\n"
+            "                clobber();\n"
+            "                return consume(_f);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // The only read of `_f` after the crossing call re-checks it
+        // with `!`, so nothing leans on the fact and no reliance is
+        // reported. The `!` is there because the call took the
+        // narrowing away, so line 15 is exactly what explains it.
+        recheck_read_source() -> string =>
+            "namespace RecheckRead is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "        label() -> string => \"inner\";\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        consume(v: INNER) -> string => v.label();\n"
+            "        recheck() -> string is\n"
+            "            if _f? then\n"
+            "                clobber();\n"
+            "                return consume(_f!);\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        // The same shape with the other re-checking read: the only
+        // read of `_f` after the crossing call is a coalescing
+        // access, which checks the value at run time exactly as `!`
+        // does. Line 14 is the call, line 15 the read.
+        coalesce_read_source() -> string =>
+            "namespace CoalesceRead is\n"
+            "    class INNER is\n"
+            "        init() is si\n"
+            "        label() -> string => \"inner\";\n"
+            "    si\n"
+            "    class HOLDER is\n"
+            "        _f: INNER?;\n"
+            "        init() is si\n"
+            "        clobber() is\n"
+            "            _f = null;\n"
+            "        si\n"
+            "        coalesce() -> string is\n"
+            "            if _f? then\n"
+            "                clobber();\n"
+            "                return _f?.label() ?? \"none\";\n"
+            "            fi\n"
+            "            return \"none\";\n"
+            "        si\n"
+            "    si\n"
+            "si\n";
+
+        compile_inlays(
+            file_name: string,
+            text: string,
+            open_paths: Collections.Iterable[string]
+        ) -> LIST[INLAY_HINT] is
+            let use analyser = ANALYSER_PROCESS();
+
+            analyser.send_open_files(open_paths);
+
+            analyser.send_edit(file_name, text);
+            let edit = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(edit) else "expected DIAGNOSTICS after EDIT";
+
+            analyser.send_compile();
+            let compile = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(compile) else "expected DIAGNOSTICS after COMPILE";
+
+            analyser.send_inlay_hints(file_name);
+            let inlays = analyser.read_response();
+            assert isa Response.INLAY_HINTS(inlays) else "expected INLAY_HINTS response";
+
+            return LIST[INLAY_HINT](inlays.hints);
+        si
+
+        prime(analyser: ANALYSER_PROCESS, open_paths: Collections.Iterable[string]) is
+            analyser.send_open_files(open_paths);
+
+            analyser.send_edit("unproven.ghul", source());
+            let edit = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(edit) else "expected DIAGNOSTICS after EDIT";
+
+            analyser.send_compile();
+            let compile = analyser.read_response();
+            assert isa Response.DIAGNOSTICS(compile) else "expected DIAGNOSTICS after COMPILE";
+        si
+
+        compile_inlays(open_paths: Collections.Iterable[string]) -> LIST[INLAY_HINT] is
+            let use analyser = ANALYSER_PROCESS();
+
+            prime(analyser, open_paths);
+
+            analyser.send_inlay_hints("unproven.ghul");
+            let inlays = analyser.read_response();
+            assert isa Response.INLAY_HINTS(inlays) else "expected INLAY_HINTS response";
+
+            return LIST[INLAY_HINT](inlays.hints);
+        si
+
+        kill_inlays(hints: Collections.Iterable[INLAY_HINT]) -> LIST[INLAY_HINT] is
+            let result = LIST[INLAY_HINT]();
+
+            for h in hints do
+                if h.code =~ "narrowing-killed" then
+                    result.add(h);
+                fi
+            od
+
+            return result;
+        si
+
+        // The call at line 18 can assign `_f` a possibly-absent
+        // value, so it is marked where it happens.
+        @Test()
+        kill_inlay_marks_the_unproven_call() is
+            let inlays = kill_inlays(compile_inlays(["unproven.ghul"]));
+
+            let saw mut = false;
+
+            for h in inlays do
+                if h.line == 18 /\ h.label =~ "◄" then
+                    saw = true;
+                fi
+            od
+
+            is_true(
+                saw,
+                "expected a narrowing-killed inlay at line 18, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        // The detail names the shape the value reverts to, so the
+        // sigil explains itself without another query.
+        @Test()
+        kill_inlay_detail_names_the_reverted_type() is
+            let inlays = kill_inlays(compile_inlays(["unproven.ghul"]));
+
+            let saw mut = false;
+
+            for h in inlays do
+                if h.line == 18 /\ h.detail.contains("INNER?") then
+                    saw = true;
+                fi
+            od
+
+            is_true(
+                saw,
+                "expected the inlay detail to name INNER?, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        // `quiet` writes only `_count`, which the solved relations
+        // prove disjoint from the fact, so the call at line 25 draws
+        // nothing and the narrowing stands over it.
+        @Test()
+        no_kill_inlay_where_the_call_is_proven_harmless() is
+            let inlays = kill_inlays(compile_inlays(["unproven.ghul"]));
+
+            for h in inlays do
+                are_not_equal(
+                    25,
+                    h.line,
+                    "expected no inlay for a call the relations clear, saw: {h.detail}"
+                );
+            od
+        si
+
+        // After the load at line 15 nothing reads `_f` again before
+        // the branch returns, so the two `clobber()` calls that
+        // follow have no later type report to protect — marking them
+        // would only repeat that the fact is gone, which line 15
+        // already accounts for.
+        @Test()
+        no_kill_inlay_after_the_last_use_of_a_fact() is
+            let inlays = kill_inlays(
+                compile_inlays("dead_after_use.ghul", dead_after_use_source(), ["dead_after_use.ghul"]));
+
+            for h in inlays do
+                is_true(
+                    h.line != 16 /\ h.line != 17,
+                    "expected no inlay after the last use of the fact, saw: {inlay_summary(inlays)}"
+                );
+            od
+        si
+
+        // A load feeding an intrinsic operation is judged by nothing,
+        // but it is still a later read of the fact, so the call it
+        // crosses is marked. Without that the editor would report a
+        // narrowed type at line 15 with nothing naming the call that
+        // stopped backing it.
+        @Test()
+        kill_inlay_before_a_read_that_only_an_intrinsic_consumes() is
+            let inlays = kill_inlays(
+                compile_inlays(
+                    "intrinsic_read.ghul", intrinsic_read_source(), ["intrinsic_read.ghul"]));
+
+            is_true(
+                inlays | .any(h => h.line == 14),
+                "expected a kill inlay for the call before an intrinsic read, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        // Same editor-only gate the other narrowing inlays carry.
+        @Test()
+        no_kill_inlay_when_the_file_is_not_open() is
+            let inlays = kill_inlays(compile_inlays(["other.ghul"]));
+
+            are_equal(
+                0,
+                inlays.count,
+                "expected no narrowing-killed inlay for a file that is not open"
+            );
+        si
+
+        // A use after the unproven call reports the type the value
+        // had before the narrowing, not the narrowed one.
+        @Test()
+        hover_after_an_unproven_call_reports_the_original_type() is
+            let use analyser = ANALYSER_PROCESS();
+
+            prime(analyser, ["unproven.ghul"]);
+
+            analyser.send_hover("unproven.ghul", 19, 33);
+            let response = analyser.read_query_response();
+            assert isa Response.HOVER(response) else "expected HOVER response";
+
+            let signature = response.signature ?? "";
+
+            // A narrowed hover renders the declaration and then the
+            // narrowed shape after a `►`; reporting the original type
+            // means that second line is gone.
+            is_true(
+                signature.contains("INNER?") /\ !signature.contains("►"),
+                "expected the hover to report the original type INNER? and no narrowing, got '{signature}'"
+                "\n--- analyser stderr ---\n{analyser.stderr_capture}"
+            );
+        si
+
+        // A narrowing the relations leave standing still reports the
+        // narrowed type, exactly as it always did.
+        @Test()
+        hover_after_a_cleared_call_reports_the_narrowed_type() is
+            let use analyser = ANALYSER_PROCESS();
+
+            prime(analyser, ["unproven.ghul"]);
+
+            analyser.send_hover("unproven.ghul", 26, 33);
+            let response = analyser.read_query_response();
+            assert isa Response.HOVER(response) else "expected HOVER response";
+
+            let signature = response.signature ?? "";
+
+            is_true(
+                signature.contains("► INNER"),
+                "expected the hover to still report the narrowing, got '{signature}'"
+            );
+        si
+
+        // One call crossed over two facts it cannot be shown to have
+        // left alone is still one kill site: a single sigil, with the
+        // detail naming every value that reverts there.
+        @Test()
+        one_call_killing_several_facts_draws_a_single_sigil() is
+            let inlays = kill_inlays(compile_inlays("multi.ghul", multi_source(), ["multi.ghul"]));
+
+            let at_call = LIST[INLAY_HINT]();
+
+            for h in inlays do
+                if h.line == 19 then
+                    at_call.add(h);
+                fi
+            od
+
+            are_equal(
+                1,
+                at_call.count,
+                "expected exactly one narrowing-killed inlay at the call, saw: {inlay_summary(inlays)}"
+            );
+
+            is_true(
+                at_call[0].detail.contains("INNER?") /\ at_call[0].detail.contains("OTHER?"),
+                "expected the single inlay's detail to name both reverted values, saw: {at_call[0].detail}"
+            );
+        si
+
+        // A body the compile-expressions retry loop walks more than
+        // once re-notes the same call's kill candidates on every walk;
+        // the report must still draw one sigil per call site.
+        @Test()
+        a_retried_body_draws_one_sigil_per_call_site() is
+            let inlays = kill_inlays(compile_inlays("retry.ghul", retry_source(), ["retry.ghul"]));
+
+            let per_line = Collections.MAP[int, int]();
+
+            for h in inlays do
+                let count: int mut;
+
+                if per_line.try_get_value(h.line, count ref) then
+                    per_line[h.line] = count + 1;
+                else
+                    per_line[h.line] = 1;
+                fi
+            od
+
+            for line in per_line do
+                are_equal(
+                    1,
+                    line.value,
+                    "expected at most one narrowing-killed inlay per line, saw {line.value} at line {line.key}: {inlay_summary(inlays)}"
+                );
+            od
+
+            is_true(
+                per_line.contains_key(16),
+                "expected a narrowing-killed inlay at the clobber call, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        // The first unproven call is what takes the narrowing away;
+        // by the second there is nothing left to lose, so only the
+        // first draws a sigil.
+        @Test()
+        only_the_first_of_successive_unproven_calls_draws_a_sigil() is
+            let inlays = kill_inlays(
+                compile_inlays(
+                    "successive.ghul", successive_calls_source(), ["successive.ghul"]));
+
+            is_true(
+                inlays | .any(h => h.line == 15),
+                "expected a kill inlay at the first unproven call, saw: {inlay_summary(inlays)}"
+            );
+
+            for h in inlays do
+                are_not_equal(
+                    16,
+                    h.line,
+                    "expected no inlay for a call crossed over a fact already gone, saw: {inlay_summary(inlays)}"
+                );
+            od
+        si
+
+        // A read through `!` asks nothing of the fact, but it is
+        // still a read, and the unwrap is only needed because the
+        // call before it took the narrowing away. Marking that call
+        // is what accounts for the `!`; without it the sigil appears
+        // only once the unwrap is removed and the code no longer
+        // compiles.
+        @Test()
+        kill_inlay_before_a_read_that_rechecks_the_value() is
+            let inlays = kill_inlays(
+                compile_inlays("recheck.ghul", recheck_read_source(), ["recheck.ghul"]));
+
+            is_true(
+                inlays | .any(h => h.line == 15),
+                "expected a kill inlay for the call before a re-checking read, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        // `?.` re-checks the receiver just as `!` re-checks the
+        // value, so the call before it is marked for the same reason.
+        @Test()
+        kill_inlay_before_a_coalescing_read() is
+            let inlays = kill_inlays(
+                compile_inlays("coalesce.ghul", coalesce_read_source(), ["coalesce.ghul"]));
+
+            is_true(
+                inlays | .any(h => h.line == 14),
+                "expected a kill inlay for the call before a coalescing read, saw: {inlay_summary(inlays)}"
+            );
+        si
+
+        inlay_summary(hints: Collections.Iterable[INLAY_HINT]) -> string is
+            let out = System.Text.StringBuilder();
+
+            for h in hints do
+                out.append("[{h.line}:{h.label}:{h.detail}]");
+            od
+
+            return out.to_string();
+        si
+    si
+si

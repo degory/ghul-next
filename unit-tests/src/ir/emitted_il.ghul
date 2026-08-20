@@ -4,6 +4,7 @@ namespace IR.UnitTests is
     use System.Reflection.Metadata.ILOpCode;
 
     use Collections.LIST;
+    use Assertions;
 
     // Drives a value down the binary path and answers with the
     // instruction bytes it encoded.
@@ -18,7 +19,10 @@ namespace IR.UnitTests is
         // The bytes a call to `emit` encodes, for something that is not
         // a whole value - a prefix, say.
         encoded_by(emit: (IR.CONTEXT) -> void) -> ubyte[] static is
-            let context = IR.CONTEXT(null, null);
+            let context =
+                IR.CONTEXT(
+                    NSubstitute.Substitute.`for`[Logging.Logger](System.Array.empty`[object]()),
+                    "entry");
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
             context.install_srm_assembly_emitter("test", "0:0:0:0", true);
@@ -37,7 +41,7 @@ namespace IR.UnitTests is
             let actual = encoded_by(emit);
             let expected = bytes_of(op_codes);
 
-            Assert.is_true(
+            is_true(
                 _describe(actual).starts_with(_describe(expected)),
                 "expected IL beginning {_describe(expected)}, got {_describe(actual)}");
         si
@@ -46,7 +50,10 @@ namespace IR.UnitTests is
         // because a value naming a type or a member resolves a token
         // through one.
         encoded(value: IR.Values.Value) -> ubyte[] static is
-            let context = IR.CONTEXT(null, null);
+            let context =
+                IR.CONTEXT(
+                    NSubstitute.Substitute.`for`[Logging.Logger](System.Array.empty`[object]()),
+                    "entry");
             let body = IR.Emitter.SRM_METHOD_BODY_EMITTER();
 
             // A value naming a type or a member resolves a token through
@@ -95,11 +102,11 @@ namespace IR.UnitTests is
                 let expected = bytes_of([op_code]);
 
                 for b in expected do
-                    Assert.is_true(
+                    is_true(
                         cursor < actual.count,
                         "IL ended before {op_code}: {_describe(actual)}");
 
-                    Assert.are_equal(
+                    are_equal(
                         _describe([b]),
                         _describe([actual[cursor]]),
                         "at byte {cursor} of {_describe(actual)}");
@@ -110,7 +117,7 @@ namespace IR.UnitTests is
                 cursor = cursor + 4;
             od
 
-            Assert.are_equal(
+            are_equal(
                 cursor,
                 actual.count,
                 "unexpected trailing IL in {_describe(actual)}");
@@ -120,7 +127,7 @@ namespace IR.UnitTests is
             let expected = bytes_of(op_codes);
             let actual = encoded(value);
 
-            Assert.are_equal(_describe(expected), _describe(actual));
+            are_equal(_describe(expected), _describe(actual));
         si
 
         // Compared as text so a mismatch names the bytes rather than

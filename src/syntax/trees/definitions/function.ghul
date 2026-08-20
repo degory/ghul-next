@@ -32,6 +32,18 @@ namespace Syntax.Trees.Definitions is
         // the primary is not simply the only `init`).
         is_primary_constructor: bool public;
 
+        // Set on a FUNCTION the compiler wrote that stands for no
+        // member the user did, and that keeps a real source location so
+        // its diagnostics anchor somewhere meaningful — a union's
+        // structural `=~` and `get_hash_code`, for instance, which are
+        // built at the union's own declaration. Distinct from a
+        // synthesised accessor, which does stand for a written member.
+        is_synthesized: bool public;
+
+        mark_synthesized() is
+            is_synthesized = true;
+        si
+
         for_property: PROPERTY? public;
 
         // Set on the accessor FUNCTIONs synthesised by add-accessors-for-
@@ -47,6 +59,12 @@ namespace Syntax.Trees.Definitions is
         // diagnostics that target user naming (e.g. the snake_case
         // member-name warning) gate on `!for_indexer?`.
         for_indexer: INDEXER? public;
+
+        // For a synthesised accessor (for_property or for_indexer
+        // set): true for the assign accessor, false for the read
+        // accessor. Carries which half this is structurally, so
+        // nothing has to infer it back from the accessor's name.
+        is_assign_accessor: bool public;
 
         super(location, modifiers);
 

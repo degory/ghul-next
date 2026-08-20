@@ -1,0 +1,1099 @@
+namespace Syntax.Process is
+    use Semantic.Types.Type;
+    use Semantic.Types.INTERSECTION;
+    use Symbol = Semantic.Symbols.Symbol;
+
+    // One call a heap fact survived on the way to a use. Narrowing is
+    // optimistic: a call does not drop heap facts, it is recorded
+    // against every fact live across it, and a use of the fact is
+    // checked against the record — a crossing whose callee provably
+    // left the fact alone is discharged, and relying on a fact with
+    // an undischarged crossing is a compile error at the use site.
+    class CROSSING(location: Source.LOCATION, callee: Semantic.Symbols.Function?);
+
+    // The flow-analysis facts in force at one program point: the
+    // local variables observed at a type narrower than their
+    // declaration, the local variables known to be definitely
+    // assigned, the local variables known to hold a value, and a
+    // `bottom` marker for points reached only via a diverging path
+    // (return / throw / break / continue).
+    //
+    // The flow pass threads a NARROW_ENV forward through a method,
+    // copies it at branch points, and merges divergent copies with
+    // `join`. A variable absent from `_narrows` is at its declared
+    // type; a variable absent from `_assigned` is not known to be
+    // definitely assigned; a variable absent from `_non_null` is not
+    // known to hold a value. See `docs/claude/flow-sensitive-narrowing.md`.
+    class NARROW_ENV is
+        _narrows: Collections.MAP[Symbol, Type];
+
+        // Locals definitely assigned on every path reaching this
+        // point — the definite-assignment domain.
+        _assigned: Collections.SET[Symbol];
+
+        // Methods of the enclosing type called on `self` on every path
+        // reaching this point - the same must-domain as `_assigned`, and
+        // joined the same way. A constructor's field-assignment answer
+        // follows the callees it cannot avoid reaching.
+        _called: Collections.SET[Symbol];
+
+        // Locals known to hold a value at this point — non-null for a
+        // reference type, has-a-value for a NULLABLE[T] (`T?`) value
+        // type. The presence domain; a possible-null-dereference
+        // check (a later phase) consumes it.
+        _non_null: Collections.SET[Symbol];
+
+        // Member-access paths (`receiver.prop`, `receiver.a.b`) known
+        // to hold a value at this point — the same presence domain
+        // lifted from single symbols to re-readable paths. A path
+        // here is narrowed optional -> non-optional at its use sites,
+        // so `if x.y? then x.y.z fi` type-checks. Every hop is a
+        // field or a store-free getter; the flow transfers drop paths
+        // the moment the heap may have changed what they read. See
+        // ACCESS_PATH.
+        _non_null_paths: Collections.SET[ACCESS_PATH];
+
+        // Member-access paths narrowed to a specific type at this
+        // point — the type domain lifted from single symbols to
+        // re-readable paths. A path here is loaded at the narrower
+        // type at its use sites, so `if isa Cat(x.y) then x.y.meow()
+        // fi` type-checks. Composed via INTERSECTION like `_narrows`,
+        // and dropped by the same heap transfers as `_non_null_paths`.
+        _path_narrows: Collections.MAP[ACCESS_PATH, Type];
+
+        // The calls each heap fact has survived since it was last
+        // established, one map per fact domain. A local's facts never
+        // cross - a callee cannot reach a local - so only fields,
+        // properties and paths take entries. Establishing a fact
+        // afresh clears its record; an else-edge complement, which
+        // derives from the prior narrow, inherits it instead.
+        _non_null_crossings: Collections.MAP[Symbol, Collections.LIST[CROSSING]];
+        _narrow_crossings: Collections.MAP[Symbol, Collections.LIST[CROSSING]];
+        _path_presence_crossings: Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]];
+        _path_narrow_crossings: Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]];
+
+        // The crossing-log index at which each heap fact was
+        // established, one map per fact domain mirroring the crossing
+        // records. Adoption replays a log range onto an environment's
+        // facts; a replayed crossing that ran before a fact's own
+        // establishing test cannot invalidate it, and the index lets
+        // `note_crossing_at` skip it. A fact with no recorded index is
+        // treated as created at the start of the log, so every
+        // replayed crossing attaches — the pre-mechanism behaviour,
+        // and the conservative direction.
+        _non_null_created_at: Collections.MAP[Symbol, int];
+        _narrow_created_at: Collections.MAP[Symbol, int];
+        _path_presence_created_at: Collections.MAP[ACCESS_PATH, int];
+        _path_narrow_created_at: Collections.MAP[ACCESS_PATH, int];
+
+        // The creation index the setters stamp on facts they establish
+        // afresh. The condition analyzer sets it to the log count the
+        // walk recorded at each leaf test before adding that leaf's
+        // facts; the flow sets it to its own log count before creating
+        // a fact mid-walk. Zero attaches everything.
+        creation_mark: int public;
+
+        // True for an unreachable program point. A bottom env is the
+        // identity element of `join` and carries no facts.
+        is_bottom: bool public;
+
+        init() is
+            _narrows = Collections.MAP[Symbol, Type]();
+            _assigned = Collections.SET[Symbol]();
+            _called = Collections.SET[Symbol]();
+            _non_null = Collections.SET[Symbol]();
+            _non_null_paths = Collections.SET[ACCESS_PATH]();
+            _path_narrows = Collections.MAP[ACCESS_PATH, Type]();
+            _non_null_crossings = Collections.MAP[Symbol, Collections.LIST[CROSSING]]();
+            _narrow_crossings = Collections.MAP[Symbol, Collections.LIST[CROSSING]]();
+            _path_presence_crossings = Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]]();
+            _path_narrow_crossings = Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]]();
+            _non_null_created_at = Collections.MAP[Symbol, int]();
+            _narrow_created_at = Collections.MAP[Symbol, int]();
+            _path_presence_created_at = Collections.MAP[ACCESS_PATH, int]();
+            _path_narrow_created_at = Collections.MAP[ACCESS_PATH, int]();
+        si
+
+        _is_heap_fact(v: Symbol) -> bool =>
+            isa Semantic.Symbols.Field(v) \/ isa Semantic.Symbols.Property(v);
+
+        // Record `crossing` against every heap fact live at this
+        // point, in every domain.
+        // Copy `v`'s crossing records from `other` into this
+        // environment. For an environment rebuilt fact-by-fact from
+        // another (the loop kept-env), which would otherwise carry
+        // the facts stripped of the crossings still owed on them.
+        copy_crossings_of(v: Symbol, other: NARROW_ENV) is
+            let existing: Collections.LIST[CROSSING] mut;
+
+            if other._non_null_crossings.try_get_value(v, existing ref) then
+                _non_null_crossings[v] = _copied_crossings(existing);
+            fi
+
+            if other._narrow_crossings.try_get_value(v, existing ref) then
+                _narrow_crossings[v] = _copied_crossings(existing);
+            fi
+
+            let created mut = 0;
+
+            if other._non_null_created_at.try_get_value(v, created ref) then
+                _non_null_created_at[v] = created;
+            fi
+
+            if other._narrow_created_at.try_get_value(v, created ref) then
+                _narrow_created_at[v] = created;
+            fi
+        si
+
+        // The heap facts a crossing would be attached to, narrowed
+        // variables first and presence-only ones after, so a variable
+        // carrying both is described by its narrow. Mirrors the
+        // enumeration `note_crossing` performs.
+        heap_fact_variables: Collections.Iterable[Symbol] is
+            let result = Collections.LIST[Symbol]();
+
+            if is_bottom then
+                return result;
+            fi
+
+            for v in _narrows.keys do
+                if _is_heap_fact(v) then
+                    result.add(v);
+                fi
+            od
+
+            for v in _non_null do
+                if _is_heap_fact(v) /\ !_narrows.contains_key(v) then
+                    result.add(v);
+                fi
+            od
+
+            return result;
+        si
+
+        // Path analogue of `heap_fact_variables`.
+        heap_fact_paths: Collections.Iterable[ACCESS_PATH] is
+            let result = Collections.LIST[ACCESS_PATH]();
+
+            if is_bottom then
+                return result;
+            fi
+
+            for p in _path_narrows.keys do
+                result.add(p);
+            od
+
+            for p in _non_null_paths do
+                if !_path_narrows.contains_key(p) then
+                    result.add(p);
+                fi
+            od
+
+            return result;
+        si
+
+        note_crossing(crossing: CROSSING) is
+            if is_bottom then
+                return;
+            fi
+
+            for v in _non_null do
+                if _is_heap_fact(v) then
+                    _append_crossing(_non_null_crossings, v, crossing);
+                fi
+            od
+
+            for v in _narrows.keys do
+                if _is_heap_fact(v) then
+                    _append_crossing(_narrow_crossings, v, crossing);
+                fi
+            od
+
+            for p in _non_null_paths do
+                _append_path_crossing(_path_presence_crossings, p, crossing);
+            od
+
+            for p in _path_narrows.keys do
+                _append_path_crossing(_path_narrow_crossings, p, crossing);
+            od
+        si
+
+        // As `note_crossing`, but for a crossing replayed from the log
+        // at `index`: a fact established after the crossing ran cannot
+        // have been invalidated by it — the establishing test observed
+        // the post-call heap — so the crossing skips that fact. Facts
+        // with no recorded creation index take every crossing, the
+        // pre-mechanism behaviour.
+        note_crossing_at(crossing: CROSSING, index: int) is
+            if is_bottom then
+                return;
+            fi
+
+            for v in _non_null do
+                if _is_heap_fact(v) /\ _created_by(_non_null_created_at, v, index) then
+                    _append_crossing(_non_null_crossings, v, crossing);
+                fi
+            od
+
+            for v in _narrows.keys do
+                if _is_heap_fact(v) /\ _created_by(_narrow_created_at, v, index) then
+                    _append_crossing(_narrow_crossings, v, crossing);
+                fi
+            od
+
+            for p in _non_null_paths do
+                if _path_created_by(_path_presence_created_at, p, index) then
+                    _append_path_crossing(_path_presence_crossings, p, crossing);
+                fi
+            od
+
+            for p in _path_narrows.keys do
+                if _path_created_by(_path_narrow_created_at, p, index) then
+                    _append_path_crossing(_path_narrow_crossings, p, crossing);
+                fi
+            od
+        si
+
+        _created_by(map: Collections.MAP[Symbol, int], v: Symbol, index: int) -> bool is
+            let created mut = 0;
+
+            if map.try_get_value(v, created ref) then
+                return created <= index;
+            fi
+
+            return true;
+        si
+
+        _path_created_by(map: Collections.MAP[ACCESS_PATH, int], p: ACCESS_PATH, index: int) -> bool is
+            let created mut = 0;
+
+            if map.try_get_value(p, created ref) then
+                return created <= index;
+            fi
+
+            return true;
+        si
+
+        _append_crossing(
+            map: Collections.MAP[Symbol, Collections.LIST[CROSSING]],
+            v: Symbol,
+            crossing: CROSSING
+        ) is
+            let existing: Collections.LIST[CROSSING] mut;
+
+            if map.try_get_value(v, existing ref) then
+                existing.add(crossing);
+            else
+                let fresh = Collections.LIST[CROSSING]();
+                fresh.add(crossing);
+                map[v] = fresh;
+            fi
+        si
+
+        _append_path_crossing(
+            map: Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]],
+            p: ACCESS_PATH,
+            crossing: CROSSING
+        ) is
+            let existing: Collections.LIST[CROSSING] mut;
+
+            if map.try_get_value(p, existing ref) then
+                existing.add(crossing);
+            else
+                let fresh = Collections.LIST[CROSSING]();
+                fresh.add(crossing);
+                map[p] = fresh;
+            fi
+        si
+
+        non_null_crossings_of(v: Symbol) -> Collections.LIST[CROSSING]? is
+            let result: Collections.LIST[CROSSING] mut;
+
+            if _non_null_crossings.try_get_value(v, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        narrow_crossings_of(v: Symbol) -> Collections.LIST[CROSSING]? is
+            let result: Collections.LIST[CROSSING] mut;
+
+            if _narrow_crossings.try_get_value(v, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        path_presence_crossings_of(p: ACCESS_PATH) -> Collections.LIST[CROSSING]? is
+            let result: Collections.LIST[CROSSING] mut;
+
+            if _path_presence_crossings.try_get_value(p, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        path_narrow_crossings_of(p: ACCESS_PATH) -> Collections.LIST[CROSSING]? is
+            let result: Collections.LIST[CROSSING] mut;
+
+            if _path_narrow_crossings.try_get_value(p, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        _clear_crossings(map: Collections.MAP[Symbol, Collections.LIST[CROSSING]], v: Symbol) is
+            if map.contains_key(v) then
+                map.remove(v);
+            fi
+        si
+
+        _clear_path_crossings(map: Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]], p: ACCESS_PATH) is
+            if map.contains_key(p) then
+                map.remove(p);
+            fi
+        si
+
+        // The unreachable environment.
+        bottom() -> NARROW_ENV static is
+            let e = NARROW_ENV();
+            e.is_bottom = true;
+            return e;
+        si
+
+        is_empty: bool => !is_bottom /\ _narrows.count == 0;
+        count: int => _narrows.count;
+
+        variables: Collections.Iterable[Symbol] => _narrows.keys;
+
+        contains(v: Symbol) -> bool => _narrows.contains_key(v);
+
+        // The narrowed type recorded for `v`, or null when `v` is
+        // not narrowed in this environment.
+        narrowed_type_of(v: Symbol) -> Type? is
+            let result: Type mut;
+
+            if _narrows.try_get_value(v, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        // Record `v` as narrowed to `t` (mutating). A bottom env
+        // ignores narrows — it stays unreachable.
+        //
+        // If `v` already carries a narrow `existing`, compose:
+        // `INTERSECTION.try_create(existing, t)`. The factory:
+        //   - returns `t` when t strict-subtypes existing (refining),
+        //   - returns `existing` when existing strict-subtypes t (the
+        //     new narrow is weaker, no-op),
+        //   - returns a multi-member intersection when both are
+        //     real new facts (e.g., a class plus a sibling trait),
+        //   - returns null when the two carry unrelated concrete
+        //     identities — no runtime value can be both, so the edge
+        //     recording the narrow is statically impossible. The code
+        //     on that edge is written against the newly tested type
+        //     (`elif isa TUPLE(x) then x.elements`), so `t` replaces
+        //     the stale narrow: on an unreachable edge any view is
+        //     sound, and the tested type is the one that typechecks.
+        // So stacked narrows like `if isa A(x) then if isa B(x)`
+        // produce `Declared & A & B` rather than dropping A.
+        //
+        // Skipped when composing with an existing narrow doesn't
+        // change the recorded type — every extra fact costs
+        // downstream copies, joins and kill iterations for no
+        // observable effect. A fresh record (no existing narrow) is
+        // always kept; if it turns out to no-op against v's declared
+        // type, the branch-entry `_apply_one` catches it.
+        set_narrow(v: Symbol, t: Type) is
+            if is_bottom then
+                return;
+            fi
+
+            let existing: Type mut;
+
+            if _narrows.try_get_value(v, existing ref) then
+                let composed = INTERSECTION.try_create(existing, t);
+
+                if !composed? then
+                    // a fresh test superseding a statically-impossible
+                    // prior narrow: nothing of the old fact survives
+                    _narrows[v] = t;
+                    _clear_crossings(_narrow_crossings, v);
+                    _narrow_created_at[v] = creation_mark;
+                    return;
+                fi
+
+                if composed.matches(existing) then
+                    // a re-test that alone implies the whole recorded
+                    // fact re-proves it, crossings and all
+                    if composed.matches(t) then
+                        _clear_crossings(_narrow_crossings, v);
+                        _narrow_created_at[v] = creation_mark;
+                    fi
+
+                    return;
+                fi
+
+                // composing keeps the prior component's crossings — and
+                // its creation index: the new test observed the value,
+                // the old fact did not — unless the new observation
+                // alone implies the whole composition
+                _narrows[v] = composed;
+
+                if composed.matches(t) then
+                    _clear_crossings(_narrow_crossings, v);
+                    _narrow_created_at[v] = creation_mark;
+                fi
+            else
+                _narrows[v] = t;
+                _clear_crossings(_narrow_crossings, v);
+                _narrow_created_at[v] = creation_mark;
+            fi
+        si
+
+        // Record `t` as the narrow for `v`, discarding any existing
+        // narrow instead of composing with it. For callers that have
+        // already computed the absolute narrowed type — the else-edge
+        // complement is derived from the current narrow, so it fully
+        // supersedes it. Composition would be wrong when the complement
+        // collapses to a supertype of the prior narrow (a concrete root
+        // that outlives every eliminated subclass): INTERSECTION would
+        // reinstate the wider prior narrow and the eliminated subclass
+        // would survive.
+        replace_narrow(v: Symbol, t: Type) is
+            if is_bottom then
+                return;
+            fi
+
+            _narrows[v] = t;
+            // The replacement derives from the test establishing it:
+            // crossings recorded before that test cannot invalidate it,
+            // however much of the prior fact's record is inherited.
+            _narrow_created_at[v] = creation_mark;
+        si
+
+        // Path-keyed mirror of `replace_narrow`.
+        replace_path_narrow(path: ACCESS_PATH, t: Type) is
+            if is_bottom then
+                return;
+            fi
+
+            _path_narrows[path] = t;
+            _path_narrow_created_at[path] = creation_mark;
+        si
+
+        // Forget any narrow for `v` (mutating) — used by the
+        // assignment transfer function.
+        drop_narrow(v: Symbol) is
+            if _narrows.contains_key(v) then
+                _narrows.remove(v);
+            fi
+        si
+
+        // The locals definitely assigned at this point.
+        assigned_variables: Collections.Iterable[Symbol] => _assigned;
+
+        // True iff `v` is definitely assigned at this point.
+        is_assigned(v: Symbol) -> bool => _assigned.contains(v);
+
+        // The methods definitely called at this point.
+        called_methods: Collections.Iterable[Symbol] => _called;
+
+        is_called(f: Symbol) -> bool => _called.contains(f);
+
+        set_called(f: Symbol) is
+            _called.add(f);
+        si
+
+        // Record `v` as definitely assigned (mutating). A bottom env
+        // ignores it — it stays unreachable.
+        set_assigned(v: Symbol) is
+            if is_bottom then
+                return;
+            fi
+
+            _assigned.add(v);
+        si
+
+        // The locals known to hold a value at this point.
+        non_null_variables: Collections.Iterable[Symbol] => _non_null;
+
+        // True iff `v` is known to hold a value at this point.
+        is_non_null(v: Symbol) -> bool => _non_null.contains(v);
+
+        // Record `v` as known to hold a value (mutating). A bottom
+        // env ignores it — it stays unreachable.
+        //
+        // Callers should filter out presence facts on non-optional
+        // targets themselves: NARROW_ENV can't safely check `v.type`
+        // here because the symbol's live type reflects whatever the
+        // outer walk state applied, not the fresh env being built —
+        // a redundant-looking fact recorded on a nested if body may
+        // still be observable at the branch entry when the outer
+        // narrow is restored.
+        set_non_null(v: Symbol) is
+            if is_bottom then
+                return;
+            fi
+
+            _non_null.add(v);
+            _clear_crossings(_non_null_crossings, v);
+            _non_null_created_at[v] = creation_mark;
+        si
+
+        // Forget that `v` is known to hold a value (mutating) — used
+        // by the assignment transfer function.
+        drop_non_null(v: Symbol) is
+            if _non_null.contains(v) then
+                _non_null.remove(v);
+            fi
+        si
+
+        // The member-access paths known to hold a value at this point.
+        non_null_paths: Collections.Iterable[ACCESS_PATH] => _non_null_paths;
+
+        // True iff `path` is known to hold a value at this point.
+        is_non_null_path(path: ACCESS_PATH) -> bool => _non_null_paths.contains(path);
+
+        // Record `path` as known to hold a value (mutating). A bottom
+        // env ignores it — it stays unreachable.
+        set_non_null_path(path: ACCESS_PATH) is
+            if is_bottom then
+                return;
+            fi
+
+            _non_null_paths.add(path);
+            _clear_path_crossings(_path_presence_crossings, path);
+            _path_presence_created_at[path] = creation_mark;
+        si
+
+        // The member-access paths carrying a type narrow at this point.
+        narrowed_paths: Collections.Iterable[ACCESS_PATH] => _path_narrows.keys;
+
+        // The narrowed type recorded for `path`, or null when it is
+        // not narrowed in this environment.
+        narrowed_type_of_path(path: ACCESS_PATH) -> Type? is
+            let result: Type mut;
+
+            if _path_narrows.try_get_value(path, result ref) then
+                return result;
+            fi
+
+            return null;
+        si
+
+        // Record `path` as narrowed to `t` (mutating). Bottom env
+        // ignores it. Stacks like `set_narrow` — a prior narrow on
+        // the same path composes with `t` via INTERSECTION, and an
+        // unrelated-concretes pair (statically-impossible test edge)
+        // replaces the stale narrow with `t` for the same reason.
+        set_path_narrow(path: ACCESS_PATH, t: Type) is
+            if is_bottom then
+                return;
+            fi
+
+            let existing: Type mut;
+
+            if _path_narrows.try_get_value(path, existing ref) then
+                let composed = INTERSECTION.try_create(existing, t);
+
+                _path_narrows[path] = if composed? then composed else t fi;
+
+                if !composed? \/ composed.matches(t) then
+                    _clear_path_crossings(_path_narrow_crossings, path);
+                    _path_narrow_created_at[path] = creation_mark;
+                fi
+            else
+                _path_narrows[path] = t;
+                _clear_path_crossings(_path_narrow_crossings, path);
+                _path_narrow_created_at[path] = creation_mark;
+            fi
+        si
+
+        // Forget every tracked path — the call transfer: a
+        // possibly-storing callee may have changed anything a path
+        // reads. Same reasoning for path type narrows.
+        drop_all_paths() is
+            _non_null_paths.clear();
+            _path_narrows.clear();
+        si
+
+        // Forget every path that reads through a property getter —
+        // the heap-store transfer: a store anywhere can change what a
+        // getter returns. Fields-only paths survive; a store to a
+        // field they read through is handled by drop_paths_through.
+        // Applies to both presence and type-narrow slots.
+        drop_getter_paths() is
+            let doomed = Collections.LIST[ACCESS_PATH]();
+
+            for p in _non_null_paths do
+                if p.has_getter_hop then
+                    doomed.add(p);
+                fi
+            od
+
+            for p in doomed do
+                _non_null_paths.remove(p);
+            od
+
+            let doomed_narrows = Collections.LIST[ACCESS_PATH]();
+
+            for p in _path_narrows.keys do
+                if p.has_getter_hop then
+                    doomed_narrows.add(p);
+                fi
+            od
+
+            for p in doomed_narrows do
+                _path_narrows.remove(p);
+            od
+        si
+
+        // Forget every path that reads through `member` at any hop —
+        // the member-store transfer. Keyed on the member symbol, not
+        // the written receiver, so a store through an aliased
+        // receiver still invalidates. Applies to both presence and
+        // type-narrow slots.
+        drop_paths_through(member: Symbol) is
+            let doomed = Collections.LIST[ACCESS_PATH]();
+
+            for p in _non_null_paths do
+                if p.contains_member(member) then
+                    doomed.add(p);
+                fi
+            od
+
+            for p in doomed do
+                _non_null_paths.remove(p);
+            od
+
+            let doomed_narrows = Collections.LIST[ACCESS_PATH]();
+
+            for p in _path_narrows.keys do
+                if p.contains_member(member) then
+                    doomed_narrows.add(p);
+                fi
+            od
+
+            for p in doomed_narrows do
+                _path_narrows.remove(p);
+            od
+        si
+
+        // Forget every tracked path rooted at `root` — used when the
+        // root is reassigned, which redirects every `root.…` path.
+        // Applies to both presence and type-narrow slots.
+        drop_paths_rooted_at(root: Symbol) is
+            let doomed = Collections.LIST[ACCESS_PATH]();
+
+            for p in _non_null_paths do
+                if p.root == root then
+                    doomed.add(p);
+                fi
+            od
+
+            for p in doomed do
+                _non_null_paths.remove(p);
+            od
+
+            let doomed_narrows = Collections.LIST[ACCESS_PATH]();
+
+            for p in _path_narrows.keys do
+                if p.root == root then
+                    doomed_narrows.add(p);
+                fi
+            od
+
+            for p in doomed_narrows do
+                _path_narrows.remove(p);
+            od
+        si
+
+        // Forget every fact a heap mutation can invalidate: narrows
+        // and presence facts keyed on fields or properties, and every
+        // member-access path. Local-variable facts survive — a callee
+        // cannot reach a local. Used by controlled walks whose branch
+        // environments derive from a snapshot taken before the walk:
+        // when the walk killed heap facts, the snapshot's heap facts
+        // cannot be trusted on the edges built from it.
+        drop_heap_facts() is
+            let stale = Collections.LIST[Symbol]();
+
+            for v in _narrows.keys do
+                if isa Semantic.Symbols.Field(v) \/ isa Semantic.Symbols.Property(v) then
+                    stale.add(v);
+                fi
+            od
+
+            for v in stale do
+                _narrows.remove(v);
+            od
+
+            let stale_presence = Collections.LIST[Symbol]();
+
+            for v in _non_null do
+                if isa Semantic.Symbols.Field(v) \/ isa Semantic.Symbols.Property(v) then
+                    stale_presence.add(v);
+                fi
+            od
+
+            for v in stale_presence do
+                _non_null.remove(v);
+            od
+
+            _non_null_paths.clear();
+            _path_narrows.clear();
+            _non_null_crossings.clear();
+            _narrow_crossings.clear();
+            _path_presence_crossings.clear();
+            _path_narrow_crossings.clear();
+            _non_null_created_at.clear();
+            _narrow_created_at.clear();
+            _path_presence_created_at.clear();
+            _path_narrow_created_at.clear();
+        si
+
+        copy() -> NARROW_ENV is
+            let e = NARROW_ENV();
+            e.is_bottom = is_bottom;
+
+            for v in _narrows.keys do
+                e._narrows[v] = _narrows[v];
+            od
+
+            for v in _assigned do
+                e._assigned.add(v);
+            od
+
+            for f in _called do
+                e._called.add(f);
+            od
+
+            for v in _non_null do
+                e._non_null.add(v);
+            od
+
+            for p in _non_null_paths do
+                e._non_null_paths.add(p);
+            od
+
+            for p in _path_narrows.keys do
+                e._path_narrows[p] = _path_narrows[p];
+            od
+
+            for v in _non_null_crossings.keys do
+                e._non_null_crossings[v] = _copied_crossings(_non_null_crossings[v]);
+            od
+
+            for v in _narrow_crossings.keys do
+                e._narrow_crossings[v] = _copied_crossings(_narrow_crossings[v]);
+            od
+
+            for p in _path_presence_crossings.keys do
+                e._path_presence_crossings[p] = _copied_crossings(_path_presence_crossings[p]);
+            od
+
+            for p in _path_narrow_crossings.keys do
+                e._path_narrow_crossings[p] = _copied_crossings(_path_narrow_crossings[p]);
+            od
+
+            for v in _non_null_created_at.keys do
+                e._non_null_created_at[v] = _non_null_created_at[v];
+            od
+
+            for v in _narrow_created_at.keys do
+                e._narrow_created_at[v] = _narrow_created_at[v];
+            od
+
+            for p in _path_presence_created_at.keys do
+                e._path_presence_created_at[p] = _path_presence_created_at[p];
+            od
+
+            for p in _path_narrow_created_at.keys do
+                e._path_narrow_created_at[p] = _path_narrow_created_at[p];
+            od
+
+            return e;
+        si
+
+        // Carry another env's crossing records into this one — used
+        // by the flow's set_env, which rebuilds the applied env
+        // through the set_* methods, whose establishment semantics
+        // would otherwise clear the records at every branch entry.
+        adopt_crossings_from(source: NARROW_ENV) is
+            for v in source._non_null_crossings.keys do
+                _non_null_crossings[v] = _copied_crossings(source._non_null_crossings[v]);
+            od
+
+            for v in source._narrow_crossings.keys do
+                _narrow_crossings[v] = _copied_crossings(source._narrow_crossings[v]);
+            od
+
+            for p in source._path_presence_crossings.keys do
+                _path_presence_crossings[p] = _copied_crossings(source._path_presence_crossings[p]);
+            od
+
+            for p in source._path_narrow_crossings.keys do
+                _path_narrow_crossings[p] = _copied_crossings(source._path_narrow_crossings[p]);
+            od
+        si
+
+        // Carry another env's fact creation indexes into this one —
+        // paired with `adopt_crossings_from` in the flow's set_env, so
+        // a rebuilt environment keeps the indexes its facts were
+        // established under.
+        adopt_creation_marks_from(source: NARROW_ENV) is
+            for v in source._non_null_created_at.keys do
+                _non_null_created_at[v] = source._non_null_created_at[v];
+            od
+
+            for v in source._narrow_created_at.keys do
+                _narrow_created_at[v] = source._narrow_created_at[v];
+            od
+
+            for p in source._path_presence_created_at.keys do
+                _path_presence_created_at[p] = source._path_presence_created_at[p];
+            od
+
+            for p in source._path_narrow_created_at.keys do
+                _path_narrow_created_at[p] = source._path_narrow_created_at[p];
+            od
+        si
+
+        _copied_crossings(crossings: Collections.LIST[CROSSING]) -> Collections.LIST[CROSSING] static is
+            let result = Collections.LIST[CROSSING]();
+
+            for c in crossings do
+                result.add(c);
+            od
+
+            return result;
+        si
+
+        // A copy carrying only the definite-assignment facts — no
+        // narrows, reachable. Used where the narrowing facts must be
+        // discarded conservatively (after a try statement) but
+        // assignments made before it still hold.
+        with_only_assigned() -> NARROW_ENV is
+            let e = NARROW_ENV();
+
+            for v in _assigned do
+                e._assigned.add(v);
+            od
+
+            for f in _called do
+                e._called.add(f);
+            od
+
+            return e;
+        si
+
+        // Merge two environments at a control-flow merge point.
+        // `bottom` is the identity (a diverging branch contributes
+        // nothing). Every domain merges by intersection: a variable
+        // survives the narrowing merge only when narrowed in BOTH
+        // inputs (merged type = least upper bound); a variable is
+        // definitely assigned after the merge only when assigned in
+        // BOTH inputs; likewise known-non-null only when in both.
+        join(a: NARROW_ENV, b: NARROW_ENV) -> NARROW_ENV static is
+            if a.is_bottom then
+                return b.copy();
+            fi
+
+            if b.is_bottom then
+                return a.copy();
+            fi
+
+            let result = NARROW_ENV();
+
+            for v in a.variables do
+                if let ta = a.narrowed_type_of(v), tb = b.narrowed_type_of(v) then
+                    // Two narrows over the same closed root join by
+                    // subtype-set union — exact, and it keeps the
+                    // optional flag when either edge can be null.
+                    // The general LUB is the fallback for every
+                    // other shape.
+                    let merged mut = Semantic.Types.ONE_OF.try_join(ta, tb);
+
+                    if !merged? then
+                        let lub = Semantic.LEAST_UPPER_BOUND_MAP();
+                        lub.add(ta);
+                        lub.add(tb);
+
+                        merged = lub.get_result();
+                    fi
+
+                    if merged? then
+                        result.set_narrow(v, merged);
+                    fi
+                fi
+            od
+
+            for v in a.assigned_variables do
+                if b.is_assigned(v) then
+                    result.set_assigned(v);
+                fi
+            od
+
+            for f in a.called_methods do
+                if b.is_called(f) then
+                    result.set_called(f);
+                fi
+            od
+
+            for v in a.non_null_variables do
+                if b.is_non_null(v) then
+                    result.set_non_null(v);
+                fi
+            od
+
+            for p in a.non_null_paths do
+                if b.is_non_null_path(p) then
+                    result.set_non_null_path(p);
+                fi
+            od
+
+            for p in a.narrowed_paths do
+                if let ta = a.narrowed_type_of_path(p), tb = b.narrowed_type_of_path(p) then
+                    // Two narrows over the same closed root join by
+                    // subtype-set union — mirrors the symbol case.
+                    let merged mut = Semantic.Types.ONE_OF.try_join(ta, tb);
+
+                    if !merged? then
+                        let lub = Semantic.LEAST_UPPER_BOUND_MAP();
+                        lub.add(ta);
+                        lub.add(tb);
+
+                        merged = lub.get_result();
+                    fi
+
+                    if merged? then
+                        result.set_path_narrow(p, merged);
+                    fi
+                fi
+            od
+
+            // A fact that survives the merge survived every crossing
+            // on either edge, so its record is the union of both.
+            // The set_* calls above cleared the result's entries, so
+            // the union is written afterwards.
+            for v in result._non_null do
+                _merge_crossings(result._non_null_crossings, v, a.non_null_crossings_of(v), b.non_null_crossings_of(v));
+                result._non_null_created_at[v] = _merged_created(a._non_null_created_at, b._non_null_created_at, v);
+            od
+
+            for v in result._narrows.keys do
+                _merge_crossings(result._narrow_crossings, v, a.narrow_crossings_of(v), b.narrow_crossings_of(v));
+                result._narrow_created_at[v] = _merged_created(a._narrow_created_at, b._narrow_created_at, v);
+            od
+
+            for p in result._non_null_paths do
+                _merge_path_crossings(result._path_presence_crossings, p, a.path_presence_crossings_of(p), b.path_presence_crossings_of(p));
+                result._path_presence_created_at[p] = _merged_path_created(a._path_presence_created_at, b._path_presence_created_at, p);
+            od
+
+            for p in result._path_narrows.keys do
+                _merge_path_crossings(result._path_narrow_crossings, p, a.path_narrow_crossings_of(p), b.path_narrow_crossings_of(p));
+                result._path_narrow_created_at[p] = _merged_path_created(a._path_narrow_created_at, b._path_narrow_created_at, p);
+            od
+
+            return result;
+        si
+
+        // The creation index of a fact surviving a join: the earlier
+        // edge's index when both edges record one, zero otherwise — a
+        // side with no recorded index may have carried the fact since
+        // the start of the log, and the merged record inherits its
+        // crossings, so nothing may be filtered.
+        _merged_created(
+            from_a: Collections.MAP[Symbol, int],
+            from_b: Collections.MAP[Symbol, int],
+            v: Symbol
+        ) -> int static is
+            let mark_a mut = 0;
+            let mark_b mut = 0;
+
+            if from_a.try_get_value(v, mark_a ref) /\ from_b.try_get_value(v, mark_b ref) then
+                return if mark_a < mark_b then mark_a else mark_b fi;
+            fi
+
+            return 0;
+        si
+
+        _merged_path_created(
+            from_a: Collections.MAP[ACCESS_PATH, int],
+            from_b: Collections.MAP[ACCESS_PATH, int],
+            p: ACCESS_PATH
+        ) -> int static is
+            let mark_a mut = 0;
+            let mark_b mut = 0;
+
+            if from_a.try_get_value(p, mark_a ref) /\ from_b.try_get_value(p, mark_b ref) then
+                return if mark_a < mark_b then mark_a else mark_b fi;
+            fi
+
+            return 0;
+        si
+
+        _merge_crossings(
+            map: Collections.MAP[Symbol, Collections.LIST[CROSSING]],
+            v: Symbol,
+            from_a: Collections.LIST[CROSSING]?,
+            from_b: Collections.LIST[CROSSING]?
+        ) static is
+            let merged = _merged_crossing_lists(from_a, from_b);
+
+            if merged? then
+                map[v] = merged;
+            fi
+        si
+
+        _merge_path_crossings(
+            map: Collections.MAP[ACCESS_PATH, Collections.LIST[CROSSING]],
+            p: ACCESS_PATH,
+            from_a: Collections.LIST[CROSSING]?,
+            from_b: Collections.LIST[CROSSING]?
+        ) static is
+            let merged = _merged_crossing_lists(from_a, from_b);
+
+            if merged? then
+                map[p] = merged;
+            fi
+        si
+
+        _merged_crossing_lists(
+            from_a: Collections.LIST[CROSSING]?,
+            from_b: Collections.LIST[CROSSING]?
+        ) -> Collections.LIST[CROSSING]? static is
+            if !from_a? /\ !from_b? then
+                return null;
+            fi
+
+            let merged = Collections.LIST[CROSSING]();
+
+            if from_a? then
+                for c in from_a do
+                    merged.add(c);
+                od
+            fi
+
+            if from_b? then
+                for c in from_b do
+                    // both edges usually share the pre-branch prefix;
+                    // skip exact duplicates so the record stays small
+                    if !merged.contains(c) then
+                        merged.add(c);
+                    fi
+                od
+            fi
+
+            return merged;
+        si
+    si
+si

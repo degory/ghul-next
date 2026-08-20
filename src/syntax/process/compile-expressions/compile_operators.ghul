@@ -1,0 +1,1694 @@
+namespace Syntax.Process is
+    use Logging;
+    use Source;
+
+    use Semantic.Types.Type;
+    use Semantic.LEAST_UPPER_BOUND_MAP;
+
+    use IR.Values;
+
+    // An operator or index expression whose operand walks are held
+    // under a speculation because an operand takes its type from
+    // context and has none to offer resolution. `retried` records that
+    // the resolved formal type has been pushed in and the operand
+    // walked again, so that happens once however the second walk turns
+    // out.
+    class DEFERRED_OPERANDS(node: Trees.Node) is
+        retried: bool public;
+    si
+
+    // Compiles unary, binary and index expressions. Split out of
+    // COMPILE_EXPRESSIONS, which delegates visit(unary), pre(binary),
+    // visit(binary) and visit(index) here. The exception-handling
+    // wrappers of visit(binary) / visit(index) stay on the visitor;
+    // visit_binary / visit_index are the enclosed logic.
+    class COMPILE_OPERATORS is
+        _deferred_operands: Collections.LIST[DEFERRED_OPERANDS] field;
+
+        _logger: Logger;
+        _symbol_table: Semantic.SYMBOL_TABLE;
+        _innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup;
+        _overload_resolver: Semantic.OVERLOAD_RESOLVER;
+        _symbol_use_locations: Semantic.SYMBOL_USE_LOCATIONS;
+        _function_caller: Semantic.FUNCTION_CALLER;
+        _calls: COMPILE_CALLS;
+        _flow: NARROWING_FLOW;
+        _condition_analyzer: CONDITION_ANALYZER;
+        _visitor: ScopedVisitor;
+        _value_boxer: IR.VALUE_BOXER;
+
+        init(
+            logger: Logger,
+            symbol_table: Semantic.SYMBOL_TABLE,
+            innate_symbol_lookup: Semantic.Lookups.InnateSymbolLookup,
+            overload_resolver: Semantic.OVERLOAD_RESOLVER,
+            symbol_use_locations: Semantic.SYMBOL_USE_LOCATIONS,
+            function_caller: Semantic.FUNCTION_CALLER,
+            calls: COMPILE_CALLS,
+            flow: NARROWING_FLOW,
+            condition_analyzer: CONDITION_ANALYZER,
+            visitor: ScopedVisitor
+        ) is
+            super.init();
+
+            _logger = logger;
+            _symbol_table = symbol_table;
+            _innate_symbol_lookup = innate_symbol_lookup;
+            _overload_resolver = overload_resolver;
+            _symbol_use_locations = symbol_use_locations;
+            _function_caller = function_caller;
+            _calls = calls;
+            _flow = flow;
+            _condition_analyzer = condition_analyzer;
+            _visitor = visitor;
+            _value_boxer = IR.VALUE_BOXER(logger);
+            _deferred_operands = Collections.LIST[DEFERRED_OPERANDS]();
+        si
+
+        visit_unary(unary: Trees.Expressions.UNARY) is
+            unary.compile_expressions_state.value = null;
+
+            if unary.right.value? then
+                // TODO do we need to search members and globals like we do with binary operators
+                // or if not, can we simplify the binary operator function search to match this?
+
+                let function_group_symbol = _visitor.find(unary.operation);
+
+                if function_group_symbol == null \/ !isa Semantic.Symbols.FUNCTION_GROUP(function_group_symbol) then
+                    _logger.error(unary.operation.location, "no unary operator {unary.operation} found");
+
+                    unary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), unary.location);
+                    return;
+                fi
+
+                let function_group = cast Semantic.Symbols.FUNCTION_GROUP(function_group_symbol);
+                let right_value = unary.right.value!;
+                // FIXME: this doesn't seem right
+                let want_instance = right_value.is_consumable;
+
+                let argument_values = Collections.LIST[Value]([right_value]);
+                let argument_types = Collections.LIST[Type]([right_value.type!]);
+                let argument_expressions = Collections.LIST[Trees.Expressions.Expression]([unary.right]);
+
+                let (overload_result, errors) =
+                    _resolve_with_retry(
+                        unary.location,
+                        function_group,
+                        argument_values,
+                        argument_types,
+                        argument_expressions,
+                        want_instance,
+                        unary
+                    );
+
+                if overload_result == null then
+                    if errors? /\ errors.count > 0 then
+                        _logger.merge(errors);
+                    fi
+
+                    unary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), unary.location);
+                    return;
+                fi
+
+                let function = overload_result.function;
+
+                if function.is_unsafe_constraints then
+                    _logger.warn(unary.location, "unchecked-constraints", "call to {function} has unchecked constraints");
+                fi
+
+                _symbol_use_locations.add_symbol_use(unary.operation.location, function);
+
+                let value = function.call(unary.location, null, argument_values, null, _function_caller);
+
+                unary.compile_expressions_state.value = value;
+            fi
+        si
+
+        // Resolve an operator overload with the same constraint-push
+        // retry sequence visit_call uses: initial type-based resolve,
+        // then on null or PARTIAL re-walk function-literal operands
+        // with the chosen formal pushed as expected_type so a lambda
+        // whose parameter type was unknown on the first walk can
+        // infer it from the operator's signature.
+        //
+        // Operates inside its own speculation snapshot: the retry's
+        // re-walks update operand `.value` fields in place but the
+        // logger diagnostics from speculation are scrubbed when the
+        // snapshot backtracks, matching the visit_call pattern.
+        _resolve_with_retry(
+            location: Source.LOCATION,
+            function_group: Semantic.Symbols.FUNCTION_GROUP,
+            argument_values: Collections.LIST[Value],
+            argument_types: Collections.LIST[Type],
+            argument_expressions: Collections.List[Trees.Expressions.Expression],
+            want_instance: bool,
+            cache_key: Trees.Node
+        ) -> (Semantic.OVERLOAD_RESOLVE_RESULT?, Logging.DIAGNOSTICS_STATE?) is
+            let use logger_snapshot = _logger.speculate_then_backtrack();
+
+            // Operator operands walk during ordinary tree descent, so
+            // the baseline captured here is the env after that walk; a
+            // retry re-walk resets to it through `_flow.restore()`, and
+            // the whole attempt rolls the env back on exit — the operand
+            // values are already set, only the diagnostics matter.
+            let use flow_speculation = _flow.speculate_then_roll_back();
+
+            let overload_result mut =
+                _overload_resolver.resolve(
+                    location,
+                    function_group,
+                    argument_types,
+                    false,
+                    want_instance,
+                    false
+                );
+
+            if !overload_result? then
+                let retry = _calls.try_overload_after_null(
+                    function_group,
+                    argument_values,
+                    argument_types,
+                    want_instance,
+                    null,
+                    argument_expressions,
+                    location,
+                    cache_key
+                );
+
+                if retry? then
+                    overload_result = retry;
+                fi
+            fi
+
+            if overload_result? /\ overload_result.needs_retry then
+                let retry = _calls.try_overload_on_partial(
+                    overload_result,
+                    function_group,
+                    argument_values,
+                    argument_types,
+                    want_instance,
+                    null,
+                    argument_expressions,
+                    location,
+                    cache_key
+                );
+
+                if retry? then
+                    overload_result = retry;
+                fi
+            fi
+
+            let errors = logger_snapshot.backtrack();
+
+            return (overload_result, errors);
+        si
+
+        pre_binary(binary: Trees.Expressions.BINARY) -> bool is
+            // For `/\` / `\/`, walk the operands with the narrowing
+            // environment threaded so within-condition narrowing
+            // applies as the right operand compiles: in
+            // `isa T(x) /\ x.foo`, `x.foo` sees `x` as `T`. The
+            // `/\` right walks under the left's true edge, the `\/`
+            // right under its false edge. The BINARY as a whole
+            // leaves the ambient environment unchanged — the
+            // enclosing IF derives the overall narrowing from
+            // analyze_condition once the condition is fully walked.
+            let op = binary.operation.name;
+
+            // A null-comparison leaf forms a presence fact from its
+            // non-null operand; stamp the log position the test is
+            // walked at, so facts formed from it skip the calls that
+            // ran before it. Both surface forms walk through a node
+            // whose operation name is `==`.
+            if op =~ "==" then
+                if isa Trees.Expressions.NULL(binary.left) \/ isa Trees.Expressions.NULL(binary.right) then
+                    _flow.note_test_site(binary);
+                fi
+            fi
+
+            if op =~ "/\\" \/ op =~ "\\/" then
+                let saved = _flow.current_env.copy();
+                let epoch = _flow.heap_epoch;
+                let mark = _flow.crossing_mark;
+
+                binary.left.walk(_visitor);
+
+                let left_facts = _condition_analyzer.analyze_condition_facts_only(binary.left, saved);
+
+                let right_env =
+                    if op =~ "/\\" then left_facts.then_env else left_facts.else_env fi;
+
+                // The right operand's environment derives from the
+                // pre-left snapshot; a store during the left's own
+                // walk means its heap facts cannot be trusted while
+                // the right compiles, and its calls attach as
+                // crossings.
+                if _flow.heap_killed_since(epoch) then
+                    right_env.drop_heap_facts();
+                else
+                    _flow.adopt_crossings_since(right_env, mark);
+                fi
+
+                _flow.set_env(right_env);
+
+                binary.right.walk(_visitor);
+
+                // Same for the ambient environment restored after
+                // the operator: it predates both operand walks.
+                if _flow.heap_killed_since(epoch) then
+                    saved.drop_heap_facts();
+                else
+                    _flow.adopt_crossings_since(saved, mark);
+                fi
+
+                _flow.set_env(saved);
+
+                return true;
+            fi
+
+            // An operand that takes its type from context has none to
+            // offer resolution, and reports so as it walks. Open a
+            // speculation over the operand walks, the way visit_call
+            // does over its argument walks, so that error can be rolled
+            // back once resolution has settled on a formal type to push
+            // in. The operands still walk in their ordinary order and
+            // through the ordinary walker — only the diagnostics are
+            // held.
+            if binary.left.awaits_context_type \/ binary.right.awaits_context_type then
+                _deferred_operands.add(DEFERRED_OPERANDS(binary));
+
+                _logger.speculate();
+                _flow.speculate();
+            fi
+
+            return false;
+        si
+
+        // The operand walks of a binary carrying a context-typed
+        // operand run inside a speculation opened by pre_binary; close
+        // it here, whichever way the resolution below went.
+        visit_binary(binary: Trees.Expressions.BINARY) is
+            if !_deferred_for(binary)? then
+                _visit_binary(binary);
+
+                return;
+            fi
+
+            try
+                _visit_binary(binary);
+            finally
+                _deferred_operands.remove_at(_deferred_operands.count - 1);
+
+                _flow.commit();
+                _logger.commit();
+            yrt
+        si
+
+        // The innermost binary currently deferring an operand, when it
+        // is this one. Nested binaries push in walk order, so only the
+        // top of the stack can be the node being visited.
+        _deferred_for(node: Trees.Node) -> DEFERRED_OPERANDS? is
+            if _deferred_operands.count == 0 then
+                return null;
+            fi
+
+            let top = _deferred_operands[_deferred_operands.count - 1];
+
+            return if top.node == node then top else null fi;
+        si
+
+        // Once resolution has settled on a single `function`, push its
+        // formal type into an operand that was still waiting for one
+        // and walk that operand again — the same step visit_call takes
+        // for a waiting argument, and for the same reason: nothing
+        // could type the operand until the callee was known. Resolution
+        // reaches a function at all because an untyped operand carries
+        // the ERROR type, which matches any formal, so the operator's
+        // own declaration decides the target type rather than anything
+        // being assumed about how operators are declared.
+        //
+        // True when an operand was re-walked, which invalidates every
+        // type resolution just read off the operands; the caller starts
+        // over against the settled ones. `retried` keeps that to a
+        // single attempt, so an operand left error-typed by its second
+        // walk does not drive another.
+        _resolve_deferred_operands(
+            binary: Trees.Expressions.BINARY,
+            function: Semantic.Symbols.Function
+        ) -> bool is
+            let deferred = _deferred_for(binary);
+
+            if !deferred? \/ deferred.retried then
+                return false;
+            fi
+
+            // An instance operator takes the left operand as its
+            // receiver, so only the right is one of its arguments. A
+            // waiting left operand cannot reach that path at all: its
+            // ERROR type has no members, so no operator is found on it.
+            let left_formal =
+                if function.is_instance then null else _formal_type(function, 0) fi;
+
+            let right_formal =
+                _formal_type(function, if function.is_instance then 0 else 1 fi);
+
+            let left_type = if binary.left.awaits_context_type then left_formal else null fi;
+            let right_type = if binary.right.awaits_context_type then right_formal else null fi;
+
+            if !left_type? /\ !right_type? then
+                return false;
+            fi
+
+            deferred.retried = true;
+
+            _logger.roll_back();
+            _logger.speculate();
+            _flow.restore();
+
+            if left_type? then
+                binary.left.set_expected_type(left_type, "");
+            fi
+
+            if right_type? then
+                binary.right.set_expected_type(right_type, "");
+            fi
+
+            binary.left.walk(_visitor);
+            binary.right.walk(_visitor);
+
+            return true;
+        si
+
+        // The index counterpart of _resolve_deferred_operands: the
+        // resolved indexer's first formal is the index argument's type.
+        // Both accessors take the index there, so `get_Item` and
+        // `set_Item` need no distinguishing.
+        _resolve_deferred_index(
+            index: Trees.Expressions.INDEX,
+            function: Semantic.Symbols.Function
+        ) -> bool is
+            let deferred = _deferred_for(index);
+
+            if !deferred? \/ deferred.retried then
+                return false;
+            fi
+
+            let formal = _formal_type(function, 0);
+
+            if !formal? \/ !index.index.awaits_context_type then
+                return false;
+            fi
+
+            deferred.retried = true;
+
+            _logger.roll_back();
+            _logger.speculate();
+            _flow.restore();
+
+            index.index.set_expected_type(formal, "");
+            index.index.walk(_visitor);
+
+            return true;
+        si
+
+        // The formal at `index`, or null when the function has no such
+        // argument or the one it has is wild — a type variable free
+        // only in the waiting operand's own slot pins nothing, and the
+        // operand is left to report that it still has no type.
+        _formal_type(function: Semantic.Symbols.Function, index: int) -> Type? is
+            if index >= function.arguments.count then
+                return null;
+            fi
+
+            let formal = function.arguments[index];
+
+            return if formal.is_wild then null else formal fi;
+        si
+
+        _visit_binary(binary: Trees.Expressions.BINARY) is
+            binary.compile_expressions_state.value = null;
+
+            if !binary.left.value? \/ !binary.right.value? then
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+                return;
+            fi
+
+            // `??` does not go through overload resolution: the
+            // "chain closer" vs "stays optional" distinction is
+            // determined by the right operand's own nullability,
+            // which a single typing rule expresses directly. Going
+            // through the user-operator path would force this
+            // distinction into two ambiguous prelude overloads.
+            if binary.operation.name =~ "??" then
+                _visit_null_coalesce(binary);
+                return;
+            fi
+
+            let left_value = binary.left.value;
+            let right_value = binary.right.value;
+            let left_is_consumable = left_value.check_is_consumable(_logger, binary.left.location);
+            let right_is_consumable = right_value.check_is_consumable(_logger, binary.right.location);
+
+            // `=~` over an optional operand gets its null checks
+            // written around the call. This runs ahead of resolution
+            // rather than as a fallback: only an optional *argument*
+            // fails to resolve, while an optional *receiver* resolves
+            // to an ordinary member call and dereferences null.
+            let null_safe = _try_null_safe_equality(binary, left_value, right_value);
+
+            if null_safe? then
+                binary.compile_expressions_state.value = null_safe;
+                return;
+            fi
+
+            // Two separate value/type/expression lists. The free-function
+            // path takes both operands as arguments; the member-call path
+            // takes only the right operand (left is the receiver). The
+            // retry helper updates the lists in place when it re-walks,
+            // so the two paths can't share storage.
+            let binary_argument_values = Collections.LIST[Value]([left_value, right_value]);
+            let binary_argument_types = Collections.LIST[Type]([left_value.type!, right_value.type!]);
+            let binary_argument_expressions = Collections.LIST[Trees.Expressions.Expression]([binary.left, binary.right]);
+
+            let member_argument_values = Collections.LIST[Value]([right_value]);
+            let member_argument_types = Collections.LIST[Type]([right_value.type!]);
+            let member_argument_expressions = Collections.LIST[Trees.Expressions.Expression]([binary.right]);
+
+            let binary_function_group: Semantic.Symbols.FUNCTION_GROUP mut;
+            let binary_overload_result: Semantic.OVERLOAD_RESOLVE_RESULT? mut = null;
+            let binary_errors: Logging.DIAGNOSTICS_STATE? mut = null;
+
+            let binary_function_symbol = _visitor.find(binary.operation.name);
+
+            if binary_function_symbol? /\ isa Semantic.Symbols.FUNCTION_GROUP(binary_function_symbol) then
+                binary_function_group = binary_function_symbol;
+
+                (binary_overload_result, binary_errors) =
+                    _resolve_with_retry(
+                        binary.location,
+                        binary_function_group,
+                        binary_argument_values,
+                        binary_argument_types,
+                        binary_argument_expressions,
+                        _symbol_table.current_instance_context?,
+                        binary
+                    );
+            fi
+
+            let member_overload_result: Semantic.OVERLOAD_RESOLVE_RESULT? mut = null;
+            let member_function_group: Semantic.Symbols.FUNCTION_GROUP mut;
+            let member_errors: Logging.DIAGNOSTICS_STATE? mut = null;
+
+            if let binary.left.value?, value.type? then
+                let member_function_symbol =
+                    type.find_member(binary.operation.name);
+
+                if member_function_symbol? /\ isa Semantic.Symbols.FUNCTION_GROUP(member_function_symbol) then
+                    member_function_group = member_function_symbol;
+
+                    (member_overload_result, member_errors) =
+                        _resolve_with_retry(
+                            binary.location,
+                            cast Semantic.Symbols.FUNCTION_GROUP(member_function_group),
+                            member_argument_values,
+                            member_argument_types,
+                            member_argument_expressions,
+                            value.is_consumable,
+                            binary
+                        );
+
+                    // Discard a hidden member whether resolution
+                    // succeeded or failed. Keeping the diagnostics of a
+                    // failed one would report a candidate operator
+                    // resolution can never select, ahead of the real
+                    // error from the innate.
+                    if
+                        HIDDEN_OPERATOR_MEMBERS.is_hidden(member_function_group) \/
+                        (member_overload_result? /\ member_overload_result.function.is_hidden_from_operator_resolution)
+                    then
+                        member_overload_result = null;
+                        member_errors = null;
+                    fi
+                fi
+            fi
+
+            let function: Semantic.Symbols.Function? mut = null;
+
+            if member_overload_result? /\ binary_overload_result? then
+                if cast int(member_overload_result.score) <= cast int(binary_overload_result.score) then
+                    function = member_overload_result.function;
+                else
+                    function = binary_overload_result.function;
+                fi
+            elif member_overload_result? then
+                function = member_overload_result.function;
+            elif binary_overload_result? then
+                function = binary_overload_result.function;
+            fi
+
+            if function? then
+                // An operand that was waiting for a type now has the
+                // resolved formal to take one from. Everything read off
+                // the operands above is stale once it has been walked
+                // again, so resolve the whole operator afresh.
+                if _resolve_deferred_operands(binary, function) then
+                    _visit_binary(binary);
+
+                    return;
+                fi
+
+                _symbol_use_locations.add_symbol_use(binary.operation.location, function);
+
+                // Mirror the inferred-T constraint check in compile_calls: an
+                // operator function resolved via overload resolution has its
+                // type arguments bound by inference (the operator is never
+                // explicitly specialized), so the declared kind / type-bound
+                // constraints have not been checked yet.
+                if
+                    function.is_generic /\
+                    function.generic_arguments.count == function.generic_argument_names.count
+                then
+                    Semantic.Symbols.GENERIC_CONSTRAINT_CHECKER().check_arguments(
+                        binary.location,
+                        _logger,
+                        function,
+                        function.generic_argument_names,
+                        function.generic_arguments
+                    );
+                fi
+
+                let is_relational_rewrite =
+                    RELATIONAL_REWRITE.is_relational_rewrite(binary.operation.name, binary.actual_operation);
+
+                let force_type: Type? mut = _;
+                let want_not mut = false;
+
+                // A property of the operator's declaration, so it holds
+                // however the call was spelled - the relational tokens
+                // all rewrite to `<>`, and a directly written `<>` is
+                // the same member with the same requirement.
+                if
+                    binary.operation.name =~ "<>" /\
+                    !function.return_type!.matches(_innate_symbol_lookup.get_int_type())
+                then
+                    // FIXME: do this check on the definition:
+                    _logger.error(binary.location, "<> order operator must return int");
+                fi
+
+                if is_relational_rewrite then
+                    force_type = _innate_symbol_lookup.get_bool_type();
+                elif binary.operation.name =~ "==" then
+                    let left_type = binary.left.value?.type;
+                    let right_type = binary.right.value?.type;
+
+                    if
+                        left_is_consumable /\ right_is_consumable /\
+                        left_type? /\ right_type? /\
+                        cast int(left_type.compare(right_type)) > cast int(Semantic.Types.MATCH.ASSIGNABLE) /\
+                        cast int(right_type.compare(left_type)) > cast int(Semantic.Types.MATCH.ASSIGNABLE)
+                    then
+                        if binary.actual_operation =~ "==" then
+                            _logger.error(binary.location, "== cannot be applied to values of non-assignable types");
+                        else
+                            _logger.error(binary.location, "!= cannot be applied to values of non-assignable types");
+                        fi
+                    elif
+                        isa Semantic.Symbols.InnateFunction(function) /\
+                        function.innate_name =~ "compare.value" /\
+                        left_type? /\
+                        !VALUE_EQUALITY_OPERANDS.can_compare(left_type)
+                    then
+                        // compare.value lowers to a bare ceq, which for
+                        // struct operands the runtime either refuses at
+                        // JIT time or runs as a shallow bitwise
+                        // comparison rather than value equality.
+                        // Rejected here, where the operand type is known
+                        // and the location is useful.
+                        if binary.actual_operation =~ "==" then
+                            _logger.error(binary.location, "== cannot be applied to values of type {left_type}", binary.location, "help: use =~ to compare by value");
+                        else
+                            _logger.error(binary.location, "!= cannot be applied to values of type {left_type}", binary.location, "help: use !~ to compare by value");
+                        fi
+                    fi
+                elif !function.is_innate /\ binary.actual_operation =~ "!~" then
+                    want_not = true;
+                fi
+
+                let value: Value mut;
+
+                if function.is_unsafe_constraints then
+                    _logger.warn(binary.location, "unchecked-constraints", "call to {function} has unchecked constraints");
+                fi
+
+                // Pass the path-specific argument-value list so the
+                // values used for the call reflect the retry's re-walks
+                // for whichever group was selected — without this, a
+                // member-path retry that re-walked the right operand
+                // would overwrite values the binary-path retry already
+                // committed to its own list (and vice versa).
+                if function.is_instance then
+                    value = function.call(binary.location, left_value, member_argument_values, force_type, _function_caller);
+                else
+                    value = function.call(binary.location, null, binary_argument_values, force_type, _function_caller);
+
+                    if isa Call.INNATE(value) then
+                        let innate_value = value;
+
+                        innate_value.actual_operation = binary.actual_operation;
+
+                        value = innate_value.lower();
+                    fi
+                fi
+
+                if !function.is_innate /\ is_relational_rewrite then
+                    value = COMPARE_ORDER_TO_ZERO(value, binary.actual_operation, _innate_symbol_lookup.get_bool_type());
+                fi
+
+                if want_not then
+                    value = NOT(value);
+                fi
+
+                binary.compile_expressions_state.value = value;
+            else
+                // `a =~ b` where both operands are the same bare type
+                // parameter: no member operator can exist to resolve, so
+                // the comparison goes through the runtime's comparer.
+                // Checked here rather than ahead of resolution so a bound
+                // declaring `=~` still resolves its own operator.
+                let comparison = _try_type_parameter_equality(binary, left_value, right_value);
+
+                if comparison? then
+                    let value = if binary.actual_operation =~ "!~" then NOT(comparison) else comparison fi;
+
+                    binary.compile_expressions_state.value = value;
+
+                    return;
+                fi
+
+                if binary_errors? /\ binary_errors.count > 0 then
+                    _logger.merge(binary_errors);
+                fi
+
+                if member_errors? /\ member_errors.count > 0 then
+                    _logger.merge(member_errors);
+                fi
+
+                if (!binary_errors? \/ binary_errors.count == 0) /\ (!member_errors? \/ member_errors.count == 0) then
+                    _logger.error(binary.operation.location, "operator {binary.left.value?.type} {binary.operation} {binary.right.value?.type} not found");
+                fi
+
+                // FIXME QQ should probably do this
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+            fi
+        si
+
+        // `a =~ b` where both operands are the same bare type parameter.
+        // No member operator can be declared on a type parameter, so
+        // resolution always fails there; the comparison goes through
+        // `EqualityComparer[T].Default`, which reaches a user-written
+        // `=~` through the synthesized `Equals` bridge and answers every
+        // other instantiation with the runtime's own value equality.
+        // Returns null when either operand is anything else.
+        _try_type_parameter_equality(
+            binary: Trees.Expressions.BINARY,
+            left_value: Value,
+            right_value: Value
+        ) -> Value? is
+            if !(binary.operation.name =~ "=~") then
+                return null;
+            fi
+
+            return _type_parameter_equality(left_value, right_value);
+        si
+
+        _type_parameter_equality(left_value: Value, right_value: Value) -> Value? is
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if !left_type? \/ !right_type? then
+                return null;
+            fi
+
+            if !left_type.is_type_variable then
+                return null;
+            fi
+
+            if !left_type.matches(right_type) then
+                return null;
+            fi
+
+            let comparer_type = _innate_symbol_lookup.get_equality_comparer_type(left_type);
+
+            if !comparer_type? then
+                return null;
+            fi
+
+            return EQUALITY_COMPARISON(
+                left_value,
+                right_value,
+                comparer_type,
+                _innate_symbol_lookup.get_bool_type());
+        si
+
+        // A field comparison in a synthesized union `=~`. The operands
+        // are plain member loads compiled by the ordinary walk; what is
+        // decided here is which comparison they run, which depends on
+        // the field's static type and so was not knowable when the body
+        // was built.
+        visit_field_equals(field_equals: Trees.Expressions.FIELD_EQUALS) is
+            field_equals.compile_expressions_state.value = null;
+
+            let left_value = field_equals.left.value;
+            let right_value = field_equals.right.value;
+
+            if !left_value? \/ !right_value? then
+                field_equals.compile_expressions_state.value =
+                    DUMMY(Semantic.Types.ERROR(), field_equals.location);
+
+                return;
+            fi
+
+            field_equals.compile_expressions_state.value =
+                _compile_field_equals(left_value, right_value, field_equals.location);
+        si
+
+        // The field type's own `=~` where one resolves — a member
+        // operator on the type, or a global innate (scalars, strings) —
+        // the runtime comparer for a bare type parameter, and, when
+        // neither answers, the default equality comparer with a warning
+        // at the field's declaration: the union's structural equality
+        // compares that field with .NET's `Equals` rather than an
+        // operator the type declared.
+        _compile_field_equals(
+            left_value: Value,
+            right_value: Value,
+            location: Source.LOCATION
+        ) -> Value is
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if !left_type? \/ !right_type? then
+                return DUMMY(Semantic.Types.ERROR(), location);
+            fi
+
+            let type_parameter_comparison = _type_parameter_equality(left_value, right_value);
+
+            if type_parameter_comparison? then
+                return type_parameter_comparison;
+            fi
+
+            if left_type.is_optional \/ right_type.is_optional then
+                // The global innates declare their own optional
+                // parameters, so an optional string field is answered
+                // by the operator itself, exactly as a written
+                // `a =~ b` over the same operands would be.
+                let global_value = _try_global_equals_operator(left_value, right_value, location);
+
+                if global_value? then
+                    return global_value;
+                fi
+
+                let null_safe = _build_null_safe_equality(left_value, right_value, location);
+
+                if null_safe? then
+                    return null_safe;
+                fi
+            else
+                let member_value = _try_member_equals_operator(left_value, right_value, location);
+
+                if member_value? then
+                    return member_value;
+                fi
+
+                let global_value = _try_global_equals_operator(left_value, right_value, location);
+
+                if global_value? then
+                    return global_value;
+                fi
+            fi
+
+            let comparer_type = _innate_symbol_lookup.get_equality_comparer_type(left_type);
+
+            if !comparer_type? then
+                _logger.error(location, "cannot compare values of type {left_type}");
+
+                return DUMMY(Semantic.Types.ERROR(), location);
+            fi
+
+            // Reported only where the author could act: a type declared
+            // in ghūl source could declare `=~` and does not. Imported
+            // types, tuples, arrays, collection instantiations and
+            // function types cannot declare one, so for those the
+            // fallback is the only semantics available and a report
+            // would have no remedy to point at.
+            let inner = _non_optional(left_type) ?? left_type;
+
+            if
+                isa Semantic.Symbols.Classy(inner.symbol) /\
+                !inner.symbol.is_reflected
+            then
+                _logger.warn(
+                    location,
+                    "synthesized-equality-fallback",
+                    "{left_type} defines no =~, so this field compares with the default equality comparer");
+            fi
+
+            return EQUALITY_COMPARISON(
+                left_value,
+                right_value,
+                comparer_type,
+                _innate_symbol_lookup.get_bool_type());
+        si
+
+        // A `=~` operator declared as a member of the field's type —
+        // a user-written operator, a nested union's synthesized one, or
+        // an operator an imported type gains through `Ghul.Equatable`.
+        // Returns null when the type declares no such operator or the
+        // declaration rejects these operands.
+        _try_member_equals_operator(
+            left_value: Value,
+            right_value: Value,
+            location: Source.LOCATION
+        ) -> Value? is
+            let member_symbol = left_value.type!.find_member("=~");
+
+            if !member_symbol? \/ !isa Semantic.Symbols.FUNCTION_GROUP(member_symbol) then
+                return null;
+            fi
+
+            let group = cast Semantic.Symbols.FUNCTION_GROUP(member_symbol);
+
+            if HIDDEN_OPERATOR_MEMBERS.is_hidden(group) then
+                return null;
+            fi
+
+            let overload_result =
+                _resolve_silently(
+                    location,
+                    group,
+                    Collections.LIST[Type]([right_value.type!]),
+                    left_value.is_consumable);
+
+            if !overload_result? then
+                return null;
+            fi
+
+            let function = overload_result.function;
+
+            if function.is_hidden_from_operator_resolution then
+                return null;
+            fi
+
+            _symbol_use_locations.add_symbol_use(location, function);
+
+            if function.is_instance then
+                return function.call(
+                    location,
+                    left_value,
+                    Collections.LIST[Value]([right_value]),
+                    null,
+                    _function_caller);
+            fi
+
+            return function.call(
+                location,
+                null,
+                Collections.LIST[Value]([left_value, right_value]),
+                null,
+                _function_caller);
+        si
+
+        // A `=~` operator in scope as a global — the scalar and string
+        // innates. Returns null when nothing in scope answers for these
+        // operand types.
+        _try_global_equals_operator(
+            left_value: Value,
+            right_value: Value,
+            location: Source.LOCATION
+        ) -> Value? is
+            let global_symbol = _visitor.find(Trees.Identifiers.Identifier(location, "=~"));
+
+            if !global_symbol? \/ !isa Semantic.Symbols.FUNCTION_GROUP(global_symbol) then
+                return null;
+            fi
+
+            let overload_result =
+                _resolve_silently(
+                    location,
+                    cast Semantic.Symbols.FUNCTION_GROUP(global_symbol),
+                    Collections.LIST[Type]([left_value.type!, right_value.type!]),
+                    false);
+
+            if !overload_result? then
+                return null;
+            fi
+
+            let function = overload_result.function;
+
+            _symbol_use_locations.add_symbol_use(location, function);
+
+            let value =
+                function.call(
+                    location,
+                    null,
+                    Collections.LIST[Value]([left_value, right_value]),
+                    null,
+                    _function_caller);
+
+            if isa Call.INNATE(value) then
+                let innate_value = value;
+
+                innate_value.actual_operation = "=~";
+
+                return innate_value.lower();
+            fi
+
+            return value;
+        si
+
+        // `a =~ b` where an operand is optional. Resolve against the
+        // operands' non-optional types and write the null checks
+        // around the call.
+        //
+        // An absent left operand is always answered here: there is no
+        // receiver to dispatch on. An absent right operand is answered
+        // here only when the operator declares its parameter
+        // non-optional and so could never have been handed one.
+        //
+        // Answers null for anything else, leaving the operands to
+        // resolve however they did before.
+        // `a =~ b` where an operand is optional. Delegates the null-safe
+        // building to _build_null_safe_equality (shared with `case`'s
+        // value-equality tests) and applies the `!~` negation the AST
+        // spelling carries. Only `=~` is null-safe here; the binary
+        // visitor's main body handles the non-optional path with its
+        // full diagnostics and retry, so this returns null unless an
+        // operand is optional.
+        _try_null_safe_equality(
+            binary: Trees.Expressions.BINARY,
+            left_value: Value,
+            right_value: Value
+        ) -> Value? is
+            if !(binary.operation.name =~ "=~") then
+                return null;
+            fi
+
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if
+                (!left_type? \/ !left_type.is_optional) /\
+                (!right_type? \/ !right_type.is_optional)
+            then
+                return null;
+            fi
+
+            let result = _build_null_safe_equality(left_value, right_value, binary.location);
+
+            if !result? then
+                return null;
+            fi
+
+            if binary.actual_operation =~ "!~" then
+                let negated = IR.Values.BLOCK(_innate_symbol_lookup.get_bool_type());
+                negated.add(NOT(result));
+                negated.close();
+                return negated;
+            fi
+
+            return result;
+        si
+
+        // Build a null-safe `=~` test for two operands, at least one of
+        // which is optional. Resolves the left type's `=~` against the
+        // operands' non-optional inner types and writes the null checks
+        // around the call: an absent left operand is always answered
+        // here (no receiver to dispatch on), an absent right operand is
+        // answered here unless the operator declares its parameter
+        // optional and so could be handed one. Returns null when the
+        // gate rejects the operands or operator, or no `=~` resolves.
+        //
+        // Extracted from _try_null_safe_equality so `case` value-equality
+        // (see _try_equality_test) reuses the same lowering rather than
+        // duplicating it.
+        _build_null_safe_equality(
+            left_value: Value,
+            right_value: Value,
+            location: Source.LOCATION
+        ) -> Value? is
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if !NULL_SAFE_EQUALITY_GATE.accepts_operands(left_type, right_type) then
+                return null;
+            fi
+
+            let left_inner = _non_optional(left_type!);
+            let right_inner = _non_optional(right_type!);
+
+            if !left_inner? \/ !right_inner? then
+                return null;
+            fi
+
+            let member_symbol = left_inner.find_member("=~");
+
+            if !member_symbol? \/ !isa Semantic.Symbols.FUNCTION_GROUP(member_symbol) then
+                return null;
+            fi
+
+            let overload_result =
+                _resolve_silently(
+                    location,
+                    cast Semantic.Symbols.FUNCTION_GROUP(member_symbol),
+                    Collections.LIST[Type]([right_inner]),
+                    true
+                );
+
+            if !overload_result? then
+                return null;
+            fi
+
+            let function = overload_result.function;
+
+            if !NULL_SAFE_EQUALITY_GATE.accepts_operator(function, _innate_symbol_lookup.get_bool_type()) then
+                return null;
+            fi
+
+            let guards_argument = NULL_SAFE_EQUALITY_GATE.guards_argument(function);
+
+            // With an operator that answers for an absent argument
+            // itself, a present left operand needs nothing doing: the
+            // call already resolves and already reaches the body.
+            //
+            // Except for a value-shape argument, which is answered here
+            // whatever the operator declares. Declining on the strength
+            // of the left operand alone would make that turn on
+            // something unrelated to it, so the same comparison would
+            // answer differently for an optional left and a present
+            // one.
+            if
+                !left_type.is_optional /\
+                !guards_argument /\
+                !(right_type.is_optional /\ right_type.is_value_type)
+            then
+                return null;
+            fi
+
+            let bool_type = _innate_symbol_lookup.get_bool_type();
+            let block = IR.Values.BLOCK(bool_type);
+
+            // Each operand is read up to three times - by its own
+            // presence test, and by the call - so spill anything that
+            // is not already a repeatable load. A value-shape optional
+            // additionally needs its address, which a spilled temp has
+            // and an expression does not.
+            let load_left = left_value.get_temp_copier(block, "equality_left");
+            let load_right = right_value.get_temp_copier(block, "equality_right");
+
+            let operand =
+                OPTIONAL_OPERAND(IoC.CONTAINER.instance.symbol_loader, bool_type);
+
+            if
+                !operand.can_split(location, load_left()) \/
+                !operand.can_split(location, load_right())
+            then
+                return null;
+            fi
+
+            // A value-shape argument is guarded whatever the operator
+            // declares: its parameter is a bare `T` at IL, so there is
+            // no absent value to hand a body in the first place.
+            let guards = guards_argument \/ OPTIONAL_OPERAND.must_be_guarded(load_right());
+
+            let left_payload = operand.payload(location, load_left());
+            let right_payload = operand.payload(location, load_right());
+
+            if !left_payload? \/ !right_payload? then
+                return null;
+            fi
+
+            _symbol_use_locations.add_symbol_use(location, function);
+
+            let call =
+                function.call(
+                    location,
+                    left_payload,
+                    Collections.LIST[Value]([right_payload]),
+                    null,
+                    _function_caller
+                );
+
+            let result =
+                IR.Values.NULL_SAFE_EQUALITY(
+                    operand.presence(location, load_left()),
+                    operand.presence(location, load_right()),
+                    call,
+                    guards,
+                    bool_type
+                );
+
+            block.add(result);
+            block.close();
+
+            return block;
+        si
+
+        // Build a value-equality test between two operands the way `=~`
+        // (or `<>`, compared to zero) would, for `case` `when` labels.
+        // An optional operand first tries the null-safe path
+        // (_build_null_safe_equality) for instance `=~` operators that
+        // would dereference a null receiver; when that declines - most
+        // often because the operator is a static one already null-safe
+        // by nature, like string's op_Equality - it falls through to a
+        // direct `=~` call. Returns null when no member operator
+        // resolves, leaving the caller to fall back to a raw compare.
+        // `<>` answers int and is not null-safe, so it is only handled
+        // for non-optional operands; an optional scrutinee whose inner
+        // type has only `<>` falls back.
+        _try_equality_test(
+            left_value: Value,
+            right_value: Value,
+            op_name: string,
+            location: Source.LOCATION
+        ) -> Value? is
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if !left_type? \/ !right_type? then
+                return null;
+            fi
+
+            let optional = left_type.is_optional \/ right_type.is_optional;
+
+            if op_name =~ "=~" then
+                if optional then
+                    let null_safe = _build_null_safe_equality(left_value, right_value, location);
+
+                    if null_safe? then
+                        return null_safe;
+                    fi
+
+                    // An instance `=~` the gate declined (a static
+                    // operator like string's op_Equality, or one hidden
+                    // from operator resolution) reaches the free-function
+                    // `Ghul.=~`, which is null-safe over optionals - the
+                    // same call the `=~` expression makes for these types.
+                    let free = _build_free_function_test("=~", left_value, right_value, location);
+
+                    if free? then
+                        return free;
+                    fi
+
+                    return null;
+                fi
+
+                return _build_direct_operator_test(left_value, right_value, "=~", location);
+            fi
+
+            if op_name =~ "<>" then
+                if optional then
+                    return null;
+                fi
+
+                return _build_direct_operator_test(left_value, right_value, "<>", location);
+            fi
+
+            return null;
+        si
+
+        // Resolve a free-function operator (`Ghul.=~`, reachable via
+        // scope as `=~`) against both operands and build the call. This
+        // is the path the `=~` expression takes for built-in types whose
+        // member operator is hidden from operator resolution (string's
+        // op_Equality): the free function is null-safe over optionals,
+        // so it is the right call for an optional scrutinee. Returns null
+        // when no free function resolves.
+        _build_free_function_test(
+            op_name: string,
+            left_value: Value,
+            right_value: Value,
+            location: Source.LOCATION
+        ) -> Value? is
+            let symbol = _visitor.find(op_name);
+
+            if !symbol? \/ !isa Semantic.Symbols.FUNCTION_GROUP(symbol) then
+                return null;
+            fi
+
+            let overload_result =
+                _resolve_silently(
+                    location,
+                    cast Semantic.Symbols.FUNCTION_GROUP(symbol),
+                    Collections.LIST[Type]([left_value.type!, right_value.type!]),
+                    false
+                );
+
+            if !overload_result? then
+                return null;
+            fi
+
+            let function = overload_result.function;
+
+            _symbol_use_locations.add_symbol_use(location, function);
+
+            let call =
+                function.call(
+                    location,
+                    null,
+                    Collections.LIST[Value]([left_value, right_value]),
+                    null,
+                    _function_caller
+                );
+
+            return call;
+        si
+
+        // Resolve the left type's `=~` or `<>` member against the right
+        // operand and build the call directly (no null checks): the
+        // non-optional half of _try_equality_test. `<>`'s int result is
+        // reduced against zero. Returns null when no member resolves.
+        _build_direct_operator_test(
+            left_value: Value,
+            right_value: Value,
+            op_name: string,
+            location: Source.LOCATION
+        ) -> Value? is
+            let left_type = left_value.type;
+
+            if !left_type? then
+                return null;
+            fi
+
+            // Resolve against the non-optional inner type, matching the
+            // null-safe path: `find_member` on an optional type resolves
+            // a different (instance, optional-parameter) member than the
+            // inner type does, which would dispatch virtually and
+            // dereference a null receiver. The inner type's operator is
+            // the one `=~` resolves to for a present value.
+            let resolve_type = _non_optional(left_type) ?? left_type;
+
+            let member_symbol = resolve_type.find_member(op_name);
+
+            if !member_symbol? \/ !isa Semantic.Symbols.FUNCTION_GROUP(member_symbol) then
+                return null;
+            fi
+
+            let right_inner = _non_optional(right_value.type!) ?? right_value.type!;
+
+            let overload_result =
+                _resolve_silently(
+                    location,
+                    cast Semantic.Symbols.FUNCTION_GROUP(member_symbol),
+                    Collections.LIST[Type]([right_inner]),
+                    true
+                );
+
+            if !overload_result? then
+                return null;
+            fi
+
+            let function = overload_result.function;
+
+            _symbol_use_locations.add_symbol_use(location, function);
+
+            // Mirror the `=~` operator visitor: an instance operator
+            // takes the left operand as its receiver, a static one
+            // (string's op_Equality) takes both as arguments with no
+            // receiver. Passing a receiver for a static operator would
+            // emit a virtual call that dereferences a null receiver.
+            let call =
+                if function.is_instance then
+                    function.call(
+                        location,
+                        left_value,
+                        Collections.LIST[Value]([right_value]),
+                        null,
+                        _function_caller
+                    );
+                else
+                    function.call(
+                        location,
+                        null,
+                        Collections.LIST[Value]([left_value, right_value]),
+                        null,
+                        _function_caller
+                    );
+                fi;
+
+            if op_name =~ "<>" then
+                return COMPARE_ORDER_TO_ZERO(call, "==", _innate_symbol_lookup.get_bool_type());
+            fi
+
+            return call;
+        si
+
+        _non_optional(type: Type) -> Type? =>
+            if type.is_optional then
+                type.optional_inner_type;
+            else
+                type;
+            fi;
+
+        // Resolve an operator overload under speculation, so a failed
+        // resolution (no matching overload) leaves no diagnostics: the
+        // `case` path treats "no operator" as "fall back to a raw
+        // compare", not an error. Mirrors the speculation
+        // _resolve_with_retry gives the `=~` expression.
+        _resolve_silently(
+            location: Source.LOCATION,
+            group: Semantic.Symbols.FUNCTION_GROUP,
+            argument_types: Collections.LIST[Type],
+            want_instance: bool
+        ) -> Semantic.OVERLOAD_RESOLVE_RESULT? is
+            let use snapshot = _logger.speculate_then_backtrack();
+
+            let result =
+                _overload_resolver.resolve(location, group, argument_types, false, want_instance, false);
+
+            snapshot.backtrack();
+
+            return result;
+        si
+
+        // `a ?? b` — short-circuit null-coalesce. Result type is the
+        // LUB of the left's underlying type and the right's type, with
+        // `?` re-applied iff the right is itself optional. Right is
+        // evaluated only when left is null.
+        _visit_null_coalesce(binary: Trees.Expressions.BINARY) is
+            let left_value = binary.left.value!;
+            let right_value = binary.right.value!;
+
+
+            left_value.check_is_consumable(_logger, binary.left.location);
+            right_value.check_is_consumable(_logger, binary.right.location);
+
+            let left_type = left_value.type;
+            let right_type = right_value.type;
+
+            if !left_type? \/ left_type.is_error \/ !right_type? \/ right_type.is_error then
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+                return;
+            fi
+
+            // Flow analysis routinely narrows a declared `T?` to `T`
+            // after a non-null assignment. Treating that as an error
+            // would reject defensive `present ?? fallback` patterns
+            // — degrade to just emitting `left` instead, matching how
+            // `?.` falls back to `.` when the receiver is non-optional.
+            if !left_type.is_optional then
+                binary.compile_expressions_state.value = left_value;
+                return;
+            fi
+
+            let left_inner = left_type.optional_inner_type;
+
+            if !left_inner? then
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+                return;
+            fi
+
+            let right_is_optional = right_type.is_optional;
+
+            let right_inner =
+                if right_is_optional then
+                    right_type.optional_inner_type;
+                else
+                    right_type;
+                fi;
+
+            let lub = LEAST_UPPER_BOUND_MAP();
+
+            lub.add(left_inner);
+
+            if right_inner? then
+                lub.add(right_inner);
+            fi
+
+            let result_inner = lub.get_result();
+
+            if !result_inner? then
+                _logger.error(binary.location, "no common type for ?? operands {left_type} and {right_type}");
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+                return;
+            fi
+
+            // The result's optional kind derives from the LUB of the
+            // inner types, not from either operand: reference inner →
+            // flagged reference optional, value inner → NULLABLE, and
+            // a type-variable inner keeps the left's MAYBE carrier —
+            // the only lowering an unconstrained T? has. The operands
+            // may each be a different kind of optional; each arm
+            // coerces to the canonical result.
+            let result_type =
+                if !right_is_optional then
+                    result_inner;
+                elif result_inner.is_type_variable then
+                    left_type;
+                else
+                    COMPILE_ACCESS.build_optional_type(result_inner, _innate_symbol_lookup);
+                fi;
+
+            let absent_arm = _coerce_coalesce_arm(right_value, result_type);
+
+            if !left_type.is_value_type then
+                binary.compile_expressions_state.value = NULL_COALESCE(left_value, absent_arm, result_type);
+                return;
+            fi
+
+            // Value-shape left — NULLABLE[T] or MAYBE[T]: spill the
+            // receiver to a local and drive the presence test and
+            // payload extract through its address, mirroring the
+            // `?.` lowering.
+            let has_value_member = left_type.find_member("has_value");
+            let value_member = left_type.find_member("value");
+
+            if !has_value_member? \/ !value_member? then
+                _logger.poison(binary.location, "?? left operand {left_type} missing has_value or value member");
+                binary.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), binary.location);
+                return;
+            fi
+
+            let address_stand_in = IR.Values.STACK_TOP_ADDRESS(left_type);
+            let symbol_loader = IoC.CONTAINER.instance.symbol_loader;
+
+            let presence_test = has_value_member.load(binary.left.location, address_stand_in, symbol_loader);
+            let value_extract = value_member.load(binary.left.location, address_stand_in, symbol_loader);
+
+            let present_arm = _coerce_coalesce_arm(IR.Values.STACK_TOP(left_inner), result_type);
+
+            binary.compile_expressions_state.value =
+                IR.Values.NULL_COALESCE_VALUE(
+                    left_value,
+                    presence_test,
+                    value_extract,
+                    present_arm,
+                    absent_arm,
+                    result_type
+                );
+        si
+
+        // Bring one arm of `??` to the result type: T → T? wrapping
+        // (Nullable / MAYBE construction), MAYBE → reference-optional
+        // payload load, NULLABLE ↔ MAYBE pass through unchanged (the
+        // layouts are identical), and a value-typed arm boxes when
+        // the LUB widened the result to a reference type.
+        _coerce_coalesce_arm(value: IR.Values.Value, result_type: Semantic.Types.Type) -> IR.Values.Value is
+            let coerced = _value_boxer.wrap_if_needed(value, result_type)!;
+
+            if !result_type.is_value_type /\ coerced.type? /\ coerced.type!.is_value_type then
+                return IR.Values.BOX(coerced);
+            fi
+
+            return coerced;
+        si
+
+        // An index argument takes its type from the indexer resolution
+        // settles on, so it walks under a speculation for the same
+        // reason an operator operand does. The receiver is not a
+        // candidate: an untyped one has no members for the indexer to
+        // be found on, so there is nothing to resolve against.
+        pre_index(index: Trees.Expressions.INDEX) -> bool is
+            if index.index.awaits_context_type then
+                _deferred_operands.add(DEFERRED_OPERANDS(index));
+
+                _logger.speculate();
+                _flow.speculate();
+            fi
+
+            return false;
+        si
+
+        visit_index(index: Trees.Expressions.INDEX) is
+            if !_deferred_for(index)? then
+                _visit_index(index);
+
+                return;
+            fi
+
+            try
+                _visit_index(index);
+            finally
+                _deferred_operands.remove_at(_deferred_operands.count - 1);
+
+                _flow.commit();
+                _logger.commit();
+            yrt
+        si
+
+        _visit_index(index: Trees.Expressions.INDEX) is
+            let existing_value = index.value;
+            let need_store = existing_value? /\ existing_value.is_need_store;
+
+            if index.left.value? /\ index.index.value? then
+                let left_value = index.left.value;
+                let type = left_value.type;
+
+                if type == null \/ type.is_error then
+                    _logger.poison(index.left.location, "index left has no type");
+
+                    index.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), index.location);
+                    return;
+                fi
+
+                // Indexable inference: an `INFERRED_VARIABLE_TYPE`
+                // receiver records an INDEX_CONSTRAINT carrying the
+                // index expression's type, so the body-retry loop
+                // can filter candidates to indexable types. Skip
+                // the "cannot index" hard error path on placeholder
+                // — the existing speculate/roll-back would discard
+                // it on retry but emitting it is noise; soft-error
+                // out to DUMMY(ERROR) instead.
+                let index_type = index.index?.value?.type;
+
+                if
+                    isa Semantic.Types.INFERRED_VARIABLE_TYPE(type) /\
+                    index_type?
+                then
+                    let placeholder = type;
+                    let constraint = Semantic.INDEX_CONSTRAINT(index_type);
+
+                    _logger.mark_consumed_any_if(placeholder.origin.add_constraint(constraint));
+
+                    index.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), index.location);
+                    return;
+                fi
+
+                if !isa Semantic.Types.NAMED(type) then
+                    _logger.error(index.left.location, "cannot index {type}");
+
+                    index.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), index.location);
+                    return;
+                fi
+
+                let named_type = type;
+
+                let function_name: string mut;
+                let arguments: Collections.LIST[Value] mut;
+                let argument_types: Collections.LIST[Type] mut;
+
+                let index_value = index.index.value!;
+
+                if need_store then
+                    function_name = Semantic.Symbols.INDEXER_NAMES.assign;
+
+                    let need_store_value = cast Need.STORE?(index.value)!.value;
+
+                    arguments = Collections.LIST[Value]([index_value, need_store_value]);
+                    argument_types = Collections.LIST[Type]([index_value.type!, need_store_value.type!]);
+                else
+                    function_name = Semantic.Symbols.INDEXER_NAMES.read;
+                    arguments = Collections.LIST[Value]([index_value]);
+                    argument_types = Collections.LIST[Type]([index_value.type!]);
+                fi
+
+                let symbol = named_type.find_member(function_name);
+
+                if symbol == null then
+                    if need_store then
+                        if named_type.find_member(Semantic.Symbols.INDEXER_NAMES.read)? then
+                            _logger.error(index.location, "indexer is read-only in {type}");
+                        else
+                            _logger.error(index.location, "no indexer found in {type}");
+                        fi
+                    else
+                        _logger.error(index.location, "no indexer found in {type}");
+                    fi
+
+                    index.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), index.location);
+                    return;
+                fi
+
+                if !isa Semantic.Symbols.FUNCTION_GROUP(symbol) then
+                    _logger.poison(index.index.location, "indexer is not a function group: {symbol}");
+                fi
+
+                let overload_result: Semantic.OVERLOAD_RESOLVE_RESULT? mut;
+
+                let use logger_snapshot = _logger.speculate_then_backtrack();
+
+                overload_result =
+                    _overload_resolver.resolve(
+                        index.location,
+                        cast Semantic.Symbols.FUNCTION_GROUP?(symbol)!,
+                        argument_types,
+                        false,
+                        true,
+                        false
+                    );
+
+                logger_snapshot.backtrack();
+
+                if overload_result == null then
+                    if need_store then
+                        _logger.error(index.location, "indexer [{argument_types[0]}] = {argument_types[1]} not found in {type}");
+                    else
+                        _logger.error(index.location, "indexer [{argument_types[0]}] not found in {type}");
+                    fi
+
+                    index.compile_expressions_state.value = DUMMY(Semantic.Types.ERROR(), index.location);
+                    return;
+                fi
+
+                let function = overload_result.function;
+
+                if _resolve_deferred_index(index, function) then
+                    _visit_index(index);
+
+                    return;
+                fi
+
+                // Record the indexer-accessor use over the `[...]`
+                // bracket span — from the column after the LHS (the
+                // `[`) to the end of the INDEX expression (the `]`).
+                // find_hover_use prefers shorter matches, so any
+                // inner identifier or variable use nested inside the
+                // brackets still wins on hover; the strict-
+                // containment filter in the semantic-tokens handler
+                // drops this outer span when an inner use is
+                // present, keeping the index expression coloured as
+                // itself.
+                _symbol_use_locations.add_symbol_use(
+                    LOCATION(
+                        index.left.location.file_name,
+                        index.left.location.end_line,
+                        index.left.location.end_column + 1,
+                        index.location.end_line,
+                        index.location.end_column
+                    ), function);
+
+                if function.is_unsafe_constraints then
+                    _logger.warn(index.location, "unchecked-constraints", "call to {function} has unchecked constraints");
+                fi
+
+                if need_store then
+                    index.compile_expressions_state.value =
+                    TYPE_WRAPPER(
+                        function.arguments[1],
+                        function.call(index.location, left_value, arguments, null, _function_caller));
+                else
+                    index.compile_expressions_state.value = function.call(index.location, left_value, arguments, null, _function_caller);
+                fi
+            fi
+        si
+    si
+si

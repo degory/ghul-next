@@ -1,0 +1,24 @@
+namespace Test is
+    use Std = IO.Std;
+
+    class Main is
+        entry() static is
+            // No arm here is a catch-all — each matches one combination
+            // of values — but together they cover the whole
+            // (bool, bool) domain, so no `else` is required and the
+            // no-match path is unreachable.
+            Std.write_line("{pair(true, true)}");
+            Std.write_line("{pair(true, false)}");
+            Std.write_line("{pair(false, true)}");
+            Std.write_line("{pair(false, false)}");
+        si
+
+        pair(a: bool, b: bool) -> int static =>
+            case (a, b)
+            when (true, true) then 3
+            when (true, false) then 2
+            when (false, true) then 1
+            when (false, false) then 0
+            esac;
+    si
+si

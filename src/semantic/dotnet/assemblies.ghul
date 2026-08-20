@@ -17,6 +17,9 @@ namespace Semantic.DotNet is
 
     use Logging.TIMERS;
 
+    // The load context comes from the assembly paths, which are not
+    // known until start.
+    @suppress("field-definite-assignment")
     class ASSEMBLIES(
         _timers: TIMERS,
         _flags: Compiler.GLOBAL_BUILD_FLAGS,
@@ -59,7 +62,7 @@ namespace Semantic.DotNet is
         get_type(type_name: string) -> TYPE =>
             get_type("System.Runtime", type_name);
 
-        get_type(assembly_name: string mut, type_name: string) -> TYPE is
+        get_type(assembly_name: string? mut, type_name: string) -> TYPE is
             if assembly_name == null then
                 assembly_name = "System.Runtime";
             fi

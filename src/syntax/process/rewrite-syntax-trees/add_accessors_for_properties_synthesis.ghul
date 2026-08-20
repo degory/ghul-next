@@ -1,0 +1,734 @@
+namespace Syntax.Process is
+    use Source;
+    use Trees;
+
+    use Logging;
+
+    use Collections.LIST;
+
+    use Ghul.Pipes;
+
+
+    // Synthesis helpers for the accessors and union members the
+    // visitor adds: typed and object equals, get_hash_code, variant
+    // init, and the type-expression helpers they read.
+    // Turn a type-parameter declaration list into a list of
+    // type-argument references. A declaration carries the parameter's
+    // bound / kind / variance (e.g. E: Comparable[E]); those belong only
+    // at the declaration site. In the self-referential UL[E] spelled by
+    // the synthesised operators each parameter must appear as a bare
+    // name, or the bound resolves to an error type and IL generation
+    // fails on the malformed argument.
+    get_type_argument_references(arguments: TypeExpressions.LIST) -> TypeExpressions.LIST is
+        let references = Collections.LIST[TypeExpressions.TypeExpression]();
+
+        for a in arguments do
+            let name = a.name;
+
+            if name? then
+                references.add(TypeExpressions.NAMED(Source.LOCATION.internal, name.copy()));
+            else
+                references.add(a.copy());
+            fi
+        od
+
+        return TypeExpressions.LIST(Source.LOCATION.internal, references);
+    si
+
+    // Build a TypeExpression for the parent union — used as the
+    // declared parameter type of the synthesised `=~` so the method
+    // overrides the union's base implementation. The reference stands
+    // in for a type the user never wrote, so it carries an internal
+    // location: a real declaration-span location would otherwise be
+    // recorded as a phantom self-use of the union, surfacing in
+    // find-references and rename of the union type.
+    get_union_type_expression(`union: Definitions.UNION) -> TypeExpressions.TypeExpression =>
+        if `union.arguments? /\ `union.arguments.count > 0 then
+            TypeExpressions.GENERIC(
+                Source.LOCATION.internal,
+                Identifiers.Identifier(Source.LOCATION.internal, `union.name.name),
+                get_type_argument_references(`union.arguments!)
+            )
+        else
+            TypeExpressions.NAMED(
+                Source.LOCATION.internal,
+                Identifiers.Identifier(Source.LOCATION.internal, `union.name.name)
+            )
+        fi;
+
+    // Build a TypeExpression for the variant — variants share the
+    // union's type-arg names, so we mirror them. Internal location for
+    // the same reason as get_union_type_expression.
+    get_variant_type_expression(variant: Definitions.VARIANT, `union: Definitions.UNION) -> TypeExpressions.TypeExpression =>
+        if `union.arguments? /\ `union.arguments.count > 0 then
+            TypeExpressions.GENERIC(
+                Source.LOCATION.internal,
+                Trees.Identifiers.QUALIFIED(
+                    Source.LOCATION.internal,
+                    Identifiers.Identifier(Source.LOCATION.internal, `union.name.name),
+                    variant.name.name,
+                    Source.LOCATION.internal,
+                    Source.LOCATION.internal
+                ),
+                get_type_argument_references(`union.arguments!)
+            )
+        else
+            TypeExpressions.NAMED(
+                Source.LOCATION.internal,
+                Trees.Identifiers.QUALIFIED(
+                    Source.LOCATION.internal,
+                    Identifiers.Identifier(Source.LOCATION.internal, `union.name.name),
+                    variant.name.name,
+                    Source.LOCATION.internal,
+                    Source.LOCATION.internal
+                )
+            )
+        fi;
+
+    get_typed_equals_method_for_union(`union: Definitions.UNION) -> Definitions.FUNCTION is
+        let location = `union.location;
+
+        let other_arg = Variables.VARIABLE(
+            location,
+            Identifiers.Identifier(location, "other"),
+            get_union_type_expression(`union),
+            false,
+            false,
+            null
+        );
+
+        let arguments = Variables.LIST(
+            location,
+            Collections.LIST[Variables.VARIABLE]([other_arg])
+        );
+
+        let body = Trees.Bodies.EXPRESSION(
+            location,
+            Trees.Expressions.Literals.BOOLEAN(location, "false")
+        );
+
+        let modifiers = Modifiers.LIST(location, null, null);
+        modifiers.is_pure = true;
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "=~"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            arguments,
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "bool")),
+            modifiers,
+            body
+        );
+    si
+
+    get_typed_equals_method_for_variant(
+        variant: Definitions.VARIANT,
+        `union: Definitions.UNION
+    ) -> Definitions.FUNCTION is
+        let location = variant.location;
+
+        let other_arg = Variables.VARIABLE(
+            location,
+            Identifiers.Identifier(location, "other"),
+            get_union_type_expression(`union),
+            false,
+            false,
+            null
+        );
+
+        let arguments = Variables.LIST(
+            location,
+            Collections.LIST[Variables.VARIABLE]([other_arg])
+        );
+
+        // For a unit variant, runtime-type identity is the answer:
+        //   isa Self_Variant(other)
+        // For a non-unit variant, also compare each field. The
+        // comparison is a FIELD_EQUALS node rather than a `=~`
+        // operator: which comparison to run is not knowable here, only
+        // once the field's static type has resolved. compile-expressions
+        // lowers it to the field type's own `=~` where the type defines
+        // one, and to the default equality comparer otherwise, warning
+        // at the field declaration in that case.
+        let isa_check = Trees.Expressions.ISA(
+            location,
+            get_variant_type_expression(variant, `union),
+            Trees.Expressions.IDENTIFIER(
+                location,
+                Identifiers.Identifier(location, "other")
+            )
+        );
+
+        let condition: Trees.Expressions.Expression mut = isa_check;
+
+        for f in variant.fields do
+            let field_location = f.location;
+
+            let other_cast = Trees.Expressions.CAST(
+                field_location,
+                get_variant_type_expression(variant, `union),
+                Trees.Expressions.IDENTIFIER(
+                    field_location,
+                    Identifiers.Identifier(field_location, "other")
+                ),
+                false
+            );
+
+            let other_field = Trees.Expressions.MEMBER(
+                field_location,
+                other_cast,
+                Identifiers.Identifier(field_location, f.name!.name),
+                field_location
+            );
+
+            let self_field = Trees.Expressions.MEMBER(
+                field_location,
+                Trees.Expressions.SELF(field_location),
+                Identifiers.Identifier(field_location, f.name!.name),
+                field_location
+            );
+
+            let field_equals = Trees.Expressions.FIELD_EQUALS(
+                field_location,
+                self_field,
+                other_field
+            );
+
+            condition = Trees.Expressions.BINARY(
+                location,
+                Identifiers.Identifier(location, "/\\"),
+                "/\\",
+                condition,
+                field_equals
+            );
+        od
+
+        let body = Trees.Bodies.EXPRESSION(location, condition);
+
+        // The generated comparison is store-free by construction — an
+        // isa check, one operator call per field, and the default
+        // equality comparer for fields without an operator — but the
+        // effects solve does not cover synthesized functions (the same
+        // reason an auto-property getter carries a backing-read trust
+        // mark instead), so the `pure` declaration is what satisfies
+        // the operator store-free mandate here.
+        let modifiers = Modifiers.LIST(location, null, null);
+        modifiers.is_pure = true;
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "=~"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            arguments,
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "bool")),
+            modifiers,
+            body
+        );
+    si
+
+    // Synthesise `equals(other: object?) -> bool` on the union — this
+    // overrides .NET's `Object.Equals(object)` so unions work as
+    // dictionary keys / set members. Body forwards to typed `=~`
+    // after a runtime type check; the variant override of `=~` does
+    // the per-variant work.
+    get_object_equals_method_for_union(`union: Definitions.UNION) -> Definitions.FUNCTION is
+        let location = `union.location;
+
+        let other_arg = Variables.VARIABLE(
+            location,
+            Identifiers.Identifier(location, "other"),
+            TypeExpressions.OPTIONAL(
+                location,
+                TypeExpressions.NAMED(location, Identifiers.Identifier(location, "object"))
+            ),
+            false,
+            false,
+            null
+        );
+
+        let arguments = Variables.LIST(
+            location,
+            Collections.LIST[Variables.VARIABLE]([other_arg])
+        );
+
+        let union_type = get_union_type_expression(`union);
+
+        let isa_check = Trees.Expressions.ISA(
+            location,
+            union_type,
+            Trees.Expressions.IDENTIFIER(
+                location,
+                Identifiers.Identifier(location, "other")
+            )
+        );
+
+        let typed_call = Trees.Expressions.BINARY(
+            location,
+            Identifiers.Identifier(location, "=~"),
+            "=~",
+            Trees.Expressions.SELF(location),
+            Trees.Expressions.CAST(
+                location,
+                get_union_type_expression(`union),
+                Trees.Expressions.IDENTIFIER(
+                    location,
+                    Identifiers.Identifier(location, "other")
+                ),
+                false
+            )
+        );
+
+        let condition = Trees.Expressions.BINARY(
+            location,
+            Identifiers.Identifier(location, "/\\"),
+            "/\\",
+            isa_check,
+            typed_call
+        );
+
+        let body = Trees.Bodies.EXPRESSION(location, condition);
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "equals"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            arguments,
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "bool")),
+            Modifiers.LIST(location, null, null),
+            body
+        );
+    si
+
+    // Union's `get_hash_code` is overridden by every variant. The
+    // base body returns 0 — only ever called via super, which never
+    // happens on synthesised methods.
+    get_hash_code_method_for_union() -> Definitions.FUNCTION is
+        let location = LOCATION.internal;
+
+        let body = Trees.Bodies.EXPRESSION(
+            location,
+            Trees.Expressions.Literals.INTEGER(location, "0")
+        );
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "get_hash_code"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            Variables.LIST(location, Collections.LIST[Variables.VARIABLE]()),
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "int")),
+            Modifiers.LIST(location, null, null),
+            body
+        );
+    si
+
+    // Variant's `get_hash_code` combines a per-variant seed (hash of
+    // the variant's name string, distinct per variant in an union)
+    // with each field's hash code via XOR. Not the strongest mixer
+    // but cheap and respects the equality contract: any two values
+    // that compare `=~` will have hashed the same field values.
+    get_hash_code_method_for_variant(variant: Definitions.VARIANT) -> Definitions.FUNCTION is
+        let location = variant.location;
+
+        let seed = Trees.Expressions.CALL(
+            location,
+            Trees.Expressions.MEMBER(
+                location,
+                Trees.Expressions.Literals.STRING(location, variant.name.name),
+                Identifiers.Identifier(location, "get_hash_code"),
+                location
+            ),
+            Trees.Expressions.LIST(
+                location,
+                Collections.LIST[Trees.Expressions.Expression]()
+            )
+        );
+
+        let combined: Trees.Expressions.Expression mut = seed;
+
+        for f in variant.fields do
+            // Cast the field to `object` so we can call
+            // `get_hash_code` on it regardless of T's static
+            // capabilities. Boxes value-type fields, no-op for
+            // reference fields. The equality body's comparisons go
+            // through the field type's own `=~` or the default
+            // equality comparer, both of which agree with a
+            // `get_hash_code` answered here.
+            let boxed_field = Trees.Expressions.CAST(
+                location,
+                TypeExpressions.NAMED(location, Identifiers.Identifier(location, "object")),
+                Trees.Expressions.MEMBER(
+                    location,
+                    Trees.Expressions.SELF(location),
+                    Identifiers.Identifier(location, f.name!.name),
+                    location
+                ),
+                false
+            );
+
+            let field_hash = Trees.Expressions.CALL(
+                location,
+                Trees.Expressions.MEMBER(
+                    location,
+                    boxed_field,
+                    Identifiers.Identifier(location, "get_hash_code"),
+                    location
+                ),
+                Trees.Expressions.LIST(
+                    location,
+                    Collections.LIST[Trees.Expressions.Expression]()
+                )
+            );
+
+            // h = h * 31 + field_hash — standard multiply-and-add
+            // hash combiner (ghūl has no XOR operator on int).
+            let mul = Trees.Expressions.BINARY(
+                location,
+                Identifiers.Identifier(location, "*"),
+                "*",
+                combined,
+                Trees.Expressions.Literals.INTEGER(location, "31")
+            );
+
+            combined = Trees.Expressions.BINARY(
+                location,
+                Identifiers.Identifier(location, "+"),
+                "+",
+                mul,
+                field_hash
+            );
+        od
+
+        let body = Trees.Bodies.EXPRESSION(location, combined);
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "get_hash_code"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            Variables.LIST(location, Collections.LIST[Variables.VARIABLE]()),
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "int")),
+            Modifiers.LIST(location, null, null),
+            body
+        );
+    si
+
+    get_init_method_for_variant(variant: Trees.Definitions.VARIANT) -> Definitions.FUNCTION is
+        // variant.fields holds the variant's full positional shape,
+        // including any `..` splice expanded to copies of the union's
+        // primary params (marked is_inherited_primary). Inherited
+        // entries become init args that the body forwards to
+        // super.init(...); own entries get the usual
+        // self.<f> = <f>; assignment.
+        let arguments =
+            variant.fields |>
+                map((v) -> Variables.VARIABLE =>
+                    Variables.VARIABLE(
+                        v.location,
+                        v.name!.copy(),
+                        v.type_expression.copy(),
+                        false,
+                        false,
+                        null
+                    )
+                ) |>
+                collect_list();
+
+        let body_statements = Collections.LIST[Trees.Statements.Statement]();
+
+        let super_args = Collections.LIST[Trees.Expressions.Expression]();
+        for f in variant.fields do
+            if f.is_inherited_primary then
+                super_args.add(
+                    Trees.Expressions.IDENTIFIER(
+                        variant.location,
+                        Trees.Identifiers.Identifier(variant.location, f.name!.name)
+                    )
+                );
+            fi
+        od
+
+        if super_args.count > 0 then
+            let super_member =
+                Trees.Expressions.MEMBER(
+                    variant.location,
+                    Trees.Expressions.SUPER(variant.location),
+                    Trees.Identifiers.Identifier(variant.location, "init"),
+                    variant.location
+                );
+            let super_call =
+                Trees.Expressions.CALL(
+                    variant.location,
+                    super_member,
+                    Trees.Expressions.LIST(variant.location, super_args)
+                );
+            body_statements.add(Trees.Statements.EXPRESSION(variant.location, super_call));
+        fi
+
+        for f in variant.fields do
+            if f.is_inherited_primary then
+                continue;
+            fi
+
+            let member_access =
+                Trees.Expressions.MEMBER(
+                    variant.location,
+                    Trees.Expressions.SELF(variant.location),
+                    Trees.Identifiers.Identifier(variant.location, f.name!.name),
+                    variant.location
+                );
+
+            let left =
+                Trees.Expressions.SIMPLE_LEFT_EXPRESSION(variant.location, member_access);
+
+            body_statements.add(
+                Trees.Statements.ASSIGNMENT(
+                    variant.location,
+                    left,
+                    Trees.Expressions.IDENTIFIER(
+                        variant.location,
+                        Trees.Identifiers.Identifier(variant.location, f.name!.name)
+                    )
+                )
+            );
+        od
+
+        let body_statement_list = Trees.Statements.LIST(
+            variant.location,
+            body_statements
+        );
+
+        let init_body = Trees.Bodies.BLOCK(
+            LOCATION.internal,
+            body_statement_list
+        );
+
+        let init_function = Definitions.FUNCTION(
+            LOCATION.internal,
+            Identifiers.Identifier(
+                variant.location,
+                "init"
+            ),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            Variables.LIST(
+                LOCATION.internal,
+                arguments
+            ),
+            TypeExpressions.NAMED(
+                LOCATION.internal,
+                Identifiers.Identifier(
+                    variant.location,
+                    "void"
+                )
+            ),
+            Modifiers.LIST(
+                LOCATION.internal,
+                null,
+                null
+            ),
+            init_body
+        );
+
+        return init_function;
+    si
+
+    // A TypeExpression naming the type itself, mirroring its own type
+    // parameters where it has them. Internal location, so the
+    // synthesised reference is not recorded as a use of the type.
+    get_classy_type_expression(classy: Definitions.Classy) -> TypeExpressions.TypeExpression static =>
+        if classy.arguments? /\ classy.arguments.count > 0 then
+            TypeExpressions.GENERIC(
+                Source.LOCATION.internal,
+                Identifiers.Identifier(Source.LOCATION.internal, classy.name.name),
+                get_type_argument_references(classy.arguments!)
+            )
+        else
+            TypeExpressions.NAMED(
+                Source.LOCATION.internal,
+                Identifiers.Identifier(Source.LOCATION.internal, classy.name.name)
+            )
+        fi;
+
+    // Whether a type's own body declares a member of the given name.
+    // Only the body is consulted, so a member arriving from a
+    // `partial` or `impl` block is not seen here: those are declared
+    // later, in declare-members, and a type reopened that way does
+    // not get the synthesised bridge below.
+    declares_function(body: Definitions.LIST, name: string) -> bool static is
+        for definition in body do
+            if
+                isa Definitions.FUNCTION(definition) /\
+                definition.name? /\
+                definition.name.name =~ name
+            then
+                return true;
+            fi
+        od
+
+        return false;
+    si
+
+    // A type expression naming `object`, with or without a `?`.
+    is_object_type_expression(type_expression: TypeExpressions.TypeExpression) -> bool static is
+        let inner =
+            if isa TypeExpressions.OPTIONAL(type_expression) then
+                type_expression.element
+            else
+                type_expression
+            fi;
+
+        return
+            isa TypeExpressions.NAMED(inner) /\
+            inner.name.name =~ "object";
+    si
+
+    // Whether the body already supplies the `Object.Equals` the bridge
+    // would add. Both spellings reach it: a member named `equals`, and
+    // `=~` itself when its parameter is `object` - an equality
+    // operator over `object` is emitted under the name `Equals` and so
+    // already overrides it. Adding a bridge alongside either produces
+    // a duplicate method.
+    declares_object_equals(body: Definitions.LIST) -> bool static is
+        for definition in body do
+            if !isa Definitions.FUNCTION(definition) \/ !definition.name? then
+                continue;
+            fi
+
+            let name = definition.name.name;
+
+            if !(name =~ "equals") /\ !(name =~ "=~") then
+                continue;
+            fi
+
+            if definition.arguments.count == 1 then
+                for argument in definition.arguments do
+                    if is_object_type_expression(argument.type_expression) then
+                        return true;
+                    fi
+                od
+            fi
+
+            if name =~ "equals" then
+                return true;
+            fi
+        od
+
+        return false;
+    si
+
+    // `=~` is emitted as a typed `Equals` method, which .NET does not
+    // recognise as an equality implementation on its own: an
+    // `EqualityComparer[T]` reaches for `IEquatable[T]` and then for
+    // `Object.Equals(object)`, and a type carrying neither falls back
+    // to the default for its kind. A class then compares by reference
+    // and a struct by reflected memberwise comparison, so a user's own
+    // `=~` is bypassed either way when the value is used as a
+    // dictionary key or searched for in a collection.
+    //
+    // Bridge it: a type whose body declares `=~` gets an
+    // `equals(other: object?)` that casts and delegates, so the
+    // operator the user wrote is what .NET calls. Written as a cast to
+    // the optional form and a presence test rather than an `isa`
+    // narrow, which is the one shape that holds for a struct as well
+    // as a class, and which accepts either spelling of the operator's
+    // own parameter.
+    get_object_equals_bridge(
+        location: LOCATION,
+        type_expression: TypeExpressions.TypeExpression
+    ) -> Definitions.FUNCTION static is
+        let other_argument = Variables.VARIABLE(
+            location,
+            Identifiers.Identifier(location, "other"),
+            TypeExpressions.OPTIONAL(
+                location,
+                TypeExpressions.NAMED(location, Identifiers.Identifier(location, "object"))
+            ),
+            false,
+            false,
+            null
+        );
+
+        let narrowed = Variables.VARIABLE(
+            location,
+            Identifiers.Identifier(location, "narrowed"),
+            TypeExpressions.INFER(location),
+            false,
+            false,
+            Trees.Expressions.CAST(
+                location,
+                TypeExpressions.OPTIONAL(location, type_expression),
+                Trees.Expressions.IDENTIFIER(
+                    location,
+                    Identifiers.Identifier(location, "other")
+                ),
+                false
+            )
+        );
+
+        let narrowed_reference =
+            Trees.Expressions.IDENTIFIER(
+                location,
+                Identifiers.Identifier(location, "narrowed")
+            );
+
+        let then_branch = Trees.Statements.IF_BRANCH(
+            location,
+            Trees.Expressions.HAS_VALUE(location, narrowed_reference),
+            Trees.Statements.LIST(
+                location,
+                Collections.LIST[Statements.Statement]([
+                    Trees.Statements.RETURN(
+                        location,
+                        Trees.Expressions.BINARY(
+                            location,
+                            Identifiers.Identifier(location, "=~"),
+                            "=~",
+                            Trees.Expressions.SELF(location),
+                            Trees.Expressions.IDENTIFIER(
+                                location,
+                                Identifiers.Identifier(location, "narrowed")
+                            )
+                        )
+                    )
+                ]: Statements.Statement)
+            )
+        );
+
+        let body = Trees.Bodies.BLOCK(
+            location,
+            Trees.Statements.LIST(
+                location,
+                Collections.LIST[Statements.Statement]([
+                    Trees.Statements.LET(
+                        location,
+                        false,
+                        Variables.LIST(
+                            location,
+                            Collections.LIST[Variables.VARIABLE]([narrowed])
+                        )
+                    ),
+                    Trees.Statements.IF(
+                        location,
+                        Collections.LIST[Trees.Statements.IF_BRANCH]([then_branch])
+                    ),
+                    Trees.Statements.RETURN(
+                        location,
+                        Trees.Expressions.Literals.BOOLEAN(location, "false")
+                    )
+                ]: Statements.Statement)
+            )
+        );
+
+        return Definitions.FUNCTION(
+            location,
+            Identifiers.Identifier(location, "equals"),
+            TypeExpressions.LIST(LOCATION.internal, Collections.LIST[TypeExpressions.TypeExpression](0)),
+            Variables.LIST(
+                location,
+                Collections.LIST[Variables.VARIABLE]([other_argument])
+            ),
+            TypeExpressions.NAMED(location, Identifiers.Identifier(location, "bool")),
+            Modifiers.LIST(location, null, null),
+            body
+        );
+    si
+
+si

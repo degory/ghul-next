@@ -1,0 +1,50 @@
+use IO.Std.write_line;
+
+use ConstLib.Constants;
+use ConstLib.Level;
+use ConstLib.Wide;
+
+// A `const` in a referenced assembly has a value in metadata and no field
+// to load, exactly as one in the base class library does.
+entry() is
+    write_line("string  [{Constants.greeting}] [{Constants.mode}]");
+    // The only constant of a reference type metadata can hold. Asked
+    // through a parameter rather than a local, because an absent string
+    // and an empty one interpolate the same way and assigning to a local
+    // would narrow it to the non-optional type the library declares.
+    write_line("null    [{Constants.absent}] {is_absent(Constants.absent)}");
+    write_line("bool    {Constants.yes} {Constants.no}");
+    write_line("enum    {Constants.threshold} {Constants.threshold == Level.HIGH}");
+    // An enum backed by a type wider than int32 reads at the width it
+    // was declared over: `Wide.HUGE` is 0x1_0000_0000, which does not
+    // fit int32 and would otherwise answer its low 32 bits.
+    write_line("wide    {cast long(Constants.reach)}");
+    write_line("member  {cast long(Wide.HUGE)} {cast long(Wide.SMALL)}");
+    // The same value through the argument-default channel: a `_`
+    // argument takes the parameter's declared .NET default.
+    write_line("default {Constants.take(_)}");
+    // A small member of a wide enum used at its own type: the parameter
+    // is `Wide`, int64 in the IL signature, so the value has to arrive
+    // as int64 however well it fits int32. The comparison puts a wide
+    // and a small member on the two sides of one operator.
+    write_line("small   {Constants.take(Wide.SMALL)}");
+    write_line("compare {Wide.HUGE == Wide.SMALL} {Wide.SMALL == Wide.SMALL}");
+    write_line("char    {Constants.separator}");
+    write_line("long    {Constants.big}");
+    // Not a metadata constant: a C# `const decimal` is emitted as a
+    // static readonly field, so this stays an ordinary field read.
+    // Scaled to a whole number, since a decimal separator is a matter of
+    // culture and the value is not.
+    write_line("decimal {cast int(Constants.rate * 10m)}");
+    write_line("field   {Constants.readonly}");
+
+    // Read somewhere the value has to arrive typed, not just printed.
+    let doubled = Constants.big * 2L;
+    write_line("arith   {doubled}");
+
+    if Constants.yes /\ !Constants.no then
+        write_line("cond    taken");
+    fi
+si
+
+is_absent(value: string?) -> bool => !value?;

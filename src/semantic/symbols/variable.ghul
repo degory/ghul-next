@@ -350,7 +350,6 @@ namespace Semantic.Symbols is
 
             return result;
         si
-
     si
 
     // Minimal Variable subclass used as the origin symbol for an
@@ -437,6 +436,15 @@ namespace Semantic.Symbols is
             return loader.store_local_variable(location, self, value, is_initialize);
         si
 
+        // Declaring a captured, reassigned local that has no initializer:
+        // there is no value to store, only the empty box to allocate.
+        store_empty_box(location: LOCATION, loader: SYMBOL_LOADER) -> Value is
+            check_is_defined(location);
+
+            is_assigned = true;
+
+            return loader.store_empty_boxed_local(location, self);
+        si
     si
 
     // FIXME: pull up common code into a local + argument superclass:
@@ -486,6 +494,17 @@ namespace Semantic.Symbols is
 
     class Field: Variable, Types.SettableTyped abstract is
         unspecialized_type: Type? public;
+
+        // Set on a closure frame's `$recurse` capture: a load of this
+        // field is the enclosing recursive literal referring to
+        // itself, so the value it denotes is the frame's own closure.
+        is_recurse_capture: bool public;
+
+        // For a frame field capturing a local variable, the local it
+        // captures — an immutable one can only ever hold its
+        // initializer's value, so a load of the field denotes
+        // whatever that local does.
+        captured_symbol: Symbol? public;
 
         symbol_kind: SymbolKind => SymbolKind.FIELD;
         completion_kind: CompletionKind => CompletionKind.FIELD;
@@ -655,6 +674,36 @@ namespace Semantic.Symbols is
         store(location: LOCATION, from: Value?, value: Value, loader: SYMBOL_LOADER, is_initialize: bool) -> Value =>
             loader.store_static_field(self, value);
 
+    si
+
+    // An imported compile-time constant. Metadata carries the value
+    // rather than a storage slot - a language that inlines a constant at
+    // each use leaves no field behind for anyone to load - so a read is
+    // the value written out where the read is, and there is nothing for a
+    // write to write to.
+    class CONSTANT_FIELD: Field is
+        // The value as invariant-culture text. Absent when the constant
+        // itself is null, which is the only constant of a reference type
+        // metadata can hold - a case of its own rather than a reserved
+        // spelling, since a constant string can hold any text at all.
+        constant_value: string?;
+
+        describe(context: DESCRIBE_CONTEXT) -> SignaturePart =>
+            _describe_field(context);
+
+        describe_kind(context: DESCRIBE_CONTEXT) -> string? => "{access_prefix}constant";
+
+        init(location: LOCATION, owner: Scope, name: string, constant_value: string?) is
+            super.init(location, owner, name);
+
+            self.constant_value = constant_value;
+        si
+
+        load(location: LOCATION, from: Value?, loader: SYMBOL_LOADER) -> Value =>
+            loader.load_constant_field(self);
+
+        store(location: LOCATION, from: Value?, value: Value, loader: SYMBOL_LOADER, is_initialize: bool) -> Value =>
+            loader.store_constant_field(location, self);
     si
 si
 

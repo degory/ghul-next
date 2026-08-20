@@ -364,6 +364,11 @@ namespace Syntax is
         visit(`isa: Expressions.ISA) is
         si
 
+        pre(field_equals: Expressions.FIELD_EQUALS) -> bool => false;
+
+        visit(field_equals: Expressions.FIELD_EQUALS) is
+        si
+
         pre(`isa: Expressions.TYPEOF) -> bool => false;
 
         visit(`isa: Expressions.TYPEOF) is
@@ -407,11 +412,6 @@ namespace Syntax is
         pre(member: Expressions.MEMBER) -> bool => false;
 
         visit(member: Expressions.MEMBER) is
-        si
-
-        pre(member: Expressions.EXPLICIT_SPECIALIZATION) -> bool => false;
-
-        visit(member: Expressions.EXPLICIT_SPECIALIZATION) is
         si
 
         pre(ambiguous_expression: Expressions.AMBIGUOUS_EXPRESSION) -> bool => false;

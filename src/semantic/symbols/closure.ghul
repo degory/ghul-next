@@ -14,7 +14,10 @@ namespace Semantic.Symbols is
     class Closure: Function, Types.Typed abstract is
         _is_loading_captures: bool;
 
-        captured_values: Collections.SET[Symbol]?;
+        // A null element is the `$self` capture: the frame's captured
+        // instance has no symbol of its own, and its position in the set
+        // fixes its position in the frame constructor's argument list.
+        captured_values: Collections.SET[Symbol?]?;
         captured_type_arguments: Collections.MAP[Symbol, CAPTURED_TYPE_ARGUMENT]?;
         next_type_argument_index: int;
 
@@ -50,8 +53,6 @@ namespace Semantic.Symbols is
 
         il_name: string => name; // FIXME
         owner_il_name: string => "[closure]"; // FIXME
-
-        il_body: string public;
 
         is_closure: bool => true;
         is_recursive: bool;
@@ -258,7 +259,7 @@ namespace Semantic.Symbols is
         // first capture.
         _ensure_frame() -> FRAME is
             if !frame? then
-                captured_values = Collections.SET[Symbol]();
+                captured_values = Collections.SET[Symbol?]();
 
                 frame = Semantic.Symbols.FRAME(owner!, self);
             fi
@@ -287,7 +288,11 @@ namespace Semantic.Symbols is
                             cast Types.Typed?(variable)!.type
                         fi;
 
-                    return frame.declare_captured(variable.name, `field_type, IoC.CONTAINER.instance.symbol_definition_locations);
+                    let captured = frame.declare_captured(variable.name, `field_type, IoC.CONTAINER.instance.symbol_definition_locations);
+
+                    captured.captured_symbol = variable;
+
+                    return captured;
                 else
                     let existing = frame.get_captured(variable.name);
 
@@ -704,7 +709,7 @@ namespace Semantic.Symbols is
             let enclosing: Closure? mut = null;
 
             for c in captured_values! do
-                if c == null then
+                if !c? then
                     // The "captured self" passed to the closure's
                     // frame constructor. Same construction-site
                     // distinction as `_load_delegate`: inside a
@@ -733,7 +738,7 @@ namespace Semantic.Symbols is
                     // would mask the underlying "variable is not
                     // defined here" diagnostic.
                     if outer_self.type? then
-                        outer_self.type!.walk(capture_type_argument);
+                        outer_self.type.walk(capture_type_argument);
                     fi
                 elif isa Closure(c) then
                     let outer = c;
@@ -747,7 +752,7 @@ namespace Semantic.Symbols is
                     actual_arguments.add(value);
 
                     if value.type? then
-                        value.type!.walk(capture_type_argument);
+                        value.type.walk(capture_type_argument);
                     fi
                 else
                     let outer_captured_value =
@@ -760,7 +765,7 @@ namespace Semantic.Symbols is
                     actual_arguments.add(outer_captured_value);
 
                     if outer_captured_value.type? then
-                        outer_captured_value.type!.walk(capture_type_argument);
+                        outer_captured_value.type.walk(capture_type_argument);
                     fi
                 fi
             od
@@ -860,7 +865,7 @@ namespace Semantic.Symbols is
             // instance with ERROR-typed captures cascades into IL
             // gen_type throws further down the path.
             for a in actual_arguments do
-                if !a.type? \/ a.type!.is_error then
+                if !a.type? \/ a.type.is_error then
                     return IR.Values.DUMMY(Types.ERROR(), location);
                 fi
             od
