@@ -18,10 +18,6 @@ namespace Semantic.Symbols.UnitTests is
         // class it hangs off needs a scope of its own.
         _scope: Semantic.BLOCK_SCOPE;
 
-        // The frame takes its own owner from the owner's owner, so the
-        // class it hangs off needs a scope of its own.
-        _scope: Semantic.BLOCK_SCOPE;
-
         init() is
             if !LOCATION.internal? then
                 LOCATION.init_static();
